@@ -323,11 +323,7 @@ impl GraphClient {
                 .context("edge contains search failed")?;
             let rows: Vec<Vec<FalkorValue>> = result.data.collect();
             for row in rows {
-                if row.len() < 3 { continue; }
-                let mut it = row.into_iter();
-                let rel = it.next().unwrap();
-                let src = it.next().unwrap();
-                let dst = it.next().unwrap();
+                let Ok([rel, src, dst]) = take_n(row) else { continue };
                 match edge_row_from_values(rel, src, dst) {
                     Ok(e) if seen.insert(e.edge_id) => results.push(e),
                     _ => {}
@@ -374,11 +370,7 @@ impl GraphClient {
                 .context("edge contains search (temporal) failed")?;
             let rows: Vec<Vec<FalkorValue>> = result.data.collect();
             for row in rows {
-                if row.len() < 3 { continue; }
-                let mut it = row.into_iter();
-                let rel = it.next().unwrap();
-                let src = it.next().unwrap();
-                let dst = it.next().unwrap();
+                let Ok([rel, src, dst]) = take_n(row) else { continue };
                 match edge_row_from_values(rel, src, dst) {
                     Ok(e) if seen.insert(e.edge_id) => results.push(e),
                     _ => {}
@@ -473,11 +465,7 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
             .filter_map(|row| {
-                if row.len() < 3 { return None; }
-                let mut it = row.into_iter();
-                let rel = it.next()?;
-                let src = it.next()?;
-                let dst = it.next()?;
+                let [rel, src, dst] = take_n(row).ok()?;
                 Some(edge_row_from_values(rel, src, dst))
             })
             .collect::<Result<Vec<_>>>()
@@ -1030,11 +1018,7 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let mut out = Vec::new();
         for row in rows {
-            if row.len() < 3 { continue; }
-            let mut it = row.into_iter();
-            let rel = it.next().unwrap();
-            let src = it.next().unwrap();
-            let dst = it.next().unwrap();
+            let Ok([rel, src, dst]) = take_n(row) else { continue };
             if let Ok(e) = edge_row_from_values(rel, src, dst) {
                 out.push(e);
             }
@@ -1131,10 +1115,7 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let mut pairs = Vec::new();
         for row in rows {
-            if row.len() < 2 { continue; }
-            let mut it = row.into_iter();
-            let a_val = it.next().unwrap();
-            let b_val = it.next().unwrap();
+            let Ok([a_val, b_val]) = take_n(row) else { continue };
             if let (Some(Ok(a)), Some(Ok(b))) = (node_to_entity_row(a_val), node_to_entity_row(b_val)) {
                 pairs.push((a, b));
             }
@@ -1271,12 +1252,11 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let mut out = Vec::new();
         for row in rows {
-            if row.len() < 4 { continue; }
-            let mut it = row.into_iter();
-            let agent_id = extract_string(&it.next().unwrap());
-            let credibility = extract_float(&it.next().unwrap());
-            let fact_count = extract_int(&it.next().unwrap()) as usize;
-            let contradiction_rate = extract_float(&it.next().unwrap());
+            let Ok([a, b, c, d]) = take_n(row) else { continue };
+            let agent_id = extract_string(&a);
+            let credibility = extract_float(&b);
+            let fact_count = extract_int(&c) as usize;
+            let contradiction_rate = extract_float(&d);
             out.push(crate::credibility::SourceCredibility {
                 agent_id,
                 credibility,
@@ -1559,16 +1539,19 @@ fn extract_embedding(v: &FalkorValue) -> Vec<f32> {
     }
 }
 
+/// Destructure a row into a fixed-size array, bailing if too short.
+fn take_n<const N: usize>(row: Vec<FalkorValue>) -> Result<[FalkorValue; N]> {
+    row.try_into()
+        .map_err(|v: Vec<FalkorValue>| anyhow::anyhow!("expected {N} columns, got {}", v.len()))
+}
+
 fn supersession_from_row(row: Vec<FalkorValue>) -> Result<SupersessionRecord> {
-    if row.len() < 5 {
-        anyhow::bail!("supersession row too short");
-    }
-    let mut it = row.into_iter();
-    let old_edge_id = extract_int(&it.next().unwrap());
-    let new_edge_id = extract_int(&it.next().unwrap());
-    let superseded_at_str = extract_string(&it.next().unwrap());
-    let old_fact = extract_string(&it.next().unwrap());
-    let new_fact = extract_string(&it.next().unwrap());
+    let [a, b, c, d, e] = take_n(row)?;
+    let old_edge_id = extract_int(&a);
+    let new_edge_id = extract_int(&b);
+    let superseded_at_str = extract_string(&c);
+    let old_fact = extract_string(&d);
+    let new_fact = extract_string(&e);
     let superseded_at = superseded_at_str.parse::<DateTime<Utc>>()
         .unwrap_or_else(|_| Utc::now());
     Ok(SupersessionRecord {

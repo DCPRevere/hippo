@@ -9,17 +9,24 @@ use crate::state::AppState;
 
 pub async fn run_maintenance_loop(
     state: std::sync::Arc<AppState>,
+    mut shutdown: tokio::sync::watch::Receiver<()>,
 ) {
     let secs = state.config.maintenance_interval_secs;
     if secs == 0 {
         tracing::info!("Maintenance loop disabled (MAINTENANCE_INTERVAL_SECS=0), use POST /maintain to trigger");
-        std::future::pending::<()>().await;
+        let _ = shutdown.changed().await;
         return;
     }
 
     let interval = tokio::time::Duration::from_secs(secs);
     loop {
-        tokio::time::sleep(interval).await;
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = shutdown.changed() => {
+                tracing::info!("Maintenance loop stopping (shutdown signal)");
+                return;
+            }
+        }
         let graph = state.graph_registry().get_default().await;
         if let Err(e) = run_once(&state, &*graph).await {
             tracing::error!("Maintenance error: {e}");

@@ -14,12 +14,25 @@ use std::{convert::Infallible, sync::Arc};
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::trace::TraceLayer;
 
-struct PrettyJson(StatusCode, String);
+use crate::error::AppError;
+use crate::models::{
+    AdminSeedRequest, AdminSeedResponse, AskRequest,
+    BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
+    ConsolidateRequest, ContextProgress, ContextRequest, ErrorResponse, HealthResponse,
+    MemoryTierStats, ReflectRequest, RememberProgress, RememberRequest,
+    SmartQueryRequest, TemporalContextRequest,
+};
+use crate::pipeline::{ask, consolidate, context, context_temporal, diagnose, maintain, query, reflect, remember, timeline};
+use crate::state::AppState;
 
-impl IntoResponse for PrettyJson {
+// -- JSON response helper -----------------------------------------------------
+
+struct JsonOk(String);
+
+impl IntoResponse for JsonOk {
     fn into_response(self) -> axum::response::Response {
-        let mut resp = self.1.into_response();
-        *resp.status_mut() = self.0;
+        let mut resp = self.0.into_response();
+        *resp.status_mut() = StatusCode::OK;
         resp.headers_mut().insert(
             "content-type",
             axum::http::HeaderValue::from_static("application/json"),
@@ -28,22 +41,8 @@ impl IntoResponse for PrettyJson {
     }
 }
 
-fn pretty_ok(value: impl serde::Serialize) -> PrettyJson {
-    PrettyJson(StatusCode::OK, serde_json::to_string_pretty(&value).unwrap_or_default())
-}
-
-fn pretty_err(e: anyhow::Error) -> PrettyJson {
-    PrettyJson(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        serde_json::to_string_pretty(&ErrorResponse { error: e.to_string() }).unwrap_or_default(),
-    )
-}
-
-fn bad_request(msg: impl Into<String>) -> PrettyJson {
-    PrettyJson(
-        StatusCode::BAD_REQUEST,
-        serde_json::to_string_pretty(&ErrorResponse { error: msg.into() }).unwrap_or_default(),
-    )
+fn json_ok(value: impl serde::Serialize) -> JsonOk {
+    JsonOk(serde_json::to_string_pretty(&value).unwrap_or_default())
 }
 
 // -- Request validation -------------------------------------------------------
@@ -61,7 +60,7 @@ where
     S: Send + Sync,
     T: serde::de::DeserializeOwned + Validate + Send,
 {
-    type Rejection = PrettyJson;
+    type Rejection = AppError;
 
     fn from_request(
         req: Request,
@@ -70,9 +69,9 @@ where
         async {
             let Json(value) = Json::<T>::from_request(req, state)
                 .await
-                .map_err(|e: JsonRejection| bad_request(e.body_text()))?;
+                .map_err(|e: JsonRejection| AppError::bad_request(e.body_text()))?;
 
-            value.validate().map_err(bad_request)?;
+            value.validate().map_err(AppError::bad_request)?;
             Ok(ValidJson(value))
         }
     }
@@ -86,6 +85,11 @@ impl Validate for RememberRequest {
     fn validate(&self) -> Result<(), String> {
         if self.statement.trim().is_empty() {
             return Err("statement must not be empty".into());
+        }
+        if let Some(h) = self.source_credibility_hint {
+            if !(0.0..=1.0).contains(&h) {
+                return Err("source_credibility_hint must be between 0.0 and 1.0".into());
+            }
         }
         Ok(())
     }
@@ -186,20 +190,12 @@ impl Validate for ConsolidateRequest {
     }
 }
 
-use crate::models::{
-    AdminSeedRequest, AdminSeedResponse, AskRequest,
-    BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
-    ConsolidateRequest, ContextProgress, ContextRequest, ErrorResponse, HealthResponse,
-    MemoryTierStats, ReflectRequest, RememberProgress, RememberRequest,
-    SmartQueryRequest, TemporalContextRequest,
-};
-use crate::pipeline::{ask, consolidate, context, context_temporal, diagnose, maintain, query, reflect, remember, timeline};
+// -- Router -------------------------------------------------------------------
 
 #[derive(Debug, serde::Deserialize)]
 struct GraphQuery {
     graph: Option<String>,
 }
-use crate::state::AppState;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let mut app = Router::new()
@@ -234,48 +230,33 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+// -- Handlers -----------------------------------------------------------------
+
 async fn ask_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<AskRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    match ask::ask(&state, &*graph, req).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Ask error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = ask::ask(&state, &*graph, req).await?;
+    Ok(json_ok(resp))
 }
 
 async fn query_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<SmartQueryRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-
-    match query::smart_query(&state, &*graph, req).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Smart query error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = query::smart_query(&state, &*graph, req).await?;
+    Ok(json_ok(resp))
 }
 
 async fn remember_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<RememberRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-
-    match remember::remember(&state, &*graph, req, None).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Remember error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = remember::remember(&state, &*graph, req, None).await?;
+    Ok(json_ok(resp))
 }
 
 async fn remember_stream_handler(
@@ -285,12 +266,11 @@ async fn remember_stream_handler(
     let (tx, rx) = tokio::sync::mpsc::channel::<RememberProgress>(32);
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
 
-
     tokio::spawn(async move {
         match remember::remember(&state, &*graph, req, Some(tx.clone())).await {
-            Ok(_) => {} // Complete event already sent by the pipeline
+            Ok(_) => {}
             Err(e) => {
-                tracing::error!("Remember stream error: {e}");
+                tracing::error!("Remember stream error: {e:#}");
                 let _ = tx.send(RememberProgress::Error(e.to_string())).await;
             }
         }
@@ -307,11 +287,10 @@ async fn remember_stream_handler(
 async fn remember_batch_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<BatchRememberRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let total = req.statements.len();
     let source_agent = req.source_agent.clone();
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-
 
     let results = if req.parallel {
         let futs: Vec<_> = req
@@ -381,26 +360,21 @@ async fn remember_batch_handler(
     let succeeded = results.iter().filter(|r| r.ok).count();
     let failed = results.iter().filter(|r| !r.ok).count();
 
-    pretty_ok(BatchRememberResponse {
+    Ok(json_ok(BatchRememberResponse {
         total,
         succeeded,
         failed,
         results,
-    })
+    }))
 }
 
 async fn context_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ContextRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    match context::context(&state, &*graph, req, None).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Context error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = context::context(&state, &*graph, req, None).await?;
+    Ok(json_ok(resp))
 }
 
 async fn context_stream_handler(
@@ -412,9 +386,9 @@ async fn context_stream_handler(
     tokio::spawn(async move {
         let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
         match context::context(&state, &*graph, req, Some(tx.clone())).await {
-            Ok(_) => {} // Done event already sent by the pipeline
+            Ok(_) => {}
             Err(e) => {
-                tracing::error!("Context stream error: {e}");
+                tracing::error!("Context stream error: {e:#}");
                 let _ = tx.send(ContextProgress::Error(e.to_string())).await;
             }
         }
@@ -431,112 +405,72 @@ async fn context_stream_handler(
 async fn context_temporal_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<TemporalContextRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    match context_temporal::context_temporal(&state, &*graph, req).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Context temporal error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = context_temporal::context_temporal(&state, &*graph, req).await?;
+    Ok(json_ok(resp))
 }
 
 async fn reflect_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ReflectRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    match reflect::reflect(&state, &*graph, req).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Reflect error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = reflect::reflect(&state, &*graph, req).await?;
+    Ok(json_ok(resp))
 }
 
 async fn timeline_handler(
     State(state): State<Arc<AppState>>,
     Path(entity_name): Path<String>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    match timeline::timeline(&state, &*graph, &entity_name).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Timeline error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = timeline::timeline(&state, &*graph, &entity_name).await?;
+    Ok(json_ok(resp))
 }
 
 async fn diagnose_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ContextRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    match diagnose::diagnose(&state, &*graph, req).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Diagnose error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = diagnose::diagnose(&state, &*graph, req).await?;
+    Ok(json_ok(resp))
 }
 
 async fn graph_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<GraphQuery>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
-    match diagnose::graph_dump(&state, &*graph).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Graph dump error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = diagnose::graph_dump(&state, &*graph).await?;
+    Ok(json_ok(resp))
 }
 
-async fn maintain_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn maintain_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    match maintain::run_once(&state, &*graph).await {
-        Ok(()) => {
-            pretty_ok(serde_json::json!({"status": "maintenance complete"}))
-        }
-        Err(e) => {
-            tracing::error!("Maintenance error: {e}");
-            pretty_err(e)
-        }
-    }
+    maintain::run_once(&state, &*graph).await?;
+    Ok(json_ok(serde_json::json!({"status": "maintenance complete"})))
 }
 
 async fn consolidate_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ConsolidateRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    match consolidate::consolidate(&state, &*graph, req).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Consolidation error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = consolidate::consolidate(&state, &*graph, req).await?;
+    Ok(json_ok(resp))
 }
 
 async fn provenance_handler(
     State(state): State<Arc<AppState>>,
     Path(edge_id): Path<i64>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    match graph.get_provenance(edge_id).await {
-        Ok(resp) => pretty_ok(resp),
-        Err(e) => {
-            tracing::error!("Provenance error: {e}");
-            pretty_err(e)
-        }
-    }
+    let resp = graph.get_provenance(edge_id).await?;
+    Ok(json_ok(resp))
 }
 
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -547,56 +481,50 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
     )
 }
 
-async fn sources_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn sources_handler(
+    State(state): State<Arc<AppState>>,
+) -> JsonOk {
     let sources = state.credibility.read().await.list();
-    pretty_ok(serde_json::json!({ "sources": sources }))
+    json_ok(serde_json::json!({ "sources": sources }))
 }
 
-async fn memory_stats_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn memory_stats_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    match graph.memory_tier_stats().await {
-        Ok((working, long_term)) => pretty_ok(MemoryTierStats {
-            working_count: working,
-            long_term_count: long_term,
-        }),
-        Err(e) => {
-            tracing::error!("Memory stats error: {e}");
-            pretty_err(e)
-        }
-    }
+    let (working, long_term) = graph.memory_tier_stats().await?;
+    Ok(json_ok(MemoryTierStats {
+        working_count: working,
+        long_term_count: long_term,
+    }))
 }
 
-async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn health_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    match graph.ping().await {
-        Ok(()) => pretty_ok(HealthResponse {
-            status: "ok".to_string(),
-            graph: state.graph_registry().default_graph_name().to_string(),
-        }),
-        Err(e) => PrettyJson(
-            StatusCode::SERVICE_UNAVAILABLE,
-            serde_json::to_string_pretty(&ErrorResponse {
-                error: format!("graph backend unavailable: {e}"),
-            }).unwrap_or_default(),
-        ),
-    }
+    graph.ping().await.map_err(|e| {
+        AppError::unavailable(format!("graph backend unavailable: {e}"))
+    })?;
+    Ok(json_ok(HealthResponse {
+        status: "ok".to_string(),
+        graph: state.graph_registry().default_graph_name().to_string(),
+    }))
 }
 
 async fn admin_seed_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AdminSeedRequest>,
-) -> impl IntoResponse {
+) -> Result<JsonOk, AppError> {
     use chrono::Utc;
     use crate::llm::pseudo_embed;
     use crate::models::{Entity, MemoryTier, Relation};
 
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
 
-
     let mut entities_created = 0usize;
     let mut edges_created = 0usize;
 
-    // Insert entities
     for e in &req.entities {
         let embedding = pseudo_embed(&e.name);
         let entity = Entity {
@@ -609,18 +537,12 @@ async fn admin_seed_handler(
             created_at: Utc::now(),
             embedding,
         };
-        if let Err(err) = graph.upsert_entity(&entity).await {
-            return PrettyJson(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::to_string_pretty(&crate::models::ErrorResponse {
-                    error: format!("entity '{}': {err}", e.name),
-                }).unwrap_or_default(),
-            );
-        }
+        graph.upsert_entity(&entity).await.map_err(|err| {
+            AppError::internal(format!("entity '{}': {err}", e.name))
+        })?;
         entities_created += 1;
     }
 
-    // Insert edges
     for edge in &req.edges {
         let embedding = pseudo_embed(&edge.fact);
         let valid_at = edge.valid_at.as_deref()
@@ -647,28 +569,23 @@ async fn admin_seed_handler(
             created_at: valid_at,
             memory_tier: tier,
         };
-        if let Err(err) = graph.create_edge(&edge.subject_id, &edge.object_id, &relation).await {
-            return PrettyJson(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::to_string_pretty(&crate::models::ErrorResponse {
-                    error: format!("edge '{}': {err}", edge.fact),
-                }).unwrap_or_default(),
-            );
-        }
+        graph.create_edge(&edge.subject_id, &edge.object_id, &relation).await.map_err(|err| {
+            AppError::internal(format!("edge '{}': {err}", edge.fact))
+        })?;
         edges_created += 1;
     }
 
-    pretty_ok(AdminSeedResponse {
+    Ok(json_ok(AdminSeedResponse {
         entities_created,
         edges_created,
-    })
+    }))
 }
 
 async fn graphs_list_handler(
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+) -> JsonOk {
     let graphs = state.graph_registry().list().await;
-    pretty_ok(serde_json::json!({
+    json_ok(serde_json::json!({
         "default": state.graph_registry().default_graph_name(),
         "graphs": graphs,
     }))
@@ -677,11 +594,8 @@ async fn graphs_list_handler(
 async fn graphs_drop_handler(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
-) -> impl IntoResponse {
-    if let Err(e) = state.graph_registry().drop_graph(&name).await {
-        tracing::error!("Drop graph '{name}' error: {e}");
-        return pretty_err(e);
-    }
+) -> Result<JsonOk, AppError> {
+    state.graph_registry().drop_graph(&name).await?;
 
     // Clear in-memory state when dropping the default graph
     if name == state.graph_registry().default_graph_name() {
@@ -691,5 +605,5 @@ async fn graphs_drop_handler(
         state.metrics.reset();
     }
 
-    pretty_ok(serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") }))
+    Ok(json_ok(serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") })))
 }

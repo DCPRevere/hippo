@@ -95,15 +95,45 @@ async fn main() -> anyhow::Result<()> {
         credibility: Arc::new(tokio::sync::RwLock::new(cred_registry)),
     });
 
+    // Shutdown signal — broadcasts to all receivers when SIGINT/SIGTERM arrives
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+
     // Spawn background maintenance loop
     let maintenance_state = Arc::clone(&state);
-    tokio::spawn(pipeline::maintain::run_maintenance_loop(maintenance_state));
+    tokio::spawn(pipeline::maintain::run_maintenance_loop(maintenance_state, shutdown_rx));
 
     // Start HTTP server
     let addr = format!("0.0.0.0:{}", state.config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Listening on {addr}");
 
-    axum::serve(listener, http::router(state)).await?;
+    axum::serve(listener, http::router(state))
+        .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+        .await?;
+
+    tracing::info!("Shutdown complete");
     Ok(())
+}
+
+async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<()>) {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("Received SIGINT, shutting down"),
+        _ = terminate => tracing::info!("Received SIGTERM, shutting down"),
+    }
+
+    // Notify the maintenance loop to stop
+    drop(shutdown_tx);
 }
