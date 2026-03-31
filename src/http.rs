@@ -1,28 +1,20 @@
 use axum::{
     extract::{rejection::JsonRejection, FromRequest, Path, Query, Request, State},
     http::StatusCode,
-    response::{
-        sse::{Event, Sse},
-        IntoResponse,
-    },
+    response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
-use futures::stream::Stream;
-use tokio_stream::StreamExt;
-use std::{convert::Infallible, sync::Arc};
-use tokio_stream::wrappers::ReceiverStream;
+use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 use crate::error::AppError;
 use crate::models::{
     AdminSeedRequest, AdminSeedResponse, AskRequest,
     BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
-    ConsolidateRequest, ContextProgress, ContextRequest, ErrorResponse, HealthResponse,
-    MemoryTierStats, ReflectRequest, RememberProgress, RememberRequest,
-    SmartQueryRequest, TemporalContextRequest,
+    ContextRequest, ErrorResponse, HealthResponse, RememberRequest,
 };
-use crate::pipeline::{ask, consolidate, context, context_temporal, diagnose, maintain, query, reflect, remember, timeline};
+use crate::pipeline::{ask, maintain, remember};
 use crate::state::AppState;
 
 // -- JSON response helper -----------------------------------------------------
@@ -78,7 +70,6 @@ where
 }
 
 const MAX_LIMIT: usize = 500;
-const MAX_HOPS: usize = 10;
 const MAX_BATCH: usize = 100;
 
 impl Validate for RememberRequest {
@@ -100,16 +91,6 @@ impl Validate for ContextRequest {
         if self.query.trim().is_empty() {
             return Err("query must not be empty".into());
         }
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > MAX_LIMIT {
-                return Err(format!("limit must be between 1 and {MAX_LIMIT}"));
-            }
-        }
-        if let Some(hops) = self.max_hops {
-            if hops > MAX_HOPS {
-                return Err(format!("max_hops must be at most {MAX_HOPS}"));
-            }
-        }
         Ok(())
     }
 }
@@ -118,20 +99,6 @@ impl Validate for AskRequest {
     fn validate(&self) -> Result<(), String> {
         if self.question.trim().is_empty() {
             return Err("question must not be empty".into());
-        }
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > MAX_LIMIT {
-                return Err(format!("limit must be between 1 and {MAX_LIMIT}"));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Validate for SmartQueryRequest {
-    fn validate(&self) -> Result<(), String> {
-        if self.query.trim().is_empty() {
-            return Err("query must not be empty".into());
         }
         if let Some(limit) = self.limit {
             if limit == 0 || limit > MAX_LIMIT {
@@ -159,37 +126,6 @@ impl Validate for BatchRememberRequest {
     }
 }
 
-impl Validate for TemporalContextRequest {
-    fn validate(&self) -> Result<(), String> {
-        if self.query.trim().is_empty() {
-            return Err("query must not be empty".into());
-        }
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > MAX_LIMIT {
-                return Err(format!("limit must be between 1 and {MAX_LIMIT}"));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Validate for ReflectRequest {
-    fn validate(&self) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-impl Validate for ConsolidateRequest {
-    fn validate(&self) -> Result<(), String> {
-        if let Some(t) = self.prune_threshold {
-            if !(0.0..=1.0).contains(&t) {
-                return Err("prune_threshold must be between 0.0 and 1.0".into());
-            }
-        }
-        Ok(())
-    }
-}
-
 // -- Router -------------------------------------------------------------------
 
 #[derive(Debug, serde::Deserialize)]
@@ -199,31 +135,29 @@ struct GraphQuery {
 
 pub fn router(state: Arc<AppState>) -> Router {
     let mut app = Router::new()
-        .route("/ask", post(ask_handler))
-        .route("/query", post(query_handler))
+        // Core endpoints
         .route("/remember", post(remember_handler))
-        .route("/remember/stream", post(remember_stream_handler))
         .route("/remember/batch", post(remember_batch_handler))
         .route("/context", post(context_handler))
-        .route("/context/stream", post(context_stream_handler))
-        .route("/context/temporal", post(context_temporal_handler))
-        .route("/timeline/{entity_name}", get(timeline_handler))
-        .route("/reflect", post(reflect_handler))
-        .route("/diagnose", post(diagnose_handler))
-        .route("/graph", get(graph_handler))
+        .route("/ask", post(ask_handler))
+        // REST resources
+        .route("/entities/{id}", get(entity_handler))
+        .route("/entities/{id}/edges", get(entity_edges_handler))
+        .route("/edges/{id}", get(edge_handler))
+        .route("/edges/{id}/provenance", get(edge_provenance_handler))
+        // Operations
         .route("/maintain", post(maintain_handler))
-        .route("/consolidate", post(consolidate_handler))
-        .route("/provenance/{edge_id}", get(provenance_handler))
-        .route("/memory/stats", get(memory_stats_handler))
+        .route("/graph", get(graph_handler))
+        // Observability
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
-        .route("/sources", get(sources_handler));
+        // Graphs
+        .route("/graphs", get(graphs_list_handler))
+        .route("/graphs/drop/{name}", delete(graphs_drop_handler));
 
     if state.config.allow_admin {
         app = app
-            .route("/admin/seed", post(admin_seed_handler))
-            .route("/graphs", get(graphs_list_handler))
-            .route("/graphs/drop/{name}", delete(graphs_drop_handler));
+            .route("/admin/seed", post(admin_seed_handler));
     }
 
     app.layer(TraceLayer::new_for_http())
@@ -232,24 +166,6 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 // -- Handlers -----------------------------------------------------------------
 
-async fn ask_handler(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<AskRequest>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = ask::ask(&state, &*graph, req).await?;
-    Ok(json_ok(resp))
-}
-
-async fn query_handler(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<SmartQueryRequest>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = query::smart_query(&state, &*graph, req).await?;
-    Ok(json_ok(resp))
-}
-
 async fn remember_handler(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<RememberRequest>,
@@ -257,31 +173,6 @@ async fn remember_handler(
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
     let resp = remember::remember(&state, &*graph, req, None).await?;
     Ok(json_ok(resp))
-}
-
-async fn remember_stream_handler(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<RememberRequest>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<RememberProgress>(32);
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-
-    tokio::spawn(async move {
-        match remember::remember(&state, &*graph, req, Some(tx.clone())).await {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!("Remember stream error: {e:#}");
-                let _ = tx.send(RememberProgress::Error(e.to_string())).await;
-            }
-        }
-    });
-
-    let stream = ReceiverStream::new(rx).map(|progress| {
-        let data = serde_json::to_string(&progress).unwrap_or_default();
-        Ok(Event::default().data(data))
-    });
-
-    Sse::new(stream)
 }
 
 async fn remember_batch_handler(
@@ -373,79 +264,72 @@ async fn context_handler(
     ValidJson(req): ValidJson<ContextRequest>,
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = context::context(&state, &*graph, req, None).await?;
-    Ok(json_ok(resp))
+    let ctx = remember::gather_pre_extraction_context(&state, &*graph, &req.query).await?;
+    Ok(json_ok(ctx))
 }
 
-async fn context_stream_handler(
+async fn ask_handler(
     State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<ContextRequest>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<ContextProgress>(32);
-
-    tokio::spawn(async move {
-        let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-        match context::context(&state, &*graph, req, Some(tx.clone())).await {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!("Context stream error: {e:#}");
-                let _ = tx.send(ContextProgress::Error(e.to_string())).await;
-            }
-        }
-    });
-
-    let stream = ReceiverStream::new(rx).map(|progress| {
-        let data = serde_json::to_string(&progress).unwrap_or_default();
-        Ok(Event::default().data(data))
-    });
-
-    Sse::new(stream)
-}
-
-async fn context_temporal_handler(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<TemporalContextRequest>,
+    ValidJson(req): ValidJson<AskRequest>,
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = context_temporal::context_temporal(&state, &*graph, req).await?;
+    let resp = ask::ask(&state, &*graph, req).await?;
     Ok(json_ok(resp))
 }
 
-async fn reflect_handler(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<ReflectRequest>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = reflect::reflect(&state, &*graph, req).await?;
-    Ok(json_ok(resp))
-}
+// -- REST resources -----------------------------------------------------------
 
-async fn timeline_handler(
+async fn entity_handler(
     State(state): State<Arc<AppState>>,
-    Path(entity_name): Path<String>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().get_default().await;
-    let resp = timeline::timeline(&state, &*graph, &entity_name).await?;
-    Ok(json_ok(resp))
-}
-
-async fn diagnose_handler(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<ContextRequest>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = diagnose::diagnose(&state, &*graph, req).await?;
-    Ok(json_ok(resp))
-}
-
-async fn graph_handler(
-    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
-    let resp = diagnose::graph_dump(&state, &*graph).await?;
+    match graph.get_entity_by_id(&id).await? {
+        Some(entity) => Ok(json_ok(entity)),
+        None => Err(AppError::not_found(format!("entity '{id}' not found"))),
+    }
+}
+
+async fn entity_edges_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(params): Query<GraphQuery>,
+) -> Result<JsonOk, AppError> {
+    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    // Verify entity exists
+    if graph.get_entity_by_id(&id).await?.is_none() {
+        return Err(AppError::not_found(format!("entity '{id}' not found")));
+    }
+    let edges = graph.find_all_active_edges_from(&id).await?;
+    Ok(json_ok(edges))
+}
+
+async fn edge_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Query(params): Query<GraphQuery>,
+) -> Result<JsonOk, AppError> {
+    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    // Walk all edges from both endpoints to find this edge by ID
+    let all_edges = graph.dump_all_edges().await?;
+    match all_edges.into_iter().find(|e| e.edge_id == id) {
+        Some(edge) => Ok(json_ok(edge)),
+        None => Err(AppError::not_found(format!("edge {id} not found"))),
+    }
+}
+
+async fn edge_provenance_handler(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Query(params): Query<GraphQuery>,
+) -> Result<JsonOk, AppError> {
+    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let resp = graph.get_provenance(id).await?;
     Ok(json_ok(resp))
 }
+
+// -- Operations ---------------------------------------------------------------
 
 async fn maintain_handler(
     State(state): State<Arc<AppState>>,
@@ -455,49 +339,24 @@ async fn maintain_handler(
     Ok(json_ok(serde_json::json!({"status": "maintenance complete"})))
 }
 
-async fn consolidate_handler(
+async fn graph_handler(
     State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<ConsolidateRequest>,
+    Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = consolidate::consolidate(&state, &*graph, req).await?;
-    Ok(json_ok(resp))
+    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let entities = graph.dump_all_entities().await?;
+    let all_edges = graph.dump_all_edges().await?;
+    let (active, invalidated): (Vec<_>, Vec<_>) = all_edges
+        .into_iter()
+        .partition(|e| e.invalid_at.is_none());
+    Ok(json_ok(serde_json::json!({
+        "graph": graph.graph_name(),
+        "entities": entities,
+        "edges": { "active": active, "invalidated": invalidated },
+    })))
 }
 
-async fn provenance_handler(
-    State(state): State<Arc<AppState>>,
-    Path(edge_id): Path<i64>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().get_default().await;
-    let resp = graph.get_provenance(edge_id).await?;
-    Ok(json_ok(resp))
-}
-
-async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [("content-type", "text/plain; version=0.0.4")],
-        state.metrics.to_prometheus(),
-    )
-}
-
-async fn sources_handler(
-    State(state): State<Arc<AppState>>,
-) -> JsonOk {
-    let sources = state.credibility.read().await.list();
-    json_ok(serde_json::json!({ "sources": sources }))
-}
-
-async fn memory_stats_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().get_default().await;
-    let (working, long_term) = graph.memory_tier_stats().await?;
-    Ok(json_ok(MemoryTierStats {
-        working_count: working,
-        long_term_count: long_term,
-    }))
-}
+// -- Observability ------------------------------------------------------------
 
 async fn health_handler(
     State(state): State<Arc<AppState>>,
@@ -511,6 +370,18 @@ async fn health_handler(
         graph: state.graph_registry().default_graph_name().to_string(),
     }))
 }
+
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4")],
+        state.metrics.to_prometheus(),
+    )
+}
+
+
+
+// -- Admin --------------------------------------------------------------------
 
 async fn admin_seed_handler(
     State(state): State<Arc<AppState>>,

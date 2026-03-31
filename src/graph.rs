@@ -213,27 +213,44 @@ impl GraphClient {
 
     pub async fn fulltext_search_entities(&self, query_str: &str) -> Result<Vec<EntityRow>> {
         // Search each word independently and merge results, so "Alice sister" finds "Alice"
-        let tokens: Vec<&str> = query_str.split_whitespace().collect();
+        let tokens: Vec<&str> = query_str.split_whitespace()
+            .filter(|t| t.len() >= 2)
+            .filter(|t| !STOP_WORDS.contains(&t.to_lowercase().as_str()))
+            // Strip punctuation that breaks fulltext queries (e.g. &, —, (, ))
+            .filter(|t| t.chars().any(|c| c.is_alphanumeric()))
+            .take(20)
+            .collect();
         let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
 
         let mut graph = self.conn().lock().await;
         for token in tokens {
-            let safe = token.replace('\'', "\\'");
+            // Strip non-alphanumeric chars from edges of token
+            let clean: String = token.chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
+                .collect();
+            if clean.is_empty() { continue; }
+            let safe = clean.replace('\'', "\\'");
             let query = format!(
                 "CALL db.idx.fulltext.queryNodes('Entity', '{}') YIELD node RETURN node LIMIT 5",
                 safe
             );
-            let result = graph.query(&query).execute().await
-                .context("fulltext search failed")?;
-            let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-            for row in rows {
-                if let Some(entity) = row.into_iter().next().and_then(|v| node_to_entity_row(v)) {
-                    match entity {
-                        Ok(e) if seen.insert(e.id.clone()) => results.push(Ok(e)),
-                        Ok(_) => {}
-                        Err(e) => results.push(Err(e)),
+            match graph.query(&query).execute().await {
+                Ok(result) => {
+                    let rows: Vec<Vec<FalkorValue>> = result.data.collect();
+                    for row in rows {
+                        if let Some(entity) = row.into_iter().next().and_then(|v| node_to_entity_row(v)) {
+                            match entity {
+                                Ok(e) if seen.insert(e.id.clone()) => results.push(Ok(e)),
+                                Ok(_) => {}
+                                Err(e) => results.push(Err(e)),
+                            }
+                        }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!(token = %clean, graph = %self.graph_name, "fulltext search failed for token: {e}");
+                    // Skip this token, don't fail the whole search
                 }
             }
         }
@@ -342,18 +359,10 @@ impl GraphClient {
 
     pub async fn fulltext_search_edges_at(&self, query_str: &str, at: DateTime<Utc>) -> Result<Vec<EdgeRow>> {
         let at_iso = at.to_rfc3339();
-        let stop_words: std::collections::HashSet<&str> = [
-            "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "shall", "can", "my", "your", "his", "her",
-            "its", "our", "their", "i", "me", "we", "you", "he", "she", "they",
-            "it", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-            "and", "or", "but", "not", "no",
-        ].iter().cloned().collect();
 
         let tokens: Vec<String> = query_str
             .split_whitespace()
-            .filter(|t| t.len() > 2 && !stop_words.contains(&t.to_lowercase().as_str()))
+            .filter(|t| t.len() > 2 && !STOP_WORDS.contains(&t.to_lowercase().as_str()))
             .map(|t| t.replace('\'', "\\'").to_lowercase())
             .collect();
 

@@ -3,3 +3,4 @@ fixtures/*.json
 !fixtures/llm-responses.json
 
 .env
+*.http

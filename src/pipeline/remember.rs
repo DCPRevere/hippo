@@ -354,7 +354,7 @@ fn resolve_ref(reference: &str, ref_ids: &HashMap<String, String>, known_ids: &H
 }
 
 
-async fn gather_pre_extraction_context(
+pub async fn gather_pre_extraction_context(
     state: &AppState,
     graph: &dyn GraphBackend,
     statement: &str,
@@ -450,32 +450,19 @@ async fn gather_pre_extraction_context(
         collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
     }
 
-    // 3. Walk 1-hop from matched entities
-    if !matched_ids.is_empty() {
-        let hop_edges = graph.walk_one_hop(&matched_ids, 50).await?;
-        tracing::debug!(count = hop_edges.len(), from = matched_ids.len(), "context: 1-hop edges");
+    // 3. Walk 1-hop from matched entities (excluding the principal to avoid pulling the entire graph)
+    let non_principal_ids: Vec<String> = matched_ids.iter()
+        .filter(|id| principal_id.as_ref() != Some(id))
+        .cloned()
+        .collect();
+    if !non_principal_ids.is_empty() {
+        let hop_edges = graph.walk_one_hop(&non_principal_ids, 30).await?;
+        tracing::debug!(count = hop_edges.len(), from = non_principal_ids.len(), "context: 1-hop edges (non-principal)");
         for edge in &hop_edges {
             collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
         }
-
-        // 4. Walk 2nd hop for broader context
-        let neighbour_ids: Vec<String> = hop_edges
-            .iter()
-            .flat_map(|e| [e.subject_id.clone(), e.object_id.clone()])
-            .filter(|id| !matched_ids.contains(id))
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .take(10)
-            .collect();
-        if !neighbour_ids.is_empty() {
-            let hop2_edges = graph.walk_one_hop(&neighbour_ids, 30).await?;
-            tracing::debug!(count = hop2_edges.len(), from = neighbour_ids.len(), "context: 2-hop edges");
-            for edge in &hop2_edges {
-                collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
-            }
-        }
     } else {
-        tracing::debug!("context: no matched entity ids, skipping hop walks");
+        tracing::debug!("context: no non-principal matched ids, skipping hop walks");
     }
 
     tracing::debug!(nodes = nodes.len(), edges = edges.len(), principal = ?principal_id, "context: final");

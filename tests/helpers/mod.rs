@@ -188,10 +188,10 @@ pub async fn remember_as(client: &Client, base_url: &str, statement: &str, sourc
     let _: Value = resp.json().await.expect("remember_as response not JSON");
 }
 
-pub async fn query_facts(client: &Client, base_url: &str, q: &str, limit: usize) -> Vec<Value> {
+pub async fn query_facts(client: &Client, base_url: &str, q: &str, _limit: usize) -> Vec<Value> {
     let resp: Value = client
         .post(format!("{base_url}/context"))
-        .json(&serde_json::json!({ "query": q, "limit": limit }))
+        .json(&serde_json::json!({ "query": q }))
         .send()
         .await
         .unwrap_or_else(|e| panic!("context '{q}' failed: {e}"))
@@ -199,7 +199,8 @@ pub async fn query_facts(client: &Client, base_url: &str, q: &str, limit: usize)
         .await
         .expect("context response not JSON");
 
-    resp["facts"]
+    // /context now returns GraphContext {nodes, edges} — extract edges as facts
+    resp["edges"]
         .as_array()
         .cloned()
         .unwrap_or_default()

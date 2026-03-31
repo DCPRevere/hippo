@@ -203,7 +203,9 @@ pub struct OpExecutionTrace {
 pub struct ContextRequest {
     pub query: String,
     pub limit: Option<usize>,
+    #[serde(default)]
     pub max_hops: Option<usize>,
+    #[serde(default)]
     pub memory_tier_filter: Option<String>,
     pub graph: Option<String>,
 }
@@ -559,19 +561,22 @@ pub struct AdminSeedResponse {
 
 // FalkorDB row types for parsing results
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EntityRow {
     pub id: String,
     pub name: String,
     pub entity_type: String,
     pub resolved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     pub created_at: String,
+    #[serde(skip)]
     pub embedding: Vec<f32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EdgeRow {
     pub edge_id: i64,
     pub subject_id: String,
@@ -581,9 +586,11 @@ pub struct EdgeRow {
     pub confidence: f32,
     pub salience: i64,
     pub valid_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub invalid_at: Option<String>,
     pub object_id: String,
     pub object_name: String,
+    #[serde(skip)]
     pub embedding: Vec<f32>,
     pub decayed_confidence: f32,
     pub source_agents: String,
@@ -621,8 +628,8 @@ pub struct SubgraphEdge {
 pub struct GraphContext {
     pub nodes: Vec<SubgraphNode>,
     pub edges: Vec<SubgraphEdge>,
-    /// The entity ID of the principal/narrator, if known.
-    #[serde(skip)]
+    /// The entity ID of the principal, if known.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub principal_id: Option<String>,
 }
 
