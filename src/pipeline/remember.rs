@@ -1,0 +1,566 @@
+use std::sync::atomic::Ordering;
+
+use anyhow::Result;
+use chrono::Utc;
+use uuid::Uuid;
+
+use std::collections::{HashMap, HashSet};
+
+use crate::graph_backend::GraphBackend;
+use crate::math::cosine_similarity;
+use crate::models::{
+    Entity, GraphOp, MemoryTier, OpExecutionTrace, Relation,
+    RememberProgress, RememberRequest, RememberResponse, RememberTrace,
+};
+use crate::state::AppState;
+
+// Re-export subgraph context types from models (canonical location).
+pub use crate::models::{GraphContext, SubgraphEdge, SubgraphNode};
+
+async fn send_progress(tx: &Option<tokio::sync::mpsc::Sender<RememberProgress>>, event: RememberProgress) {
+    if let Some(tx) = tx {
+        let _ = tx.send(event).await;
+    }
+}
+
+pub async fn remember(
+    state: &AppState,
+    graph: &dyn GraphBackend,
+    req: RememberRequest,
+    progress_tx: Option<tokio::sync::mpsc::Sender<RememberProgress>>,
+) -> Result<RememberResponse> {
+    state.metrics.remember_calls_total.fetch_add(1, Ordering::Relaxed);
+
+    let source_agent = req.source_agent.as_deref().unwrap_or("unknown").to_string();
+    let now = Utc::now();
+
+    // Look up source credibility
+    let recorded_cred = state.credibility.read().await.get(&source_agent);
+    let src_cred = match req.source_credibility_hint {
+        Some(h) => recorded_cred.max(h.min(1.0)),
+        None => recorded_cred,
+    };
+
+    // Step 1: Search graph for context
+    let context = if state.config.infer_pre_context {
+        let ctx = gather_pre_extraction_context(state, graph, &req.statement).await?;
+        tracing::info!(
+            nodes = ctx.node_count(),
+            edges = ctx.edge_count(),
+            "remember: gathered context"
+        );
+        send_progress(&progress_tx, RememberProgress::ContextGathered {
+            entities_found: ctx.node_count(),
+            edges_found: ctx.edge_count(),
+        }).await;
+        ctx
+    } else {
+        GraphContext::empty()
+    };
+
+    // Step 2: Ask LLM for graph operations
+    tracing::info!(statement = %req.statement, "remember: planning operations");
+    send_progress(&progress_tx, RememberProgress::Planning).await;
+
+    let mut ops_result = state.llm.extract_operations(&req.statement, &context).await?;
+    tracing::info!(operations = ops_result.operations.len(), "remember: planned");
+    send_progress(&progress_tx, RememberProgress::Planned {
+        operations: ops_result.operations.len(),
+    }).await;
+
+    let original_operations = ops_result.operations.clone();
+
+    // Build known IDs map from context before any moves
+    let mut known_ids: HashMap<String, String> = HashMap::new();
+    for node in &context.nodes {
+        known_ids.insert(node.name.clone(), node.id.clone());
+        known_ids.insert(node.id.clone(), node.id.clone());
+    }
+
+    // Step 3: If enrichment enabled, search graph by extracted entity names for missed context
+    let mut was_revised = false;
+    if state.config.infer_enrichment {
+        let entity_names: Vec<String> = ops_result.operations.iter().filter_map(|op| {
+            match op {
+                GraphOp::CreateNode { name, .. } => Some(name.clone()),
+                _ => None,
+            }
+        }).collect();
+
+        if !entity_names.is_empty() {
+            let additional = gather_context_by_names(graph, &entity_names, &context).await?;
+            if !additional.is_empty() {
+                tracing::info!(
+                    new_nodes = additional.node_count(),
+                    "remember: found additional context, revising operations"
+                );
+                send_progress(&progress_tx, RememberProgress::Revising {
+                    new_context_entities: additional.node_count(),
+                }).await;
+
+                // Merge original + additional context for revision
+                let mut merged = context;
+                let existing_ids: HashSet<String> = merged.nodes.iter().map(|n| n.id.clone()).collect();
+                for node in additional.nodes {
+                    if !existing_ids.contains(&node.id) {
+                        known_ids.insert(node.name.clone(), node.id.clone());
+                        known_ids.insert(node.id.clone(), node.id.clone());
+                        merged.nodes.push(node);
+                    }
+                }
+                merged.edges.extend(additional.edges);
+
+                ops_result = state.llm.revise_operations(&ops_result, &merged).await?;
+                was_revised = true;
+                tracing::info!(operations = ops_result.operations.len(), "remember: revised");
+            }
+        }
+    }
+
+    // Step 4: Execute operations
+    let mut entities_created = 0usize;
+    let mut entities_updated = 0usize;
+    let mut facts_written = 0usize;
+    let mut facts_invalidated = 0usize;
+    let mut execution_trace = Vec::new();
+
+    // Map "new:<name>" references to actual IDs created in this batch
+    let mut new_node_ids: HashMap<String, String> = HashMap::new();
+
+    for op in &ops_result.operations {
+        send_progress(&progress_tx, RememberProgress::Executing {
+            op: format!("{:?}", op),
+        }).await;
+
+        match op {
+            GraphOp::CreateNode { node_ref, name, node_type, properties } => {
+                // Check if entity already exists by exact name match
+                let existing = graph.fulltext_search_entities(name).await?;
+                if let Some(found) = existing.iter().find(|e| e.name.to_lowercase() == name.to_lowercase()) {
+                    tracing::info!(name = %name, "remember: node already exists, skipping create");
+                    new_node_ids.insert(format!("new:{name}"), found.id.clone());
+                    if let Some(r) = node_ref {
+                        new_node_ids.insert(r.clone(), found.id.clone());
+                    }
+                    known_ids.insert(name.clone(), found.id.clone());
+
+                    // Apply properties as update
+                    if !properties.is_empty() {
+                        for (key, value) in properties {
+                            graph.set_entity_property(&found.id, key, value).await?;
+                        }
+                    }
+
+                    execution_trace.push(OpExecutionTrace {
+                        op: "create_node".to_string(),
+                        outcome: "resolved_existing".to_string(),
+                        details: Some(format!("{name} → {}", found.id)),
+                    });
+                    continue;
+                }
+
+                let embedding = state.llm.embed(name).await?;
+                let id = Uuid::new_v4().to_string();
+                let entity = Entity {
+                    id: id.clone(),
+                    name: name.clone(),
+                    entity_type: node_type.clone(),
+                    resolved: true,
+                    hint: None,
+                    content: None,
+                    created_at: now,
+                    embedding,
+                };
+                graph.upsert_entity(&entity).await?;
+
+                // Mark as principal so it can be found even after renames
+                if name.to_lowercase() == "principal" {
+                    graph.set_entity_property(&id, "is_principal", "true").await?;
+                }
+
+                for (key, value) in properties {
+                    graph.set_entity_property(&id, key, value).await?;
+                }
+
+                new_node_ids.insert(format!("new:{name}"), id.clone());
+                if let Some(r) = node_ref {
+                    new_node_ids.insert(r.clone(), id.clone());
+                }
+                known_ids.insert(name.clone(), id.clone());
+                let _ = state.recent_nodes_tx.try_send(id.clone());
+                entities_created += 1;
+
+                tracing::info!(name = %name, id = %id, "remember: created node");
+                execution_trace.push(OpExecutionTrace {
+                    op: "create_node".to_string(),
+                    outcome: "created".to_string(),
+                    details: Some(format!("{name} → {id}")),
+                });
+            }
+
+            GraphOp::UpdateNode { id, set } => {
+                for (key, value) in set {
+                    graph.set_entity_property(id, key, value).await?;
+                }
+                entities_updated += 1;
+                let _ = state.recent_nodes_tx.try_send(id.clone());
+
+                tracing::info!(id = %id, "remember: updated node");
+                execution_trace.push(OpExecutionTrace {
+                    op: "update_node".to_string(),
+                    outcome: "updated".to_string(),
+                    details: Some(format!("id={id}, set {:?}", set)),
+                });
+            }
+
+            GraphOp::CreateEdge { from, to, relation, fact, confidence } => {
+                let from_id = resolve_ref(from, &new_node_ids, &known_ids);
+                let to_id = resolve_ref(to, &new_node_ids, &known_ids);
+
+                let (from_id, to_id) = match (from_id, to_id) {
+                    (Some(f), Some(t)) => (f, t),
+                    _ => {
+                        tracing::warn!(from = %from, to = %to, "remember: unresolved edge reference, skipping");
+                        execution_trace.push(OpExecutionTrace {
+                            op: "create_edge".to_string(),
+                            outcome: "skipped".to_string(),
+                            details: Some(format!("unresolved: {from} → {to}")),
+                        });
+                        continue;
+                    }
+                };
+
+                // Embed and check for duplicate by cosine similarity
+                let embedding = state.llm.embed(fact).await?;
+                let existing = graph.find_all_active_edges_from(&from_id).await?;
+                let is_dup = existing.iter().any(|e| {
+                    cosine_similarity(&embedding, &e.embedding) > 0.9
+                });
+
+                if is_dup {
+                    tracing::info!(fact = %fact, "remember: duplicate edge (by embedding), skipping");
+                    execution_trace.push(OpExecutionTrace {
+                        op: "create_edge".to_string(),
+                        outcome: "duplicate".to_string(),
+                        details: Some(fact.clone()),
+                    });
+                    continue;
+                }
+
+                let weighted_conf = confidence * src_cred;
+                let rel = Relation {
+                    fact: fact.clone(),
+                    relation_type: relation.clone(),
+                    embedding,
+                    source_agents: vec![source_agent.clone()],
+                    valid_at: now,
+                    invalid_at: None,
+                    confidence: weighted_conf,
+                    salience: 0,
+                    created_at: now,
+                    memory_tier: MemoryTier::Working,
+                };
+
+                graph.create_edge(&from_id, &to_id, &rel).await?;
+                facts_written += 1;
+
+                tracing::info!(fact = %fact, relation = %relation, "remember: wrote edge");
+                execution_trace.push(OpExecutionTrace {
+                    op: "create_edge".to_string(),
+                    outcome: "written".to_string(),
+                    details: Some(fact.clone()),
+                });
+            }
+
+            GraphOp::InvalidateEdge { edge_id, fact, reason } => {
+                let mut invalidated = false;
+
+                // Prefer direct edge_id if provided
+                if let Some(eid) = edge_id {
+                    graph.invalidate_edge(*eid, now).await?;
+                    tracing::info!(edge_id = %eid, reason = %reason, "remember: invalidated edge by id");
+                    invalidated = true;
+                    facts_invalidated += 1;
+                } else if let Some(fact_text) = fact {
+                    // Fallback: find by fact text similarity
+                    let embedding = state.llm.embed(fact_text).await?;
+                    let candidates = graph.vector_search_edges_scored(&embedding, 5).await?;
+                    for (edge, score) in &candidates {
+                        if *score > 0.85 && edge.invalid_at.is_none() {
+                            graph.invalidate_edge(edge.edge_id, now).await?;
+                            tracing::info!(fact = %edge.fact, reason = %reason, "remember: invalidated edge by similarity");
+                            invalidated = true;
+                            facts_invalidated += 1;
+                            break;
+                        }
+                    }
+                }
+
+                execution_trace.push(OpExecutionTrace {
+                    op: "invalidate_edge".to_string(),
+                    outcome: if invalidated { "invalidated" } else { "not_found" }.to_string(),
+                    details: Some(format!("{} — {reason}", edge_id.map(|id| format!("edge_id={id}")).or(fact.clone()).unwrap_or_default())),
+                });
+            }
+        }
+    }
+
+    state.metrics.remember_facts_written.fetch_add(facts_written as u64, Ordering::Relaxed);
+    state.metrics.remember_contradictions.fetch_add(facts_invalidated as u64, Ordering::Relaxed);
+
+    let response = RememberResponse {
+        entities_created,
+        entities_resolved: entities_updated,
+        facts_written,
+        contradictions_invalidated: facts_invalidated,
+        trace: RememberTrace {
+            operations: original_operations,
+            revised_operations: if was_revised { Some(ops_result.operations.clone()) } else { None },
+            execution: execution_trace,
+        },
+    };
+    send_progress(&progress_tx, RememberProgress::Complete(response.clone())).await;
+    Ok(response)
+}
+
+fn resolve_ref(reference: &str, ref_ids: &HashMap<String, String>, known_ids: &HashMap<String, String>) -> Option<String> {
+    // Try ref lookup (e.g. "n1")
+    if let Some(id) = ref_ids.get(reference) {
+        return Some(id.clone());
+    }
+    // Try "new:<name>" for backward compat
+    let new_key = format!("new:{reference}");
+    if let Some(id) = ref_ids.get(&new_key) {
+        return Some(id.clone());
+    }
+    // Try direct ID
+    if let Some(id) = known_ids.get(reference) {
+        return Some(id.clone());
+    }
+    // Try as a name (case-insensitive)
+    let ref_lower = reference.to_lowercase();
+    for (name, id) in known_ids {
+        if name.to_lowercase() == ref_lower {
+            return Some(id.clone());
+        }
+    }
+    None
+}
+
+
+async fn gather_pre_extraction_context(
+    state: &AppState,
+    graph: &dyn GraphBackend,
+    statement: &str,
+) -> Result<GraphContext> {
+    let mut seen_node_ids: HashSet<String> = HashSet::new();
+    let mut nodes: Vec<SubgraphNode> = Vec::new();
+    let mut edges: Vec<SubgraphEdge> = Vec::new();
+    let mut seen_edge_ids: HashSet<i64> = HashSet::new();
+
+    // Helper: add a node if not already seen
+    let mut add_node = |id: &str, name: &str, etype: &str, is_narrator: bool,
+                        seen: &mut HashSet<String>, nodes: &mut Vec<SubgraphNode>| {
+        if seen.insert(id.to_string()) {
+            nodes.push(SubgraphNode {
+                id: id.to_string(),
+                name: name.to_string(),
+                node_type: etype.to_string(),
+                properties: HashMap::new(),
+                is_narrator,
+            });
+        }
+    };
+
+    // Helper: add an edge and its endpoint nodes
+    let mut collect_edge = |edge: &crate::models::EdgeRow,
+                            seen_nodes: &mut HashSet<String>,
+                            nodes: &mut Vec<SubgraphNode>,
+                            seen_edges: &mut HashSet<i64>,
+                            edges: &mut Vec<SubgraphEdge>| {
+        if !seen_edges.insert(edge.edge_id) {
+            return;
+        }
+        add_node(&edge.subject_id, &edge.subject_name, "", false, seen_nodes, nodes);
+        add_node(&edge.object_id, &edge.object_name, "", false, seen_nodes, nodes);
+        edges.push(SubgraphEdge {
+            id: edge.edge_id,
+            from: edge.subject_id.clone(),
+            to: edge.object_id.clone(),
+            relation: edge.relation_type.clone(),
+            fact: edge.fact.clone(),
+            confidence: edge.confidence,
+        });
+    };
+
+    // 0. Always include the principal entity if it exists (survives renames)
+    let mut principal_id: Option<String> = None;
+    if let Some(p) = graph.find_entity_by_property("is_principal", "true").await? {
+        add_node(&p.id, &p.name, &p.entity_type, true, &mut seen_node_ids, &mut nodes);
+        principal_id = Some(p.id.clone());
+    } else {
+        // Fall back to name search for backward compatibility
+        let principal_candidates = graph.fulltext_search_entities("Principal").await?;
+        for e in &principal_candidates {
+            if e.name.to_lowercase() == "principal" {
+                add_node(&e.id, &e.name, &e.entity_type, true, &mut seen_node_ids, &mut nodes);
+                principal_id = Some(e.id.clone());
+                break;
+            }
+        }
+    }
+
+    // 1. Fulltext search for entities mentioned in the statement
+    let ft_entities = graph.fulltext_search_entities(statement).await?;
+    let mut matched_ids: Vec<String> = Vec::new();
+    for e in &ft_entities {
+        add_node(&e.id, &e.name, &e.entity_type, false, &mut seen_node_ids, &mut nodes);
+        matched_ids.push(e.id.clone());
+    }
+    // Also walk from principal
+    for n in &nodes {
+        if n.is_narrator && !matched_ids.contains(&n.id) {
+            matched_ids.push(n.id.clone());
+        }
+    }
+
+    // 2. Vector search for semantically related edges
+    let embedding = state.llm.embed(statement).await?;
+    let vec_edges = graph.vector_search_edges_scored(&embedding, 10).await?;
+    for (edge, _) in &vec_edges {
+        collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
+    }
+
+    // 3. Walk 1-hop from matched entities
+    if !matched_ids.is_empty() {
+        let hop_edges = graph.walk_one_hop(&matched_ids, 50).await?;
+        for edge in &hop_edges {
+            collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
+        }
+
+        // 4. Walk 2nd hop for broader context
+        let neighbour_ids: Vec<String> = hop_edges
+            .iter()
+            .flat_map(|e| [e.subject_id.clone(), e.object_id.clone()])
+            .filter(|id| !matched_ids.contains(id))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .take(10)
+            .collect();
+        if !neighbour_ids.is_empty() {
+            let hop2_edges = graph.walk_one_hop(&neighbour_ids, 30).await?;
+            for edge in &hop2_edges {
+                collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
+            }
+        }
+    }
+
+    Ok(GraphContext { nodes, edges, principal_id })
+}
+
+/// Search graph by entity names to find context that wasn't in the initial search.
+async fn gather_context_by_names(
+    graph: &dyn GraphBackend,
+    names: &[String],
+    existing: &GraphContext,
+) -> Result<GraphContext> {
+    let existing_ids: HashSet<String> = existing.nodes.iter().map(|n| n.id.clone()).collect();
+    let mut seen_node_ids: HashSet<String> = existing_ids;
+    let mut nodes: Vec<SubgraphNode> = Vec::new();
+    let mut edges: Vec<SubgraphEdge> = Vec::new();
+    let mut seen_edge_ids: HashSet<i64> = HashSet::new();
+
+    for name in names {
+        let entities = graph.fulltext_search_entities(name).await?;
+        for e in &entities {
+            if seen_node_ids.insert(e.id.clone()) {
+                nodes.push(SubgraphNode {
+                    id: e.id.clone(),
+                    name: e.name.clone(),
+                    node_type: e.entity_type.clone(),
+                    properties: HashMap::new(),
+                    is_narrator: false,
+                });
+                let hop_edges = graph.walk_one_hop(&[e.id.clone()], 20).await?;
+                for edge in &hop_edges {
+                    if seen_edge_ids.insert(edge.edge_id) {
+                        if seen_node_ids.insert(edge.subject_id.clone()) {
+                            nodes.push(SubgraphNode {
+                                id: edge.subject_id.clone(),
+                                name: edge.subject_name.clone(),
+                                node_type: String::new(),
+                                properties: HashMap::new(),
+                                is_narrator: false,
+                            });
+                        }
+                        if seen_node_ids.insert(edge.object_id.clone()) {
+                            nodes.push(SubgraphNode {
+                                id: edge.object_id.clone(),
+                                name: edge.object_name.clone(),
+                                node_type: String::new(),
+                                properties: HashMap::new(),
+                                is_narrator: false,
+                            });
+                        }
+                        edges.push(SubgraphEdge {
+                            id: edge.edge_id,
+                            from: edge.subject_id.clone(),
+                            to: edge.object_id.clone(),
+                            relation: edge.relation_type.clone(),
+                            fact: edge.fact.clone(),
+                            confidence: edge.confidence,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(GraphContext { nodes, edges, principal_id: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolve_ref_finds_by_ref_id() {
+        let mut ref_ids = HashMap::new();
+        ref_ids.insert("n1".to_string(), "uuid-123".to_string());
+        let known = HashMap::new();
+        assert_eq!(resolve_ref("n1", &ref_ids, &known), Some("uuid-123".into()));
+    }
+
+    #[test]
+    fn resolve_ref_finds_by_new_prefix() {
+        let mut ref_ids = HashMap::new();
+        ref_ids.insert("new:Alice".to_string(), "uuid-alice".to_string());
+        let known = HashMap::new();
+        assert_eq!(resolve_ref("Alice", &ref_ids, &known), Some("uuid-alice".into()));
+    }
+
+    #[test]
+    fn resolve_ref_finds_by_known_id() {
+        let ref_ids = HashMap::new();
+        let mut known = HashMap::new();
+        known.insert("alice-uuid".to_string(), "alice-uuid".to_string());
+        assert_eq!(resolve_ref("alice-uuid", &ref_ids, &known), Some("alice-uuid".into()));
+    }
+
+    #[test]
+    fn resolve_ref_case_insensitive_name_match() {
+        let ref_ids = HashMap::new();
+        let mut known = HashMap::new();
+        known.insert("Alice".to_string(), "uuid-alice".to_string());
+        assert_eq!(resolve_ref("alice", &ref_ids, &known), Some("uuid-alice".into()));
+        assert_eq!(resolve_ref("ALICE", &ref_ids, &known), Some("uuid-alice".into()));
+    }
+
+    #[test]
+    fn resolve_ref_returns_none_for_unknown() {
+        let ref_ids = HashMap::new();
+        let known = HashMap::new();
+        assert_eq!(resolve_ref("nobody", &ref_ids, &known), None);
+    }
+}

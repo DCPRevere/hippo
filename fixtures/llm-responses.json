@@ -1,0 +1,460 @@
+{
+  "fixtures": {
+    "8f934a1bd544b1f1a00203d1fddfef73": {
+      "request_hash": "8f934a1bd544b1f1a00203d1fddfef73",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Bob Smith lives in London\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|conce",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Bob Smith\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"London\",\n      \"entity_type\": \"place\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Bob Smith\",\n      \"relation_type\": \"LIVES_IN\",\n      \"object\": \"London\",\n      \"fact\": \"Bob Smith lives in London\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "4e3572808a9926275e976fb9910b6987": {
+      "request_hash": "4e3572808a9926275e976fb9910b6987",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Alice is married to Bob\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|concept",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Alice\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Bob\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Alice\",\n      \"relation_type\": \"MARRIED_TO\",\n      \"object\": \"Bob\",\n      \"fact\": \"Alice is married to Bob\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Bob\",\n      \"relation_type\": \"MARRIED_TO\",\n      \"object\": \"Alice\",\n      \"fact\": \"Bob is married to Alice\",\n      \"confidence\": 0.95\n    }\n  ]\n}\n```"
+    },
+    "706d41cdb23d5b8cd0565160e9bab50e": {
+      "request_hash": "706d41cdb23d5b8cd0565160e9bab50e",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"50000 pounds\", type=\"concept\", hint=\"\"\nEntity B: name=\"Bob\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "3d9f3d02eb9708aaed5e39fd05b63a71": {
+      "request_hash": "3d9f3d02eb9708aaed5e39fd05b63a71",
+      "system": "You are a knowledge gap analyst. Given known facts about an entity and identified gap areas, generate specific questions that would fill those gaps.",
+      "user": "Entity: Eve\nKnown facts:\n- Eve Williams is a data scientist\n- Eve Williams works at Synodal Inc\n\nGap areas (relation types with no data): AFFILIATED_WITH, ATTENDED, LIVES_IN, MARRIED_TO\n\nGenerate 3-5 ",
+      "response": "```json\n{\n  \"questions\": [\n    \"Where does Eve Williams currently live or reside?\",\n    \"What educational institutions did Eve Williams attend (high school, college, university)?\",\n    \"Is Eve Williams married, and if so, who is her spouse?\",\n    \"What professional organizations or associations is Eve Williams affiliated with?\",\n    \"Did Eve Williams attend any notable conferences, training programs, or certifications relevant to data science?\"\n  ]\n}\n```"
+    },
+    "a86131746b9c9ad4d3a3358b5a3c9453": {
+      "request_hash": "a86131746b9c9ad4d3a3358b5a3c9453",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Alice\", type=\"person\", hint=\"\"\nEntity B: name=\"Alice Chen\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": true, \"confidence\": 0.85}\n```"
+    },
+    "f9e74623e0306a49016dbfe441aff61b": {
+      "request_hash": "f9e74623e0306a49016dbfe441aff61b",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Synodal Inc builds AI software\"\nRelation type: \"BUILDS\"\n\nExisting facts:\n0: \"Synodal Inc is headquartered in London\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"d",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"unrelated\", \"confidence\": 0.95}]\n```"
+    },
+    "ed4b623643165dbe71918e74500c673e": {
+      "request_hash": "ed4b623643165dbe71918e74500c673e",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Frank works at New Company\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|conc",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Frank\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"New Company\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Frank\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"New Company\",\n      \"fact\": \"Frank works at New Company\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "a59b881a55583330012d419991856a7e": {
+      "request_hash": "a59b881a55583330012d419991856a7e",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"New Company\", type=\"organization\", hint=\"\"\nEntity B: name=\"Frank\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "8d77b3dd0d3f7654b681425561686018": {
+      "request_hash": "8d77b3dd0d3f7654b681425561686018",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Carol is the CEO of Synodal Inc\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Carol\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Synodal Inc\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Carol\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"Synodal Inc\",\n      \"fact\": \"Carol is the CEO of Synodal Inc\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Carol\",\n      \"relation_type\": \"MANAGES\",\n      \"object\": \"Synodal Inc\",\n      \"fact\": \"Carol holds a leadership position and manages Synodal Inc\",\n      \"confidence\": 0.9\n    }\n  ]\n}\n```"
+    },
+    "29fd1f53c76e5e7f6a3ecb1deb0bd5ff": {
+      "request_hash": "29fd1f53c76e5e7f6a3ecb1deb0bd5ff",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Alice Chen is a software engineer at Anthropic\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (per",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Alice Chen\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Anthropic\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Alice Chen\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"Anthropic\",\n      \"fact\": \"Alice Chen is a software engineer at Anthropic\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Alice Chen\",\n      \"relation_type\": \"HAS_ROLE\",\n      \"object\": \"software engineer\",\n      \"fact\": \"Alice Chen has the role of software engineer\",\n      \"confidence\": 0.95\n    }\n  ]\n}\n```"
+    },
+    "f33c94cc5f9f5c4a72ca3fb2b152af06": {
+      "request_hash": "f33c94cc5f9f5c4a72ca3fb2b152af06",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"AI software\", type=\"concept\", hint=\"\"\nEntity B: name=\"Carol\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "635f92c9e080586bdac036250886f50a": {
+      "request_hash": "635f92c9e080586bdac036250886f50a",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Alice Chen lives in San Francisco\"\nRelation type: \"LIVES_IN\"\n\nExisting facts:\n0: \"Alice Chen is a software engineer at Anthropic\"\n1: \"Alice is married to Bob\"\n\nFor each existing fact, class",
+      "response": "```json\n[\n  {\"index\": 0, \"classification\": \"unrelated\", \"confidence\": 0.95},\n  {\"index\": 1, \"classification\": \"unrelated\", \"confidence\": 0.95}\n]\n```"
+    },
+    "ef85c4ef4926b891cd0eccd41e50575a": {
+      "request_hash": "ef85c4ef4926b891cd0eccd41e50575a",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Oxford University\", type=\"organization\", hint=\"\"\nEntity B: name=\"London\", type=\"place\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "d1c45a9886a3b3ca65ab73c0fa71da37": {
+      "request_hash": "d1c45a9886a3b3ca65ab73c0fa71da37",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Frank works at Old Company\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|conc",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Frank\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Old Company\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Frank\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"Old Company\",\n      \"fact\": \"Frank works at Old Company\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "e34679f8c946fe15c962b1357cc3bafd": {
+      "request_hash": "e34679f8c946fe15c962b1357cc3bafd",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Grace Lee is a lawyer\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|concept|o",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Grace Lee\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"lawyer\",\n      \"entity_type\": \"concept\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Grace Lee\",\n      \"relation_type\": \"OCCUPATION\",\n      \"object\": \"lawyer\",\n      \"fact\": \"Grace Lee is a lawyer\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "0c594e8267eb2d741d0eadac550d6f22": {
+      "request_hash": "0c594e8267eb2d741d0eadac550d6f22",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Synodal Inc specializes in developing artificial intelligence software\"\nRelation type: \"SPECIALIZES_IN\"\n\nExisting facts:\n0: \"Synodal Inc builds AI software\"\n1: \"Synodal Inc is headquartered",
+      "response": "```json\n[\n  {\n    \"index\": 0,\n    \"classification\": \"duplicate\",\n    \"confidence\": 0.95\n  },\n  {\n    \"index\": 1,\n    \"classification\": \"unrelated\",\n    \"confidence\": 0.99\n  }\n]\n```"
+    },
+    "de58b1227fcef49e80cf0c8374a26a66": {
+      "request_hash": "de58b1227fcef49e80cf0c8374a26a66",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Carol Smith\", type=\"person\", hint=\"\"\nEntity B: name=\"London\", type=\"place\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "007bad285544f37463110ad9e00f1e9e": {
+      "request_hash": "007bad285544f37463110ad9e00f1e9e",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Eve Williams\", type=\"person\", hint=\"\"\nEntity B: name=\"London\", type=\"place\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "cb2d850fc1cdac0ffc1e2ca61070705f": {
+      "request_hash": "cb2d850fc1cdac0ffc1e2ca61070705f",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"75000 pounds\", type=\"concept\", hint=\"\"\nEntity B: name=\"50000 pounds\", type=\"concept\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "a1c491b849fba9517e21250a09fec809": {
+      "request_hash": "a1c491b849fba9517e21250a09fec809",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"San Francisco\", type=\"place\", hint=\"\"\nEntity B: name=\"Bob\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "266487c531a38a4cce73e52fa33e48f4": {
+      "request_hash": "266487c531a38a4cce73e52fa33e48f4",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Carol Smith\", type=\"person\", hint=\"\"\nEntity B: name=\"Bob Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.95}\n```"
+    },
+    "837d852a18097e0d078ca25413a8724b": {
+      "request_hash": "837d852a18097e0d078ca25413a8724b",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Bob Smith studied at Oxford University\"\nRelation type: \"ATTENDED\"\n\nExisting facts:\n0: \"Bob Smith lives in London\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"dupl",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"unrelated\", \"confidence\": 0.95}]\n```"
+    },
+    "965d21f2dda13b238aa5df41b2091a5b": {
+      "request_hash": "965d21f2dda13b238aa5df41b2091a5b",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Anthropic\", type=\"organization\", hint=\"\"\nEntity B: name=\"Alice Chen\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "f56f079b5b5f25520effa95844616913": {
+      "request_hash": "f56f079b5b5f25520effa95844616913",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Eve Williams works at Synodal Inc\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|eve",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Eve Williams\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Synodal Inc\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Eve Williams\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"Synodal Inc\",\n      \"fact\": \"Eve Williams works at Synodal Inc\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "efc4075cc0490af7a957d95ae4dc81dd": {
+      "request_hash": "efc4075cc0490af7a957d95ae4dc81dd",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Bob's salary is 75000 pounds\"\nRelation type: \"SALARY\"\n\nExisting facts:\n0: \"Bob's salary is 50000 pounds\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"duplicate\": s",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"contradiction\", \"confidence\": 0.95}]\n```"
+    },
+    "6f59e7d164212afdcf49183ebc25fcf3": {
+      "request_hash": "6f59e7d164212afdcf49183ebc25fcf3",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Synodal Inc\", type=\"organization\", hint=\"\"\nEntity B: name=\"Carol Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "516c9c16a6ce0e5d69b2a932e9302990": {
+      "request_hash": "516c9c16a6ce0e5d69b2a932e9302990",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Eve Williams\", type=\"person\", hint=\"\"\nEntity B: name=\"Oxford University\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "3f773302a3dbc487e27913a850d32841": {
+      "request_hash": "3f773302a3dbc487e27913a850d32841",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"AI software\", type=\"concept\", hint=\"\"\nEntity B: name=\"Synodal Inc\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\n  \"same_entity\": false,\n  \"confidence\": 0.99\n}\n```"
+    },
+    "d5450b25ca808469c8ac6d1cb71a249a": {
+      "request_hash": "d5450b25ca808469c8ac6d1cb71a249a",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Alice is married to Bob\"\nRelation type: \"MARRIED_TO\"\n\nExisting facts:\n0: \"Alice Chen is a software engineer at Anthropic\"\n\nFor each existing fact, classify its relationship to the new fact:",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"unrelated\", \"confidence\": 0.95}]\n```"
+    },
+    "19a51ea64258b8496ed33289d13d1b28": {
+      "request_hash": "19a51ea64258b8496ed33289d13d1b28",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Synodal Inc builds AI software\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Synodal Inc\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"AI software\",\n      \"entity_type\": \"concept\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Synodal Inc\",\n      \"relation_type\": \"BUILDS\",\n      \"object\": \"AI software\",\n      \"fact\": \"Synodal Inc builds AI software\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Synodal Inc\",\n      \"relation_type\": \"SPECIALIZES_IN\",\n      \"object\": \"AI software\",\n      \"fact\": \"Synodal Inc specializes in developing artificial intelligence software\",\n      \"confidence\": 0.85\n    }\n  ]\n}\n```"
+    },
+    "d33a1b4b6f03fc66f142fb961e265673": {
+      "request_hash": "d33a1b4b6f03fc66f142fb961e265673",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Synodal Inc\", type=\"organization\", hint=\"\"\nEntity B: name=\"Eve Williams\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "b8c6ce31f6ee45f2d035d5f53e601557": {
+      "request_hash": "b8c6ce31f6ee45f2d035d5f53e601557",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Oxford University\", type=\"organization\", hint=\"\"\nEntity B: name=\"Bob Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "bf809060e06f601fa6cea0215931b63f": {
+      "request_hash": "bf809060e06f601fa6cea0215931b63f",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"New Company\", type=\"organization\", hint=\"\"\nEntity B: name=\"Old Company\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.95}\n```"
+    },
+    "0a3005ac644e49836e746a648a468f6f": {
+      "request_hash": "0a3005ac644e49836e746a648a468f6f",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Synodal Inc\", type=\"organization\", hint=\"\"\nEntity B: name=\"Oxford University\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\n  \"same_entity\": false,\n  \"confidence\": 0.99\n}\n```"
+    },
+    "c55f9ae4c342884688329e1652cc440b": {
+      "request_hash": "c55f9ae4c342884688329e1652cc440b",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"San Francisco\", type=\"place\", hint=\"\"\nEntity B: name=\"Anthropic\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "ce79c4da9c9785a1ec7f471ca0c3fc03": {
+      "request_hash": "ce79c4da9c9785a1ec7f471ca0c3fc03",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Bob\", type=\"person\", hint=\"\"\nEntity B: name=\"Alice Chen\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "31f76f08ed3c1f90558f6c6426807ced": {
+      "request_hash": "31f76f08ed3c1f90558f6c6426807ced",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Bob Smith is married to Carol Smith\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|e",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Bob Smith\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Carol Smith\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Bob Smith\",\n      \"relation_type\": \"MARRIED_TO\",\n      \"object\": \"Carol Smith\",\n      \"fact\": \"Bob Smith is married to Carol Smith\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Carol Smith\",\n      \"relation_type\": \"MARRIED_TO\",\n      \"object\": \"Bob Smith\",\n      \"fact\": \"Carol Smith is married to Bob Smith\",\n      \"confidence\": 0.95\n    }\n  ]\n}\n```"
+    },
+    "aa77f8daabc74477710e331b46a9c82a": {
+      "request_hash": "aa77f8daabc74477710e331b46a9c82a",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"London\", type=\"place\", hint=\"\"\nEntity B: name=\"Synodal Inc\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "c3d70a6f0de5db7d6ff6309ebcc05c10": {
+      "request_hash": "c3d70a6f0de5db7d6ff6309ebcc05c10",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Grace Lee is a lawyer\"\nRelation type: \"OCCUPATION\"\n\nExisting facts:\n0: \"Grace Lee is a lawyer\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"duplicate\": same meanin",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"duplicate\", \"confidence\": 1.0}]\n```"
+    },
+    "ae7b3bebad13f6a42e94d648b378cd75": {
+      "request_hash": "ae7b3bebad13f6a42e94d648b378cd75",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"data scientist\", type=\"concept\", hint=\"\"\nEntity B: name=\"Oxford University\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "ea9edcbfd08aa3d6a6ac82b843d1ed6b": {
+      "request_hash": "ea9edcbfd08aa3d6a6ac82b843d1ed6b",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Bob Smith studied at Oxford University\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|plac",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Bob Smith\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Oxford University\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Bob Smith\",\n      \"relation_type\": \"ATTENDED\",\n      \"object\": \"Oxford University\",\n      \"fact\": \"Bob Smith studied at Oxford University\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Bob Smith\",\n      \"relation_type\": \"EDUCATED_AT\",\n      \"object\": \"Oxford University\",\n      \"fact\": \"Bob Smith received education from Oxford University\",\n      \"confidence\": 0.9\n    },\n    {\n      \"subject\": \"Bob Smith\",\n      \"relation_type\": \"AFFILIATED_WITH\",\n      \"object\": \"Oxford University\",\n      \"fact\": \"Bob Smith has an affiliation with Oxford University\",\n      \"confidence\": 0.85\n    }\n  ]\n}\n```"
+    },
+    "13f81e51bf1960047ec2917eb401e00a": {
+      "request_hash": "13f81e51bf1960047ec2917eb401e00a",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Bob Smith has an affiliation with Oxford University\"\nRelation type: \"AFFILIATED_WITH\"\n\nExisting facts:\n0: \"Bob Smith studied at Oxford University\"\n1: \"Bob Smith lives in London\"\n\nFor each e",
+      "response": "```json\n[\n  {\"index\": 0, \"classification\": \"related\", \"confidence\": 0.85},\n  {\"index\": 1, \"classification\": \"unrelated\", \"confidence\": 0.95}\n]\n```"
+    },
+    "3497dbb91ad6f5eb6c3d0307500d23e1": {
+      "request_hash": "3497dbb91ad6f5eb6c3d0307500d23e1",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Synodal Inc\", type=\"organization\", hint=\"\"\nEntity B: name=\"Carol\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "71944ea242edc9ffd7dc6aa4ceda27de": {
+      "request_hash": "71944ea242edc9ffd7dc6aa4ceda27de",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Alice works at Anthropic\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|concep",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Alice\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Anthropic\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Alice\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"Anthropic\",\n      \"fact\": \"Alice works at Anthropic\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "62a211f5386bc7087cdb8c88b263cb1d": {
+      "request_hash": "62a211f5386bc7087cdb8c88b263cb1d",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Frank works at New Company\"\nRelation type: \"WORKS_AT\"\n\nExisting facts:\n0: \"Frank works at Old Company\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"duplicate\": sam",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"contradiction\", \"confidence\": 0.95}]\n```"
+    },
+    "9fe09b7bc4363646cac21badcd243601": {
+      "request_hash": "9fe09b7bc4363646cac21badcd243601",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Alice works at Anthropic\"\nRelation type: \"WORKS_AT\"\n\nExisting facts:\n0: \"Alice works at Google\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"duplicate\": same meani",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"contradiction\", \"confidence\": 0.95}]\n```"
+    },
+    "2d2b0394736e61bbbd52a792b4c4094f": {
+      "request_hash": "2d2b0394736e61bbbd52a792b4c4094f",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"data scientist\", type=\"concept\", hint=\"\"\nEntity B: name=\"London\", type=\"place\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "cd7ea75b1ac1ca4cf743de07fcd30499": {
+      "request_hash": "cd7ea75b1ac1ca4cf743de07fcd30499",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Bob Smith is married to Carol Smith\"\nRelation type: \"MARRIED_TO\"\n\nExisting facts:\n0: \"Bob Smith has an affiliation with Oxford University\"\n1: \"Bob Smith lives in London\"\n2: \"Bob Smith studi",
+      "response": "```json\n[\n  {\n    \"index\": 0,\n    \"classification\": \"unrelated\",\n    \"confidence\": 0.95\n  },\n  {\n    \"index\": 1,\n    \"classification\": \"unrelated\",\n    \"confidence\": 0.95\n  },\n  {\n    \"index\": 2,\n    \"classification\": \"unrelated\",\n    \"confidence\": 0.95\n  }\n]\n```"
+    },
+    "56ebffa9e0b2018834478c25b924652d": {
+      "request_hash": "56ebffa9e0b2018834478c25b924652d",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"data scientist\", type=\"concept\", hint=\"\"\nEntity B: name=\"Eve Williams\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "959cb31e712282018ba523a10bfaa5c2": {
+      "request_hash": "959cb31e712282018ba523a10bfaa5c2",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Eve Williams is a data scientist\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|even",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Eve Williams\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"data scientist\",\n      \"entity_type\": \"concept\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Eve Williams\",\n      \"relation_type\": \"OCCUPATION\",\n      \"object\": \"data scientist\",\n      \"fact\": \"Eve Williams is a data scientist\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "b7ae57e4f0b83b1d3ed2ce30c74209dd": {
+      "request_hash": "b7ae57e4f0b83b1d3ed2ce30c74209dd",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"London\", type=\"place\", hint=\"\"\nEntity B: name=\"Bob Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "8acf48e8e2684f60aa8aab7437690c27": {
+      "request_hash": "8acf48e8e2684f60aa8aab7437690c27",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Anthropic\", type=\"organization\", hint=\"\"\nEntity B: name=\"Alice\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "5ed40ac096b2c2430e81540672d1c08f": {
+      "request_hash": "5ed40ac096b2c2430e81540672d1c08f",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Synodal Inc\", type=\"organization\", hint=\"\"\nEntity B: name=\"London\", type=\"place\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\n  \"same_entity\": false,\n  \"confidence\": 0.99\n}\n```"
+    },
+    "24420feb14c2c7ab0b81979db94c26ab": {
+      "request_hash": "24420feb14c2c7ab0b81979db94c26ab",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Synodal Inc is headquartered in London\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|plac",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Synodal Inc\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"London\",\n      \"entity_type\": \"place\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Synodal Inc\",\n      \"relation_type\": \"HEADQUARTERED_IN\",\n      \"object\": \"London\",\n      \"fact\": \"Synodal Inc is headquartered in London\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "41d5ea44dfb7f642c5239a5ace50c3c8": {
+      "request_hash": "41d5ea44dfb7f642c5239a5ace50c3c8",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Eve Williams\", type=\"person\", hint=\"\"\nEntity B: name=\"Bob Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "d85c165d01dad4ae2bb65332a268ed4f": {
+      "request_hash": "d85c165d01dad4ae2bb65332a268ed4f",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Alice Chen lives in San Francisco\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|eve",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Alice Chen\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"San Francisco\",\n      \"entity_type\": \"place\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Alice Chen\",\n      \"relation_type\": \"LIVES_IN\",\n      \"object\": \"San Francisco\",\n      \"fact\": \"Alice Chen lives in San Francisco\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    },
+    "87eeaf11bc668381e031463ec37f2506": {
+      "request_hash": "87eeaf11bc668381e031463ec37f2506",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Eve Williams is a data scientist\"\nRelation type: \"OCCUPATION\"\n\nExisting facts:\n0: \"Eve Williams works at Synodal Inc\"\n\nFor each existing fact, classify its relationship to the new fact:\n- \"",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"related\", \"confidence\": 0.95}]\n```"
+    },
+    "f384ba531fdc73a5aae11522a75322e2": {
+      "request_hash": "f384ba531fdc73a5aae11522a75322e2",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Anthropic\", type=\"organization\", hint=\"\"\nEntity B: name=\"Google\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "037da696707fa99cd69a94e091adad3e": {
+      "request_hash": "037da696707fa99cd69a94e091adad3e",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Bob Smith received education from Oxford University\"\nRelation type: \"EDUCATED_AT\"\n\nExisting facts:\n0: \"Bob Smith studied at Oxford University\"\n1: \"Bob Smith lives in London\"\n\nFor each exist",
+      "response": "```json\n[\n  {\n    \"index\": 0,\n    \"classification\": \"duplicate\",\n    \"confidence\": 0.95\n  },\n  {\n    \"index\": 1,\n    \"classification\": \"unrelated\",\n    \"confidence\": 0.99\n  }\n]\n```"
+    },
+    "70242d11b08e472f76ae3bcd8f0e7f64": {
+      "request_hash": "70242d11b08e472f76ae3bcd8f0e7f64",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Bob's salary is 75000 pounds\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|co",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Bob\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"75000 pounds\",\n      \"entity_type\": \"concept\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Bob\",\n      \"relation_type\": \"SALARY\",\n      \"object\": \"75000 pounds\",\n      \"fact\": \"Bob's salary is 75000 pounds\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Bob\",\n      \"relation_type\": \"EMPLOYED_BY\",\n      \"object\": \"unknown employer\",\n      \"fact\": \"Bob is employed by someone or some organization\",\n      \"confidence\": 0.85\n    }\n  ]\n}\n```"
+    },
+    "3739b65aade883335c8001c1f854fc83": {
+      "request_hash": "3739b65aade883335c8001c1f854fc83",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Synodal Inc\", type=\"organization\", hint=\"\"\nEntity B: name=\"Bob Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "d4ab494e22aaeffc3a3ced470bf5fe59": {
+      "request_hash": "d4ab494e22aaeffc3a3ced470bf5fe59",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"data scientist\", type=\"concept\", hint=\"\"\nEntity B: name=\"Carol Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "668862f3c13ca4a1a9906a51146cd5e9": {
+      "request_hash": "668862f3c13ca4a1a9906a51146cd5e9",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Carol Smith\", type=\"person\", hint=\"\"\nEntity B: name=\"Oxford University\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "1b2810aafbc094644acc0d1449750d35": {
+      "request_hash": "1b2810aafbc094644acc0d1449750d35",
+      "system": "You are a fact classification agent. Decide the relationship between each existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.",
+      "user": "New fact: \"Carol holds a leadership position and manages Synodal Inc\"\nRelation type: \"MANAGES\"\n\nExisting facts:\n0: \"Carol is the CEO of Synodal Inc\"\n\nFor each existing fact, classify its relationship ",
+      "response": "```json\n[{\"index\": 0, \"classification\": \"related\", \"confidence\": 0.95}]\n```"
+    },
+    "5fc4f5244097427cdf42402770523331": {
+      "request_hash": "5fc4f5244097427cdf42402770523331",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Google\", type=\"organization\", hint=\"\"\nEntity B: name=\"Alice\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "6fa2c6602c88267ac1da60ed5ea1706d": {
+      "request_hash": "6fa2c6602c88267ac1da60ed5ea1706d",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"San Francisco\", type=\"place\", hint=\"\"\nEntity B: name=\"Alice Chen\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "e728de5078f5abd9918b686496dc3091": {
+      "request_hash": "e728de5078f5abd9918b686496dc3091",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Eve Williams\", type=\"person\", hint=\"\"\nEntity B: name=\"Carol Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "f02e6246c10396e280ea96efd8f6bd19": {
+      "request_hash": "f02e6246c10396e280ea96efd8f6bd19",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"AI software\", type=\"concept\", hint=\"\"\nEntity B: name=\"London\", type=\"place\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "c107e5ea17723846d4fbbcbf124ae634": {
+      "request_hash": "c107e5ea17723846d4fbbcbf124ae634",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Old Company\", type=\"organization\", hint=\"\"\nEntity B: name=\"Frank\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\n  \"same_entity\": false,\n  \"confidence\": 0.99\n}\n```"
+    },
+    "b986276a37fa2cb160df3571284b9df7": {
+      "request_hash": "b986276a37fa2cb160df3571284b9df7",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"75000 pounds\", type=\"concept\", hint=\"\"\nEntity B: name=\"Bob\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "c70a59cbc3c993a4f01f1263ab59c0d9": {
+      "request_hash": "c70a59cbc3c993a4f01f1263ab59c0d9",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"London\", type=\"place\", hint=\"\"\nEntity B: name=\"Carol\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "ac65167115284561ceeb07f956c6697d": {
+      "request_hash": "ac65167115284561ceeb07f956c6697d",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"Bob\", type=\"person\", hint=\"\"\nEntity B: name=\"Anthropic\", type=\"organization\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 1.0}\n```"
+    },
+    "32699ba090ff3b4e1fd686bd675b7686": {
+      "request_hash": "32699ba090ff3b4e1fd686bd675b7686",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"data scientist\", type=\"concept\", hint=\"\"\nEntity B: name=\"Bob Smith\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.99}\n```"
+    },
+    "634ca4a3d37d287939b8c6e8f357ad63": {
+      "request_hash": "634ca4a3d37d287939b8c6e8f357ad63",
+      "system": "You are an entity resolution agent. Decide whether two entity descriptions refer to the same real-world entity. Return ONLY valid JSON with no markdown.",
+      "user": "Entity A: name=\"lawyer\", type=\"concept\", hint=\"\"\nEntity B: name=\"Grace Lee\", type=\"person\"\n\nAre these the same entity?\nReturn: {\"same_entity\": true, \"confidence\": 0.9}",
+      "response": "```json\n{\"same_entity\": false, \"confidence\": 0.95}\n```"
+    },
+    "39c445b5fb6946bde283058763ee9b32": {
+      "request_hash": "39c445b5fb6946bde283058763ee9b32",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Bob's salary is 50000 pounds\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|co",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Bob\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"50000 pounds\",\n      \"entity_type\": \"concept\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Bob\",\n      \"relation_type\": \"EARNS\",\n      \"object\": \"50000 pounds\",\n      \"fact\": \"Bob's salary is 50000 pounds\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": [\n    {\n      \"subject\": \"Bob\",\n      \"relation_type\": \"IS_EMPLOYED\",\n      \"object\": \"unknown employer\",\n      \"fact\": \"Bob is employed (implied by the fact that he has a salary)\",\n      \"confidence\": 0.85\n    }\n  ]\n}\n```"
+    },
+    "c8fd4b9759dbdb82d12f1b8b4c7738cd": {
+      "request_hash": "c8fd4b9759dbdb82d12f1b8b4c7738cd",
+      "system": "You are a knowledge extraction agent. Extract all entities, explicit facts, and implied facts from the given statement. Return ONLY valid JSON with no markdown, no explanation, no code fences.",
+      "user": "Extract from this statement: \"Alice works at Google\"\n\nReturn JSON matching this exact schema:\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"entity_type\": \"string (person|place|event|concept|o",
+      "response": "```json\n{\n  \"entities\": [\n    {\n      \"name\": \"Alice\",\n      \"entity_type\": \"person\",\n      \"resolved\": true,\n      \"hint\": null\n    },\n    {\n      \"name\": \"Google\",\n      \"entity_type\": \"organization\",\n      \"resolved\": true,\n      \"hint\": null\n    }\n  ],\n  \"explicit_facts\": [\n    {\n      \"subject\": \"Alice\",\n      \"relation_type\": \"WORKS_AT\",\n      \"object\": \"Google\",\n      \"fact\": \"Alice works at Google\",\n      \"confidence\": 0.95\n    }\n  ],\n  \"implied_facts\": []\n}\n```"
+    }
+  }
+}

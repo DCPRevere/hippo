@@ -1,0 +1,191 @@
+use std::sync::Arc;
+
+use chrono::{Duration, Utc};
+
+use hippo::config::Config;
+use hippo::graph_backend::GraphBackend;
+use hippo::in_memory_graph::InMemoryGraph;
+use hippo::llm;
+use hippo::models::{Entity, MemoryTier, Relation};
+use hippo::pipeline::maintain;
+use hippo::state::AppState;
+use hippo::testing::FakeLlm;
+
+fn test_state() -> Arc<AppState> {
+    Arc::new(AppState::for_test(
+        Arc::new(FakeLlm::new()),
+        Config::test_default(),
+    ))
+}
+
+async fn seed_entity(graph: &InMemoryGraph, id: &str, name: &str) {
+    graph
+        .upsert_entity(&Entity {
+            id: id.into(),
+            name: name.into(),
+            entity_type: "person".into(),
+            resolved: true,
+            hint: None,
+            content: None,
+            created_at: Utc::now(),
+            embedding: llm::pseudo_embed(name),
+        })
+        .await
+        .unwrap();
+}
+
+fn make_rel(fact: &str, tier: MemoryTier, salience: i64, age: Duration) -> Relation {
+    Relation {
+        fact: fact.into(),
+        relation_type: "RELATED_TO".into(),
+        embedding: llm::pseudo_embed(fact),
+        source_agents: vec!["test".into()],
+        valid_at: Utc::now() - age,
+        invalid_at: None,
+        confidence: 0.9,
+        salience,
+        created_at: Utc::now() - age,
+        memory_tier: tier,
+    }
+}
+
+// ---- Promote working → long_term ----
+
+#[tokio::test]
+async fn maintain_promotes_working_to_long_term() {
+    let graph = InMemoryGraph::new();
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    // Working edge, high salience, created 2 hours ago → should be promoted
+    let rel = make_rel(
+        "Alice knows Bob",
+        MemoryTier::Working,
+        5,
+        Duration::hours(2),
+    );
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    let (working_before, _) = graph.memory_tier_stats().await.unwrap();
+    assert_eq!(working_before, 1);
+
+    let promoted = graph.promote_working_memory().await.unwrap();
+    assert_eq!(promoted, 1, "should promote 1 edge");
+
+    let (working_after, long_term_after) = graph.memory_tier_stats().await.unwrap();
+    assert_eq!(working_after, 0);
+    assert_eq!(long_term_after, 1);
+}
+
+#[tokio::test]
+async fn maintain_does_not_promote_low_salience() {
+    let graph = InMemoryGraph::new();
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    // Working edge, low salience — should NOT be promoted
+    let rel = make_rel(
+        "Alice saw Bob",
+        MemoryTier::Working,
+        1,
+        Duration::hours(2),
+    );
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    let promoted = graph.promote_working_memory().await.unwrap();
+    assert_eq!(promoted, 0, "low salience should not be promoted");
+}
+
+// ---- Purge stale working memory ----
+
+#[tokio::test]
+async fn maintain_purges_stale_working() {
+    let graph = InMemoryGraph::new();
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    // Old working edge with zero salience → should be purged
+    let rel = make_rel(
+        "Alice met Bob yesterday",
+        MemoryTier::Working,
+        0,
+        Duration::hours(25),
+    );
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    let cutoff = Utc::now() - Duration::hours(24);
+    let purged = graph.purge_stale_working_memory(cutoff).await.unwrap();
+    assert_eq!(purged, 1, "should purge 1 stale edge");
+
+    let (working, _) = graph.memory_tier_stats().await.unwrap();
+    assert_eq!(working, 0, "no working edges should remain");
+}
+
+#[tokio::test]
+async fn maintain_does_not_purge_high_salience() {
+    let graph = InMemoryGraph::new();
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    // Old working edge but salience > 0 → should NOT be purged
+    let rel = make_rel(
+        "Alice and Bob are friends",
+        MemoryTier::Working,
+        3,
+        Duration::hours(25),
+    );
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    let cutoff = Utc::now() - Duration::hours(24);
+    let purged = graph.purge_stale_working_memory(cutoff).await.unwrap();
+    assert_eq!(purged, 0, "high salience should not be purged");
+}
+
+// ---- Decay stale edges ----
+
+#[tokio::test]
+async fn maintain_decays_stale_edges() {
+    let graph = InMemoryGraph::new();
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    let rel = make_rel(
+        "Alice knows Bob from university",
+        MemoryTier::LongTerm,
+        2,
+        Duration::days(60),
+    );
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    let stale_before = Utc::now() - Duration::days(30);
+    let decayed = graph.decay_stale_edges(stale_before, Utc::now()).await.unwrap();
+    assert_eq!(decayed, 1, "should decay 1 edge");
+
+    let edges = graph.dump_all_edges().await.unwrap();
+    assert!(
+        edges[0].decayed_confidence < 0.9,
+        "decayed confidence {} should be less than original 0.9",
+        edges[0].decayed_confidence
+    );
+}
+
+// ---- Run full housekeeping cycle ----
+
+#[tokio::test]
+async fn maintain_run_once_completes_without_error() {
+    let state = test_state();
+    let graph = InMemoryGraph::new();
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    let rel = make_rel(
+        "Alice knows Bob",
+        MemoryTier::LongTerm,
+        2,
+        Duration::days(5),
+    );
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    // run_once should complete without panicking
+    maintain::run_once(&state, &graph).await.unwrap();
+}

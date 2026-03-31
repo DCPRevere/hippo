@@ -1,0 +1,51 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb-data:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "sleep 5 && ollama pull nomic-embed-text"]
+    restart: "no"
+
+  falkordb-browser:
+    image: falkordb/falkordb-browser:latest
+    ports:
+      - "3000:3000"
+    environment:
+      FALKORDB_URI: redis://falkordb:6379
+    depends_on:
+      - falkordb
+
+  hippo:
+    build: .
+    ports:
+      - "21693:21693"
+    environment:
+      FALKORDB_URL: redis://falkordb:6379
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_OAUTH_TOKEN: ${ANTHROPIC_OAUTH_TOKEN:-}
+      OLLAMA_URL: http://ollama:11434
+      MAINTENANCE_INTERVAL_SECS: 10
+      RUST_LOG: info
+    depends_on:
+      - falkordb
+      - ollama
+
+volumes:
+  falkordb-data:
+  ollama-data:
