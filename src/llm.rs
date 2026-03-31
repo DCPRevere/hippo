@@ -866,7 +866,7 @@ Rules:
 - Generate only ONE direction for symmetric relations: MARRIED_TO, SIBLING_OF, KNOWS.
 - Properties (surname, date_of_birth, nationality) go in create_node properties or update_node set, NOT as edges.
 - When you learn an entity's full name (e.g. "James" becomes "James Taylor"), use update_node with "name" in the set field to rename it. Do NOT create SURNAME edges — update the name directly.
-- The node with "is_narrator": true is the person saying "I"/"me"/"my". Use its id for narrator references. If no narrator exists, create one named "Principal".
+- The node with "is_principal": true is the person saying "I"/"me"/"my". Use its id for first-person references. If no principal exists, create one named "Principal" with the property "is_principal": "true".
 - Confidence: 0.9+ for explicitly stated facts, 0.7-0.9 for inferred facts.
 - Resolve pronouns ("they", "he", "she") to the correct entities from context.
 - "Widower" means spouse has died — model as MARRIED_TO edge (DECEASED on the spouse captures the temporal aspect)."#;
@@ -908,7 +908,7 @@ Rules:
             "required": ["operations"]
         });
 
-        if self.provider == LlmProvider::Anthropic && !matches!(self.auth, AnthropicAuth::OAuthToken(_)) {
+        if self.provider == LlmProvider::Anthropic {
             // Use tool use for guaranteed structured output
             tracing::debug!(system = %system, user = %user, "LLM tool request (extract_operations)");
             let result: crate::models::OperationsResult = self.call_anthropic_tool(

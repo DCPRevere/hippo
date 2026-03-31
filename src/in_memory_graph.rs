@@ -90,6 +90,7 @@ impl StoredEdge {
 }
 
 pub struct InMemoryGraph {
+    name: String,
     entities: RwLock<HashMap<String, EntityRow>>,
     edges: RwLock<Vec<StoredEdge>>,
     next_edge_id: AtomicI64,
@@ -99,8 +100,9 @@ pub struct InMemoryGraph {
 }
 
 impl InMemoryGraph {
-    pub fn new() -> Self {
+    pub fn new(name: &str) -> Self {
         Self {
+            name: name.to_string(),
             entities: RwLock::new(HashMap::new()),
             edges: RwLock::new(Vec::new()),
             next_edge_id: AtomicI64::new(1),
@@ -113,6 +115,7 @@ impl InMemoryGraph {
 
 #[async_trait]
 impl GraphBackend for InMemoryGraph {
+    fn graph_name(&self) -> &str { &self.name }
     async fn ping(&self) -> Result<()> {
         Ok(())
     }

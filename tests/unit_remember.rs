@@ -52,7 +52,7 @@ async fn remember_creates_entities_and_edges() {
     });
 
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     let resp = remember(&state, &graph, make_remember_req("Alice works at Acme"), None)
         .await
@@ -100,7 +100,7 @@ async fn remember_reuses_existing_entities() {
     });
 
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     // Pre-seed Alice
     let alice = Entity {
@@ -129,7 +129,7 @@ async fn remember_reuses_existing_entities() {
 #[tokio::test]
 async fn remember_invalidates_edge_by_id() {
     let state = test_state(FakeLlm::new());
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     // Seed Alice and London with an edge
     let alice = Entity {
@@ -264,7 +264,7 @@ async fn remember_new_edges_are_working_tier() {
     });
 
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     remember(&state, &graph, make_remember_req("Bob works at Beta"), None)
         .await
@@ -304,7 +304,7 @@ async fn remember_tracks_source_agent() {
     });
 
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     let mut req = make_remember_req("Carol works at Gamma");
     req.source_agent = Some("finance-agent".into());
@@ -323,7 +323,7 @@ async fn remember_tracks_source_agent() {
 
 #[tokio::test]
 async fn remember_skips_duplicate_edges_by_embedding() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     // Seed entities + an existing edge with the same embedding
     let alice = Entity {
@@ -419,7 +419,7 @@ async fn remember_applies_credibility_to_confidence() {
     });
 
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     // Set low credibility for this agent
     {
@@ -450,7 +450,7 @@ async fn remember_applies_credibility_to_confidence() {
 
 #[tokio::test]
 async fn remember_update_node_sets_properties() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     // Seed Alice
     let alice = Entity {
@@ -494,7 +494,7 @@ async fn remember_skips_edge_with_unresolved_refs() {
         }],
     });
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     let resp = remember(&state, &graph, make_remember_req("Ghost knows Phantom"), None)
         .await
@@ -517,7 +517,7 @@ async fn remember_creates_entity_with_properties() {
         }],
     });
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     let resp = remember(&state, &graph, make_remember_req("Eve is an engineer"), None)
         .await
@@ -557,7 +557,7 @@ async fn remember_trace_includes_operations() {
         ],
     });
     let state = test_state(fake);
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
 
     let resp = remember(&state, &graph, make_remember_req("Frank works at Omega"), None)
         .await

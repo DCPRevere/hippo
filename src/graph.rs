@@ -81,8 +81,8 @@ impl GraphRegistry {
     /// Create a registry backed by in-memory graphs (no database needed).
     pub fn in_memory(default_graph: &str) -> Self {
         let registry = Self {
-            factory: Box::new(|_name: &str| {
-                Arc::new(crate::in_memory_graph::InMemoryGraph::new()) as Arc<dyn GraphBackend>
+            factory: Box::new(|name: &str| {
+                Arc::new(crate::in_memory_graph::InMemoryGraph::new(name)) as Arc<dyn GraphBackend>
             }),
             default_graph: default_graph.to_string(),
             graphs: Mutex::new(HashMap::new()),
@@ -97,10 +97,15 @@ impl GraphRegistry {
     pub async fn get(&self, graph_name: &str) -> Arc<dyn GraphBackend> {
         let mut cache = self.graphs.lock().await;
         if let Some(existing) = cache.get(graph_name) {
+            tracing::debug!(graph = %graph_name, "graph_registry: cache hit");
             return Arc::clone(existing);
         }
 
+        tracing::info!(graph = %graph_name, "graph_registry: creating new graph backend");
         let arc = (self.factory)(graph_name);
+        if let Err(e) = arc.setup_schema().await {
+            tracing::warn!("Failed to setup schema for graph '{graph_name}': {e}");
+        }
         cache.insert(graph_name.to_string(), Arc::clone(&arc));
         arc
     }
@@ -269,11 +274,13 @@ impl GraphClient {
         let query = format!(
             "CALL db.idx.vector.queryRelationships('RELATION', 'embedding', {k}, {vec_lit}) \
              YIELD relationship, score \
-             WHERE relationship.invalid_at IS NULL \
+             WHERE score > 0.3 \
+               AND relationship.invalid_at IS NULL \
                AND (relationship.archived IS NULL OR relationship.archived = false) \
              MATCH (a)-[relationship]->(b) \
              RETURN relationship, a, b, score \
-             ORDER BY score DESC"
+             ORDER BY score DESC \
+             LIMIT {k}"
         );
         let mut graph = self.conn().lock().await;
         let result = graph.query(&query).execute().await
@@ -1282,9 +1289,14 @@ impl GraphClient {
     pub async fn set_entity_property(&self, entity_id: &str, key: &str, value: &str) -> Result<()> {
         let entity_id = sanitise(entity_id);
         let key = sanitise(key);
-        let value = sanitise(value);
+        // Store booleans as native booleans, not strings
+        let cypher_value = match value {
+            "true" => "true".to_string(),
+            "false" => "false".to_string(),
+            _ => format!("'{}'", sanitise(value)),
+        };
         let query = format!(
-            "MATCH (e:Entity {{id: '{entity_id}'}}) SET e.`{key}` = '{value}'"
+            "MATCH (e:Entity {{id: '{entity_id}'}}) SET e.`{key}` = {cypher_value}"
         );
         let mut graph = self.conn().lock().await;
         graph.query(&query).execute().await
@@ -1309,8 +1321,9 @@ impl GraphClient {
     pub async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> {
         let key = sanitise(key);
         let value = sanitise(value);
+        // Match both string and boolean forms (e.g. is_principal = 'true' OR is_principal = true)
         let query = format!(
-            "MATCH (e:Entity) WHERE e.`{key}` = '{value}' RETURN e LIMIT 1"
+            "MATCH (e:Entity) WHERE e.`{key}` = '{value}' OR e.`{key}` = {value} RETURN e LIMIT 1"
         );
         let mut graph = self.conn().lock().await;
         let result = graph.query(&query).execute().await
@@ -1329,6 +1342,7 @@ impl GraphClient {
 
 #[async_trait]
 impl GraphBackend for GraphClient {
+    fn graph_name(&self) -> &str { &self.graph_name }
     async fn ping(&self) -> Result<()> { self.ping().await }
     async fn setup_schema(&self) -> Result<()> { self.setup_schema().await }
     async fn drop_and_reinitialise(&self) -> Result<()> { self.drop_and_reinitialise().await }

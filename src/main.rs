@@ -29,9 +29,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         let connection_string = config.falkordb_connection_string();
         tracing::info!("Connecting to FalkorDB at {connection_string}");
-        let registry = GraphRegistry::connect(&connection_string, &config.graph_name).await?;
-        registry.get_default().await.setup_schema().await?;
-        registry
+        GraphRegistry::connect(&connection_string, &config.graph_name).await?
     };
 
     // Build LLM client

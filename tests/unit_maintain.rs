@@ -53,7 +53,7 @@ fn make_rel(fact: &str, tier: MemoryTier, salience: i64, age: Duration) -> Relat
 
 #[tokio::test]
 async fn maintain_promotes_working_to_long_term() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
@@ -79,7 +79,7 @@ async fn maintain_promotes_working_to_long_term() {
 
 #[tokio::test]
 async fn maintain_does_not_promote_low_salience() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
@@ -100,7 +100,7 @@ async fn maintain_does_not_promote_low_salience() {
 
 #[tokio::test]
 async fn maintain_purges_stale_working() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
@@ -123,7 +123,7 @@ async fn maintain_purges_stale_working() {
 
 #[tokio::test]
 async fn maintain_does_not_purge_high_salience() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
@@ -145,7 +145,7 @@ async fn maintain_does_not_purge_high_salience() {
 
 #[tokio::test]
 async fn maintain_decays_stale_edges() {
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
@@ -174,7 +174,7 @@ async fn maintain_decays_stale_edges() {
 #[tokio::test]
 async fn maintain_run_once_completes_without_error() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 

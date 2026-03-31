@@ -72,7 +72,7 @@ async fn seed_alice_acme_london(graph: &InMemoryGraph) {
 #[tokio::test]
 async fn context_returns_matching_facts_by_fulltext() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_alice_acme_london(&graph).await;
 
     let resp = context(
@@ -107,7 +107,7 @@ async fn context_returns_matching_facts_by_fulltext() {
 #[tokio::test]
 async fn context_multi_hop_finds_london_via_acme() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_alice_acme_london(&graph).await;
 
     let resp = context(
@@ -139,7 +139,7 @@ async fn context_multi_hop_finds_london_via_acme() {
 #[tokio::test]
 async fn context_filters_by_memory_tier() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     let now = Utc::now();
 
     // Create two entities
@@ -212,7 +212,7 @@ async fn context_filters_by_memory_tier() {
 #[tokio::test]
 async fn context_empty_query_does_not_panic() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_alice_acme_london(&graph).await;
 
     let resp = context(
@@ -239,7 +239,7 @@ async fn context_empty_query_does_not_panic() {
 #[tokio::test]
 async fn context_nonexistent_entity_returns_empty() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     seed_alice_acme_london(&graph).await;
 
     let resp = context(
@@ -269,7 +269,7 @@ async fn context_nonexistent_entity_returns_empty() {
 #[tokio::test]
 async fn context_orders_by_relevance() {
     let state = test_state();
-    let graph = InMemoryGraph::new();
+    let graph = InMemoryGraph::new("test");
     let now = Utc::now();
 
     for (id, name) in [("x", "Testing"), ("y", "Related")] {

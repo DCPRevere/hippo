@@ -602,7 +602,7 @@ pub struct SubgraphNode {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub properties: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub is_narrator: bool,
+    pub is_principal: bool,
 }
 
 /// An edge in the subgraph sent to the LLM.

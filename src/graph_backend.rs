@@ -8,6 +8,7 @@ use crate::models::{EdgeRow, Entity, EntityRow, ProvenanceResponse, Relation, Su
 
 #[async_trait]
 pub trait GraphBackend: Send + Sync {
+    fn graph_name(&self) -> &str;
     async fn ping(&self) -> Result<()>;
     async fn setup_schema(&self) -> Result<()>;
     async fn drop_and_reinitialise(&self) -> Result<()>;

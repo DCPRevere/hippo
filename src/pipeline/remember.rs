@@ -42,9 +42,11 @@ pub async fn remember(
     };
 
     // Step 1: Search graph for context
+    tracing::info!(graph = %graph.graph_name(), statement = %req.statement, "remember: starting");
     let context = if state.config.infer_pre_context {
         let ctx = gather_pre_extraction_context(state, graph, &req.statement).await?;
         tracing::info!(
+            graph = %graph.graph_name(),
             nodes = ctx.node_count(),
             edges = ctx.edge_count(),
             "remember: gathered context"
@@ -174,7 +176,11 @@ pub async fn remember(
                 graph.upsert_entity(&entity).await?;
 
                 // Mark as principal so it can be found even after renames
-                if name.to_lowercase() == "principal" {
+                let is_principal = name.to_lowercase() == "principal"
+                    || properties.iter().any(|(k, v)| {
+                        k == "is_principal" && v == "true"
+                    });
+                if is_principal {
                     graph.set_entity_property(&id, "is_principal", "true").await?;
                 }
 
@@ -359,7 +365,7 @@ async fn gather_pre_extraction_context(
     let mut seen_edge_ids: HashSet<i64> = HashSet::new();
 
     // Helper: add a node if not already seen
-    let mut add_node = |id: &str, name: &str, etype: &str, is_narrator: bool,
+    let mut add_node = |id: &str, name: &str, etype: &str, is_principal: bool,
                         seen: &mut HashSet<String>, nodes: &mut Vec<SubgraphNode>| {
         if seen.insert(id.to_string()) {
             nodes.push(SubgraphNode {
@@ -367,7 +373,7 @@ async fn gather_pre_extraction_context(
                 name: name.to_string(),
                 node_type: etype.to_string(),
                 properties: HashMap::new(),
-                is_narrator,
+                is_principal,
             });
         }
     };
@@ -395,23 +401,35 @@ async fn gather_pre_extraction_context(
 
     // 0. Always include the principal entity if it exists (survives renames)
     let mut principal_id: Option<String> = None;
-    if let Some(p) = graph.find_entity_by_property("is_principal", "true").await? {
-        add_node(&p.id, &p.name, &p.entity_type, true, &mut seen_node_ids, &mut nodes);
-        principal_id = Some(p.id.clone());
-    } else {
-        // Fall back to name search for backward compatibility
-        let principal_candidates = graph.fulltext_search_entities("Principal").await?;
-        for e in &principal_candidates {
-            if e.name.to_lowercase() == "principal" {
-                add_node(&e.id, &e.name, &e.entity_type, true, &mut seen_node_ids, &mut nodes);
-                principal_id = Some(e.id.clone());
-                break;
+    match graph.find_entity_by_property("is_principal", "true").await {
+        Ok(Some(p)) => {
+            tracing::debug!(name = %p.name, id = %p.id, "context: found principal");
+            add_node(&p.id, &p.name, &p.entity_type, true, &mut seen_node_ids, &mut nodes);
+            principal_id = Some(p.id.clone());
+        }
+        Ok(None) => {
+            tracing::debug!("context: no principal by property, falling back to name search");
+            let principal_candidates = graph.fulltext_search_entities("Principal").await?;
+            tracing::debug!(count = principal_candidates.len(), "context: principal name search results");
+            for e in &principal_candidates {
+                if e.name.to_lowercase() == "principal" {
+                    add_node(&e.id, &e.name, &e.entity_type, true, &mut seen_node_ids, &mut nodes);
+                    principal_id = Some(e.id.clone());
+                    break;
+                }
             }
         }
+        Err(e) => {
+            tracing::warn!("context: find_entity_by_property failed: {e}");
+        }
+    }
+    if principal_id.is_none() {
+        tracing::warn!("context: no principal found — first-person references will not resolve to an existing entity");
     }
 
     // 1. Fulltext search for entities mentioned in the statement
     let ft_entities = graph.fulltext_search_entities(statement).await?;
+    tracing::debug!(count = ft_entities.len(), "context: fulltext search results");
     let mut matched_ids: Vec<String> = Vec::new();
     for e in &ft_entities {
         add_node(&e.id, &e.name, &e.entity_type, false, &mut seen_node_ids, &mut nodes);
@@ -419,7 +437,7 @@ async fn gather_pre_extraction_context(
     }
     // Also walk from principal
     for n in &nodes {
-        if n.is_narrator && !matched_ids.contains(&n.id) {
+        if n.is_principal && !matched_ids.contains(&n.id) {
             matched_ids.push(n.id.clone());
         }
     }
@@ -427,6 +445,7 @@ async fn gather_pre_extraction_context(
     // 2. Vector search for semantically related edges
     let embedding = state.llm.embed(statement).await?;
     let vec_edges = graph.vector_search_edges_scored(&embedding, 10).await?;
+    tracing::debug!(count = vec_edges.len(), "context: vector search edges");
     for (edge, _) in &vec_edges {
         collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
     }
@@ -434,6 +453,7 @@ async fn gather_pre_extraction_context(
     // 3. Walk 1-hop from matched entities
     if !matched_ids.is_empty() {
         let hop_edges = graph.walk_one_hop(&matched_ids, 50).await?;
+        tracing::debug!(count = hop_edges.len(), from = matched_ids.len(), "context: 1-hop edges");
         for edge in &hop_edges {
             collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
         }
@@ -449,12 +469,16 @@ async fn gather_pre_extraction_context(
             .collect();
         if !neighbour_ids.is_empty() {
             let hop2_edges = graph.walk_one_hop(&neighbour_ids, 30).await?;
+            tracing::debug!(count = hop2_edges.len(), from = neighbour_ids.len(), "context: 2-hop edges");
             for edge in &hop2_edges {
                 collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
             }
         }
+    } else {
+        tracing::debug!("context: no matched entity ids, skipping hop walks");
     }
 
+    tracing::debug!(nodes = nodes.len(), edges = edges.len(), principal = ?principal_id, "context: final");
     Ok(GraphContext { nodes, edges, principal_id })
 }
 
@@ -479,7 +503,7 @@ async fn gather_context_by_names(
                     name: e.name.clone(),
                     node_type: e.entity_type.clone(),
                     properties: HashMap::new(),
-                    is_narrator: false,
+                    is_principal: false,
                 });
                 let hop_edges = graph.walk_one_hop(&[e.id.clone()], 20).await?;
                 for edge in &hop_edges {
@@ -490,7 +514,7 @@ async fn gather_context_by_names(
                                 name: edge.subject_name.clone(),
                                 node_type: String::new(),
                                 properties: HashMap::new(),
-                                is_narrator: false,
+                                is_principal: false,
                             });
                         }
                         if seen_node_ids.insert(edge.object_id.clone()) {
@@ -499,7 +523,7 @@ async fn gather_context_by_names(
                                 name: edge.object_name.clone(),
                                 node_type: String::new(),
                                 properties: HashMap::new(),
-                                is_narrator: false,
+                                is_principal: false,
                             });
                         }
                         edges.push(SubgraphEdge {
