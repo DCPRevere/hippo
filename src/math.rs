@@ -1,3 +1,60 @@
+use rand::Rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+use sha2::{Digest, Sha256};
+
+use crate::models::EMBEDDING_DIM;
+
+pub fn clean_json(s: &str) -> &str {
+    let s = s.trim();
+    let s = s.strip_prefix("```json").unwrap_or(s);
+    let s = s.strip_prefix("```").unwrap_or(s);
+    let s = s.strip_suffix("```").unwrap_or(s);
+    let s = s.trim();
+
+    let obj_start = s.find('{');
+    let arr_start = s.find('[');
+
+    let (start, open, close) = match (obj_start, arr_start) {
+        (Some(o), Some(a)) if a < o => (a, b'[', b']'),
+        (Some(o), _) => (o, b'{', b'}'),
+        (None, Some(a)) => (a, b'[', b']'),
+        (None, None) => return s,
+    };
+
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        if b == open {
+            depth += 1;
+        } else if b == close {
+            depth -= 1;
+            if depth == 0 {
+                return &s[start..start + i + 1];
+            }
+        }
+    }
+    s
+}
+
+pub fn pseudo_embed(text: &str) -> Vec<f32> {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    let hash = hasher.finalize();
+    let seed = u64::from_le_bytes(hash[..8].try_into().unwrap());
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let v: Vec<f32> = (0..EMBEDDING_DIM).map(|_| rng.gen_range(-1.0f32..1.0f32)).collect();
+    normalize(v)
+}
+
+pub fn normalize(mut v: Vec<f32>) -> Vec<f32> {
+    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        v.iter_mut().for_each(|x| *x /= norm);
+    }
+    v
+}
+
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;

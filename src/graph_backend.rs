@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 
 use crate::models::{EdgeRow, Entity, EntityRow, GraphStats, MemoryTierStats, ProvenanceResponse, Relation};
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait GraphBackend: Send + Sync {
     fn graph_name(&self) -> &str;
     async fn ping(&self) -> Result<()>;

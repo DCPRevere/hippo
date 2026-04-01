@@ -6,7 +6,9 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::extract::FromRequestParts;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::http::request::Parts;
 use chrono::Utc;
 use tokio::sync::RwLock;
@@ -14,6 +16,7 @@ use tokio::sync::RwLock;
 use crate::error::AppError;
 use crate::graph_backend::GraphBackend;
 use crate::models::Entity;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::state::AppState;
 
 // -- Constants ----------------------------------------------------------------
@@ -463,12 +466,14 @@ pub fn generate_api_key() -> Result<(String, String)> {
 
 // -- Axum extractor -----------------------------------------------------------
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Axum extractor that provides the authenticated user.
 ///
 /// When auth is disabled or insecure mode, returns an anonymous admin user.
 /// When auth is enabled, validates the `Authorization: Bearer <key>` header.
 pub struct Auth(pub AuthenticatedUser);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FromRequestParts<Arc<AppState>> for Auth {
     type Rejection = AppError;
 

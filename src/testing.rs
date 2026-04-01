@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::llm;
+use crate::math;
 use crate::llm_service::LlmService;
 use crate::models::{
     ContextFact, EdgeClassification, EntityRow,
@@ -111,10 +111,11 @@ impl FakeLlm {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl LlmService for FakeLlm {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        Ok(llm::pseudo_embed(text))
+        Ok(math::pseudo_embed(text))
     }
 
     async fn extract_operations(

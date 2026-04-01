@@ -322,7 +322,40 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Create a Config suitable for WASM (browser) usage.
+    pub fn for_wasm(
+        openai_api_key: String,
+        model: Option<String>,
+        embedding_model: Option<String>,
+    ) -> Self {
+        Config {
+            graph: GraphConfig {
+                backend: GraphBackendType::Memory,
+                ..Default::default()
+            },
+            llm: LlmConfig {
+                provider: LlmProvider::OpenAI,
+                openai: OpenAiConfig {
+                    model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
+                    embedding_model: Some(
+                        embedding_model.unwrap_or_else(|| "text-embedding-3-small".to_string()),
+                    ),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            pipeline: PipelineConfig {
+                infer_pre_context: true,
+                default_context_limit: 50,
+                ..Default::default()
+            },
+            openai_api_key: Some(openai_api_key),
+            ..Default::default()
+        }
+    }
+
     /// Load configuration: TOML file (if present) -> env var overrides -> secret resolution.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load() -> Result<Self> {
         let config_path = std::env::var("HIPPO_CONFIG")
             .unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());

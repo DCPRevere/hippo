@@ -529,7 +529,7 @@ async fn seed_handler(
     }
 
     use chrono::Utc;
-    use crate::llm::pseudo_embed;
+    use crate::math::pseudo_embed;
     use crate::models::{Entity, MemoryTier, Relation};
 
     let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
@@ -677,7 +677,7 @@ async fn restore_handler(
     let graph = state.resolve_graph_for_user(Some(target), &user).await?;
 
     use chrono::Utc;
-    use crate::llm::pseudo_embed;
+    use crate::math::pseudo_embed;
     use crate::models::{Entity, MemoryTier, Relation};
 
     let mut entities_created = 0usize;

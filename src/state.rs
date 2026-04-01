@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::audit::AuditLog;
 use crate::auth::UserStore;
 use crate::config::Config;
@@ -29,8 +30,10 @@ pub struct AppState {
     /// User store for API key authentication. None means auth is disabled.
     pub user_store: Option<Arc<dyn UserStore>>,
     /// Audit log for recording security and mutation events.
+    #[cfg(not(target_arch = "wasm32"))]
     pub audit: Option<Arc<AuditLog>>,
     /// Per-user rate limiter. None when rate limiting is disabled.
+    #[cfg(not(target_arch = "wasm32"))]
     pub rate_limiter: Option<crate::rate_limit::RateLimiter>,
 }
 
@@ -56,7 +59,9 @@ impl AppState {
             credibility: Arc::new(RwLock::new(CredibilityRegistry::new())),
             event_tx,
             user_store: None,
+            #[cfg(not(target_arch = "wasm32"))]
             audit: None,
+            #[cfg(not(target_arch = "wasm32"))]
             rate_limiter: None,
         }
     }

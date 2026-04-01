@@ -1,5 +1,27 @@
+#[cfg(not(target_arch = "wasm32"))]
 use axum::http::StatusCode;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::response::IntoResponse;
+
+#[cfg(target_arch = "wasm32")]
+mod status_compat {
+    #[derive(Debug, Clone, Copy)]
+    pub struct StatusCode(u16);
+    impl StatusCode {
+        pub const BAD_REQUEST: Self = Self(400);
+        pub const UNAUTHORIZED: Self = Self(401);
+        pub const FORBIDDEN: Self = Self(403);
+        pub const NOT_FOUND: Self = Self(404);
+        pub const TOO_MANY_REQUESTS: Self = Self(429);
+        pub const INTERNAL_SERVER_ERROR: Self = Self(500);
+        pub const BAD_GATEWAY: Self = Self(502);
+        pub const SERVICE_UNAVAILABLE: Self = Self(503);
+        pub const GATEWAY_TIMEOUT: Self = Self(504);
+        pub fn as_u16(&self) -> u16 { self.0 }
+    }
+}
+#[cfg(target_arch = "wasm32")]
+use status_compat::StatusCode;
 
 use crate::models::ErrorResponse;
 
@@ -60,6 +82,7 @@ impl std::fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let body = serde_json::to_string_pretty(&ErrorResponse {
@@ -106,6 +129,7 @@ impl From<anyhow::Error> for AppError {
         }
 
         // Request timeout (reqwest) → 504
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
             if reqwest_err.is_timeout() {
                 return Self::new(StatusCode::GATEWAY_TIMEOUT, msg);

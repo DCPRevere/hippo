@@ -1,11 +1,15 @@
 use anyhow::{Context, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use chrono::{DateTime, Utc};
+#[cfg(not(target_arch = "wasm32"))]
 use falkordb::{AsyncGraph, FalkorClientBuilder, FalkorConnectionInfo, FalkorValue};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 
+#[cfg(not(target_arch = "wasm32"))]
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
@@ -19,10 +23,13 @@ static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 });
 
 use crate::graph_backend::GraphBackend;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::models::{EdgeRow, EntityRow, SupersessionRecord, EMBEDDING_DIM};
 
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_POOL_SIZE: usize = 4;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct GraphClient {
     pool: Arc<Vec<Mutex<AsyncGraph>>>,
@@ -30,6 +37,7 @@ pub struct GraphClient {
     graph_name: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl GraphClient {
     fn conn(&self) -> &Mutex<AsyncGraph> {
         let idx = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.pool.len();
@@ -45,6 +53,7 @@ pub struct GraphRegistry {
     graphs: Mutex<HashMap<String, Arc<dyn GraphBackend>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl GraphRegistry {
     pub async fn connect(connection_string: &str, default_graph: &str) -> Result<Self> {
         let info: FalkorConnectionInfo = connection_string
@@ -78,18 +87,6 @@ impl GraphRegistry {
         Ok(registry)
     }
 
-    /// Create a registry backed by in-memory graphs (no database needed).
-    pub fn in_memory(default_graph: &str) -> Self {
-        let registry = Self {
-            factory: Box::new(|name: &str| {
-                Arc::new(crate::in_memory_graph::InMemoryGraph::new(name)) as Arc<dyn GraphBackend>
-            }),
-            default_graph: default_graph.to_string(),
-            graphs: Mutex::new(HashMap::new()),
-        };
-        registry
-    }
-
     /// Create a registry backed by SQLite databases on disk.
     /// Each graph gets its own file: `{base_dir}/{graph_name}.db`.
     pub fn sqlite(default_graph: &str, base_path: String) -> Self {
@@ -107,6 +104,20 @@ impl GraphRegistry {
             default_graph: default_graph.to_string(),
             graphs: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl GraphRegistry {
+    /// Create a registry backed by in-memory graphs (no database needed).
+    pub fn in_memory(default_graph: &str) -> Self {
+        let registry = Self {
+            factory: Box::new(|name: &str| {
+                Arc::new(crate::in_memory_graph::InMemoryGraph::new(name)) as Arc<dyn GraphBackend>
+            }),
+            default_graph: default_graph.to_string(),
+            graphs: Mutex::new(HashMap::new()),
+        };
+        registry
     }
 
     pub fn default_graph_name(&self) -> &str {
@@ -163,6 +174,7 @@ impl GraphRegistry {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl GraphClient {
     pub async fn connect(connection_string: &str, graph_name: &str) -> Result<Self> {
         let info: FalkorConnectionInfo = connection_string
@@ -1169,6 +1181,7 @@ impl GraphClient {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl GraphBackend for GraphClient {
     fn graph_name(&self) -> &str { &self.graph_name }
@@ -1251,6 +1264,7 @@ impl GraphBackend for GraphClient {
     async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> { self.find_entity_by_property(key, value).await }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() { return 0.0; }
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
@@ -1260,12 +1274,14 @@ fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
     dot / (norm_a * norm_b)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sanitise(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 // --- Value parsing helpers ---
 
+#[cfg(not(target_arch = "wasm32"))]
 fn node_to_entity_row(v: FalkorValue) -> Option<Result<EntityRow>> {
     match v {
         FalkorValue::Node(node) => {
@@ -1285,6 +1301,7 @@ fn node_to_entity_row(v: FalkorValue) -> Option<Result<EntityRow>> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) -> Result<EdgeRow> {
     let (edge_id, fact, relation_type, confidence, salience, valid_at, invalid_at, embedding, decayed_confidence, source_agents, memory_tier, expires_at) =
         match &rel {
@@ -1353,10 +1370,12 @@ fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) ->
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prop_string(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> String {
     p.get(key).map(extract_string).unwrap_or_default()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prop_opt_string(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> Option<String> {
     p.get(key).and_then(|v| match v {
         FalkorValue::None => None,
@@ -1365,22 +1384,27 @@ fn prop_opt_string(p: &std::collections::HashMap<String, FalkorValue>, key: &str
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prop_bool(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> bool {
     p.get(key).map(extract_bool).unwrap_or(false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prop_float(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> f32 {
     p.get(key).map(extract_float).unwrap_or(0.0)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prop_int(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> i64 {
     p.get(key).map(extract_int).unwrap_or(0)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prop_embedding(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> Vec<f32> {
     p.get(key).map(extract_embedding).unwrap_or_else(|| vec![0.0; EMBEDDING_DIM])
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_string(v: &FalkorValue) -> String {
     match v {
         FalkorValue::String(s) => s.clone(),
@@ -1391,6 +1415,7 @@ fn extract_string(v: &FalkorValue) -> String {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_bool(v: &FalkorValue) -> bool {
     match v {
         FalkorValue::Bool(b) => *b,
@@ -1400,6 +1425,7 @@ fn extract_bool(v: &FalkorValue) -> bool {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_int(v: &FalkorValue) -> i64 {
     match v {
         FalkorValue::I64(i) => *i,
@@ -1408,6 +1434,7 @@ fn extract_int(v: &FalkorValue) -> i64 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_float(v: &FalkorValue) -> f32 {
     match v {
         FalkorValue::F64(f) => *f as f32,
@@ -1416,6 +1443,7 @@ fn extract_float(v: &FalkorValue) -> f32 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_embedding(v: &FalkorValue) -> Vec<f32> {
     match v {
         FalkorValue::Array(arr) => arr.iter().map(extract_float).collect(),
@@ -1425,11 +1453,13 @@ fn extract_embedding(v: &FalkorValue) -> Vec<f32> {
 }
 
 /// Destructure a row into a fixed-size array, bailing if too short.
+#[cfg(not(target_arch = "wasm32"))]
 fn take_n<const N: usize>(row: Vec<FalkorValue>) -> Result<[FalkorValue; N]> {
     row.try_into()
         .map_err(|v: Vec<FalkorValue>| anyhow::anyhow!("expected {N} columns, got {}", v.len()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn supersession_from_row(row: Vec<FalkorValue>) -> Result<SupersessionRecord> {
     let [a, b, c, d, e] = take_n(row)?;
     let old_edge_id = extract_int(&a);
@@ -1448,6 +1478,7 @@ fn supersession_from_row(row: Vec<FalkorValue>) -> Result<SupersessionRecord> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn vec_literal(v: &[f32]) -> String {
     let inner = v.iter()
         .map(|f| format!("{:.6}", f))

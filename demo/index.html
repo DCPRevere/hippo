@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hippo Knowledge Graph</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --surface: #161922;
+    --border: #2a2d3a;
+    --text: #e0e0e6;
+    --text-muted: #8888a0;
+    --accent: #7c5cfc;
+    --accent-hover: #9b80fd;
+    --cyan: #00d4aa;
+    --red: #ff5577;
+    --mono: 'Menlo', 'Consolas', 'Monaco', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+
+  header h1 span { color: var(--accent); }
+
+  #stats-bar {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+
+  .main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    width: 380px;
+    min-width: 320px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .panel {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  .panel-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  input, textarea, select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    width: 100%;
+    font-family: inherit;
+    outline: none;
+  }
+
+  input:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+
+  textarea { resize: vertical; min-height: 60px; }
+
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  button.secondary:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  #graph-container {
+    flex: 1;
+    position: relative;
+  }
+
+  #graph-canvas {
+    width: 100%;
+    height: 100%;
+  }
+
+  #log-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  .log-entry { margin-bottom: 4px; }
+  .log-time { color: var(--text-muted); }
+  .log-ok { color: var(--cyan); }
+  .log-err { color: var(--red); }
+  .log-info { color: var(--accent); }
+
+  #setup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  #setup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 32px;
+    width: 400px;
+    max-width: 90vw;
+  }
+
+  #setup-card h2 {
+    font-size: 20px;
+    margin-bottom: 20px;
+    font-weight: 600;
+  }
+
+  #setup-card h2 span { color: var(--accent); }
+
+  .field { margin-bottom: 14px; }
+
+  .field label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  #answer-box {
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 60px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    display: none;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top: 2px solid var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- Setup overlay -->
+<div id="setup-overlay">
+  <div id="setup-card">
+    <h2><span>Hippo</span> Knowledge Graph</h2>
+    <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 13px;">
+      Runs entirely in your browser via WebAssembly. Your API key is sent only to OpenAI.
+    </p>
+    <div class="field">
+      <label>OpenAI API Key</label>
+      <input type="password" id="api-key-input" placeholder="sk-...">
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <select id="model-select">
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gpt-4o">gpt-4o</option>
+        <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+        <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Embedding Model</label>
+      <select id="embedding-select">
+        <option value="text-embedding-3-small">text-embedding-3-small</option>
+        <option value="text-embedding-3-large">text-embedding-3-large</option>
+      </select>
+    </div>
+    <button id="init-btn" onclick="initialize()" style="width:100%; margin-top:8px;">Initialize</button>
+  </div>
+</div>
+
+<header>
+  <h1><span>HIPPO</span> Knowledge Graph</h1>
+  <span id="stats-bar">not initialized</span>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <!-- Remember panel -->
+    <div class="panel">
+      <h2>Remember</h2>
+      <textarea id="remember-input" placeholder="Enter a statement to remember..."></textarea>
+      <div class="panel-row" style="margin-top:8px;">
+        <button id="remember-btn" onclick="doRemember()" disabled>Remember</button>
+      </div>
+    </div>
+
+    <!-- Ask panel -->
+    <div class="panel">
+      <h2>Ask</h2>
+      <div class="panel-row">
+        <input id="ask-input" placeholder="Ask a question..." onkeydown="if(event.key==='Enter')doAsk()">
+        <button id="ask-btn" onclick="doAsk()" disabled>Ask</button>
+      </div>
+      <div id="answer-box"></div>
+    </div>
+
+    <!-- Context panel -->
+    <div class="panel">
+      <h2>Context</h2>
+      <div class="panel-row">
+        <input id="context-input" placeholder="Query for context..." onkeydown="if(event.key==='Enter')doContext()">
+        <button id="context-btn" onclick="doContext()" disabled>Query</button>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="panel">
+      <h2>Actions</h2>
+      <div class="panel-row">
+        <button class="secondary" onclick="refreshGraph()" id="refresh-btn" disabled>Refresh Graph</button>
+        <button class="secondary" onclick="exportGraph()" id="export-btn" disabled>Export JSON</button>
+      </div>
+    </div>
+
+    <!-- Activity log -->
+    <div class="panel" style="flex:1; display:flex; flex-direction:column; min-height:0; border-bottom:none;">
+      <h2>Activity Log</h2>
+      <div id="log-panel"></div>
+    </div>
+  </div>
+
+  <div id="graph-container">
+    <div id="graph-canvas"></div>
+  </div>
+</div>
+
+<script type="module">
+import init, { Hippo } from './pkg/hippo_wasm.js';
+
+let hippo = null;
+let network = null;
+let nodesDS = new vis.DataSet();
+let edgesDS = new vis.DataSet();
+
+// Make functions available globally
+window.initialize = async function() {
+  const btn = document.getElementById('init-btn');
+  btn.disabled = true;
+  btn.textContent = 'Initializing...';
+
+  try {
+    await init();
+
+    const apiKey = document.getElementById('api-key-input').value.trim();
+    if (!apiKey) {
+      alert('Please enter an API key');
+      btn.disabled = false;
+      btn.textContent = 'Initialize';
+      return;
+    }
+
+    const config = JSON.stringify({
+      api_key: apiKey,
+      model: document.getElementById('model-select').value,
+      embedding_model: document.getElementById('embedding-select').value,
+    });
+
+    hippo = new Hippo(config);
+
+    document.getElementById('setup-overlay').style.display = 'none';
+    document.querySelectorAll('button[disabled]').forEach(b => b.disabled = false);
+    logInfo('Hippo initialized (WASM)');
+    initGraph();
+    updateStats();
+  } catch(e) {
+    logError('Init failed: ' + e);
+    btn.disabled = false;
+    btn.textContent = 'Initialize';
+  }
+};
+
+window.doRemember = async function() {
+  const input = document.getElementById('remember-input');
+  const statement = input.value.trim();
+  if (!statement || !hippo) return;
+
+  const btn = document.getElementById('remember-btn');
+  btn.disabled = true;
+  logInfo('Remembering: "' + statement.substring(0, 60) + '..."');
+
+  try {
+    const result = await hippo.remember(statement, null);
+    logOk('Remembered: ' + result.entities_created + ' entities, ' + result.facts_written + ' facts');
+    input.value = '';
+    await refreshGraph();
+    await updateStats();
+  } catch(e) {
+    logError('Remember failed: ' + e);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.doAsk = async function() {
+  const input = document.getElementById('ask-input');
+  const question = input.value.trim();
+  if (!question || !hippo) return;
+
+  const btn = document.getElementById('ask-btn');
+  const box = document.getElementById('answer-box');
+  btn.disabled = true;
+  box.style.display = 'block';
+  box.textContent = 'Thinking...';
+  logInfo('Asking: "' + question + '"');
+
+  try {
+    const result = await hippo.ask(question);
+    box.textContent = result.answer;
+    logOk('Answer received');
+  } catch(e) {
+    box.textContent = 'Error: ' + e;
+    logError('Ask failed: ' + e);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.doContext = async function() {
+  const input = document.getElementById('context-input');
+  const query = input.value.trim();
+  if (!query || !hippo) return;
+
+  const btn = document.getElementById('context-btn');
+  btn.disabled = true;
+  logInfo('Context query: "' + query + '"');
+
+  try {
+    const result = await hippo.context(query, 20);
+    const factCount = result.facts ? result.facts.length : 0;
+    logOk('Context: ' + factCount + ' facts retrieved');
+
+    // Highlight matched nodes in graph
+    if (result.facts) {
+      const names = new Set();
+      result.facts.forEach(f => {
+        names.add(f.subject);
+        names.add(f.object);
+      });
+      highlightNodes(names);
+    }
+  } catch(e) {
+    logError('Context failed: ' + e);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.refreshGraph = async function() {
+  if (!hippo) return;
+  try {
+    const data = await hippo.export_graph();
+    renderGraph(data.entities || [], data.edges || []);
+    logOk('Graph refreshed');
+  } catch(e) {
+    logError('Refresh failed: ' + e);
+  }
+};
+
+window.exportGraph = async function() {
+  if (!hippo) return;
+  try {
+    const data = await hippo.export_graph();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'hippo-graph.json';
+    a.click();
+    logOk('Graph exported');
+  } catch(e) {
+    logError('Export failed: ' + e);
+  }
+};
+
+async function updateStats() {
+  if (!hippo) return;
+  try {
+    const s = await hippo.stats();
+    document.getElementById('stats-bar').textContent =
+      'entities: ' + s.entity_count + ' | facts: ' + s.fact_count + ' | active: ' + s.active_edge_count;
+  } catch(e) { /* ignore */ }
+}
+
+function initGraph() {
+  const container = document.getElementById('graph-canvas');
+  network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, {
+    nodes: {
+      shape: 'dot',
+      size: 16,
+      font: { color: '#e0e0e6', size: 12, face: 'system-ui' },
+      color: {
+        background: '#7c5cfc',
+        border: '#9b80fd',
+        highlight: { background: '#00d4aa', border: '#00ffcc' },
+      },
+      borderWidth: 2,
+    },
+    edges: {
+      color: { color: '#3a3d4a', highlight: '#00d4aa' },
+      font: { color: '#666680', size: 9, face: 'system-ui', align: 'top' },
+      arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+      smooth: { type: 'continuous' },
+    },
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -40, centralGravity: 0.005, springLength: 120 },
+      stabilization: { iterations: 100 },
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 100,
+    },
+    layout: { improvedLayout: true },
+  });
+}
+
+function renderGraph(entities, edges) {
+  nodesDS.clear();
+  edgesDS.clear();
+
+  const typeColors = {
+    person: '#7c5cfc',
+    place: '#00d4aa',
+    organization: '#ff9944',
+    event: '#ff5577',
+    concept: '#44aaff',
+    content: '#ffcc00',
+    unknown: '#888899',
+  };
+
+  const nodes = entities.map(e => ({
+    id: e.id,
+    label: e.name,
+    title: e.entity_type + (e.hint ? '\n' + e.hint : ''),
+    color: {
+      background: typeColors[e.entity_type] || typeColors.unknown,
+      border: typeColors[e.entity_type] || typeColors.unknown,
+      highlight: { background: '#00d4aa', border: '#00ffcc' },
+    },
+    size: 14 + Math.min(10, (e.name.length / 3)),
+  }));
+
+  const edgeItems = edges
+    .filter(e => !e.invalid_at)
+    .map(e => ({
+      from: e.subject_id,
+      to: e.object_id,
+      label: e.relation_type,
+      title: e.fact,
+      width: Math.max(1, e.confidence * 3),
+      color: { color: '#3a3d4a', opacity: 0.3 + e.confidence * 0.7 },
+    }));
+
+  nodesDS.add(nodes);
+  edgesDS.add(edgeItems);
+}
+
+function highlightNodes(nameSet) {
+  const allNodes = nodesDS.get();
+  allNodes.forEach(n => {
+    if (nameSet.has(n.label)) {
+      nodesDS.update({ id: n.id, color: { background: '#00d4aa', border: '#00ffcc' } });
+      setTimeout(() => {
+        nodesDS.update({ id: n.id, color: n.color });
+      }, 3000);
+    }
+  });
+}
+
+function logInfo(msg) { addLog(msg, 'log-info'); }
+function logOk(msg) { addLog(msg, 'log-ok'); }
+function logError(msg) { addLog(msg, 'log-err'); }
+
+function addLog(msg, cls) {
+  const panel = document.getElementById('log-panel');
+  const time = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = '<span class="log-time">' + time + '</span> <span class="' + cls + '">' + escapeHtml(msg) + '</span>';
+  panel.appendChild(div);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>
+</body>
+</html>

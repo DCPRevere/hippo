@@ -4,59 +4,87 @@ version = "0.1.0"
 edition = "2021"
 autobenches = false
 
+[features]
+default = ["server"]
+server = [
+    "dep:axum",
+    "dep:tower-http",
+    "dep:falkordb",
+    "dep:tokio-stream",
+    "dep:dirs",
+    "dep:dotenvy",
+    "dep:rusqlite",
+    "dep:tracing-subscriber",
+    "dep:toml",
+    "dep:axum-server",
+    "dep:clap",
+    "reqwest/blocking",
+    "tokio/full",
+]
+wasm = []
+
 [[bin]]
 name = "hippo"
 path = "src/main.rs"
+required-features = ["server"]
 
 [[bin]]
 name = "mcp-server"
 path = "src/bin/mcp_server.rs"
+required-features = ["server"]
 
 [[bin]]
 name = "eval-regression"
 path = "src/bin/eval_regression.rs"
+required-features = ["server"]
 
 [[bin]]
 name = "eval-score"
 path = "src/bin/eval_score.rs"
+required-features = ["server"]
 
 [[bin]]
 name = "benchmark"
 path = "benches/benchmark.rs"
-
-[dependencies]
-axum = "0.8"
-tower-http = { version = "0.6", features = ["trace", "fs", "cors"] }
-tokio = { version = "1", features = ["full"] }
-falkordb = { version = "0.2", features = ["tokio"] }
-reqwest = { version = "0.12", features = ["json", "blocking"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-sha2 = "0.10"
-hex = "0.4"
-rand = "0.8"
-rand_chacha = "0.3"
-tokio-stream = { version = "0.1", features = ["sync"] }
-futures = "0.3"
-dirs = "5"
-regex = "1"
-async-trait = "0.1"
-dotenvy = "0.15.7"
-argon2 = "0.5"
-base64 = "0.22"
-rusqlite = { version = "0.32", features = ["bundled"] }
-toml = "0.8"
-axum-server = { version = "0.7", features = ["tls-rustls"] }
-clap = { version = "4", features = ["derive", "env"] }
+required-features = ["server"]
 
 [[bin]]
 name = "hippo-cli"
 path = "src/bin/cli.rs"
+required-features = ["server"]
+
+[dependencies]
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["trace", "fs", "cors"], optional = true }
+tokio = { version = "1", features = ["sync"] }
+falkordb = { version = "0.2", features = ["tokio"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "js"] }
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+rand_chacha = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"], optional = true }
+futures = "0.3"
+dirs = { version = "5", optional = true }
+regex = "1"
+async-trait = "0.1"
+dotenvy = { version = "0.15.7", optional = true }
+argon2 = "0.5"
+base64 = "0.22"
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+toml = { version = "0.8", optional = true }
+axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
+clap = { version = "4", features = ["derive", "env"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

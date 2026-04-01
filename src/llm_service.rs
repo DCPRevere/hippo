@@ -6,7 +6,8 @@ use crate::models::{
     ExtractedEntity, GraphContext, OperationsResult,
 };
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait LlmService: Send + Sync {
     async fn embed(&self, text: &str) -> Result<Vec<f32>>;
 

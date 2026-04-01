@@ -3,12 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::config::LlmProvider;
@@ -1016,56 +1012,7 @@ Use the same JSON format: {{"operations": [...]}}"#
     }
 }
 
-fn clean_json(s: &str) -> &str {
-    let s = s.trim();
-    let s = s.strip_prefix("```json").unwrap_or(s);
-    let s = s.strip_prefix("```").unwrap_or(s);
-    let s = s.strip_suffix("```").unwrap_or(s);
-    let s = s.trim();
-
-    // Find whichever starts first — { or [ — so we correctly handle both objects and arrays
-    let obj_start = s.find('{');
-    let arr_start = s.find('[');
-
-    let (start, open, close) = match (obj_start, arr_start) {
-        (Some(o), Some(a)) if a < o => (a, b'[', b']'),
-        (Some(o), _) => (o, b'{', b'}'),
-        (None, Some(a)) => (a, b'[', b']'),
-        (None, None) => return s,
-    };
-
-    let bytes = s.as_bytes();
-    let mut depth = 0i32;
-    for (i, &b) in bytes[start..].iter().enumerate() {
-        if b == open {
-            depth += 1;
-        } else if b == close {
-            depth -= 1;
-            if depth == 0 {
-                return &s[start..start + i + 1];
-            }
-        }
-    }
-    s
-}
-
-pub fn pseudo_embed(text: &str) -> Vec<f32> {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    let hash = hasher.finalize();
-    let seed = u64::from_le_bytes(hash[..8].try_into().unwrap());
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let v: Vec<f32> = (0..EMBEDDING_DIM).map(|_| rng.gen_range(-1.0f32..1.0f32)).collect();
-    normalize(v)
-}
-
-pub fn normalize(mut v: Vec<f32>) -> Vec<f32> {
-    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        v.iter_mut().for_each(|x| *x /= norm);
-    }
-    v
-}
+pub use crate::math::{clean_json, pseudo_embed, normalize};
 
 // ---- Trait implementation ----
 
