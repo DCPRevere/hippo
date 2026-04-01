@@ -45,7 +45,7 @@ impl Hippo {
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             wasm_config
                 .model
-                .unwrap_or_else(|| "gpt-4o-mini".to_string()),
+                .unwrap_or_else(|| "gpt-4.1-mini".to_string()),
             wasm_config
                 .embedding_model
                 .unwrap_or_else(|| "text-embedding-3-small".to_string()),

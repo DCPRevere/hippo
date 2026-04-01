@@ -142,7 +142,7 @@ impl Default for OpenAiConfig {
     fn default() -> Self {
         Self {
             base_url: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4o-mini".to_string(),
+            model: "gpt-4.1-mini".to_string(),
             embedding_model: None,
         }
     }
@@ -336,7 +336,7 @@ impl Config {
             llm: LlmConfig {
                 provider: LlmProvider::OpenAI,
                 openai: OpenAiConfig {
-                    model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
+                    model: model.unwrap_or_else(|| "gpt-4.1-mini".to_string()),
                     embedding_model: Some(
                         embedding_model.unwrap_or_else(|| "text-embedding-3-small".to_string()),
                     ),
