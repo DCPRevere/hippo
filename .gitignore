@@ -1,8 +1,10 @@
-/target
-node_modules/
-__pycache__/
+*.egg-info/
 *.pyc
+.claude
 .pytest_cache/
 .venv/
+/target
+__pycache__/
 dist/
-*.egg-info/
+node_modules/
+hippo.toml
