@@ -41,7 +41,7 @@ pub async fn context(
     let mut seen_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
     // Step 2: Fulltext search on fact text — most direct relevance signal
-    let ft_edges = graph.fulltext_search_edges(&req.query).await?;
+    let ft_edges = graph.fulltext_search_edges(&req.query, req.at).await?;
     tracing::info!(count = ft_edges.len(), "context: fulltext edge results");
     send_progress!(ContextProgress::FulltextHits { count: ft_edges.len() });
     for edge in ft_edges {
@@ -71,7 +71,7 @@ pub async fn context(
 
         if !exact.is_empty() {
             let ids: Vec<String> = exact.iter().map(|e| e.id.clone()).collect();
-            let hop_results = graph.walk_n_hops(&ids, max_hops, 30).await?;
+            let hop_results = graph.walk_n_hops(&ids, max_hops, 30, req.at).await?;
             tracing::info!(count = hop_results.len(), "context: exact entity n-hop edges");
             send_progress!(ContextProgress::HopResults { hop: 1, count: hop_results.len() });
             for (edge, hop) in hop_results {
@@ -89,7 +89,7 @@ pub async fn context(
 
         if !partial.is_empty() {
             let ids: Vec<String> = partial.iter().map(|e| e.id.clone()).collect();
-            let hop_results = graph.walk_n_hops(&ids, max_hops, 30).await?;
+            let hop_results = graph.walk_n_hops(&ids, max_hops, 30, req.at).await?;
             tracing::info!(count = hop_results.len(), "context: partial entity n-hop edges");
             send_progress!(ContextProgress::HopResults { hop: 2, count: hop_results.len() });
             for (edge, hop) in hop_results {
@@ -105,7 +105,7 @@ pub async fn context(
     }
 
     // Step 4: Blend vector search into the pipeline (not just fallback)
-    let vec_results = graph.vector_search_edges_scored(&embedding, 20).await?;
+    let vec_results = graph.vector_search_edges_scored(&embedding, 20, req.at).await?;
     tracing::info!(count = vec_results.len(), "context: vector search results");
     send_progress!(ContextProgress::VectorHits { count: vec_results.len() });
     for (edge, score) in vec_results {

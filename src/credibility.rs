@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::graph_backend::GraphBackend;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceCredibility {
     pub agent_id: String,
@@ -41,7 +39,7 @@ impl CredibilityRegistry {
         self.sources.get(agent_id).map(|s| s.credibility).unwrap_or(0.8)
     }
 
-    pub async fn record_contradiction(&mut self, agent_id: &str, graph: &dyn GraphBackend) {
+    pub fn record_contradiction(&mut self, agent_id: &str) {
         let entry = self.sources.entry(agent_id.to_string()).or_insert_with(|| {
             SourceCredibility {
                 agent_id: agent_id.to_string(),
@@ -53,13 +51,9 @@ impl CredibilityRegistry {
         let contradictions = entry.contradiction_rate * (total - 1.0) + 1.0;
         entry.contradiction_rate = contradictions / total;
         entry.credibility = (1.0 - entry.contradiction_rate * 0.5).max(0.3);
-
-        if let Err(e) = graph.save_source_credibility(entry).await {
-            tracing::warn!("failed to persist credibility for {agent_id}: {e}");
-        }
     }
 
-    pub async fn record_fact(&mut self, agent_id: &str, graph: &dyn GraphBackend) {
+    pub fn record_fact(&mut self, agent_id: &str) {
         let entry = self.sources.entry(agent_id.to_string()).or_insert_with(|| {
             SourceCredibility {
                 agent_id: agent_id.to_string(),
@@ -67,10 +61,6 @@ impl CredibilityRegistry {
             }
         });
         entry.fact_count = entry.fact_count.saturating_add(1);
-
-        if let Err(e) = graph.save_source_credibility(entry).await {
-            tracing::warn!("failed to persist credibility for {agent_id}: {e}");
-        }
     }
 
     pub fn list(&self) -> Vec<SourceCredibility> {

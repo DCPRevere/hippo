@@ -330,7 +330,7 @@ pub async fn remember(
                     // Fallback: find by fact text similarity
                     let embedding = state.llm.embed(fact_text).await?;
                     usage.embed_calls += 1;
-                    let candidates = graph.vector_search_edges_scored(&embedding, 5).await?;
+                    let candidates = graph.vector_search_edges_scored(&embedding, 5, None).await?;
                     for (edge, score) in &candidates {
                         if *score > 0.85 && edge.invalid_at.is_none() {
                             graph.invalidate_edge(edge.edge_id, now).await?;
@@ -525,18 +525,10 @@ pub async fn gather_pre_extraction_context_at(
 
     // 2. Vector search for semantically related edges
     let embedding = state.llm.embed(statement).await?;
-    if let Some(at_ts) = at {
-        let vec_edges = graph.vector_search_edges_at(&embedding, 10, at_ts).await?;
-        tracing::debug!(count = vec_edges.len(), "context: vector search edges (at)");
-        for edge in &vec_edges {
-            collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
-        }
-    } else {
-        let vec_edges = graph.vector_search_edges_scored(&embedding, 10).await?;
-        tracing::debug!(count = vec_edges.len(), "context: vector search edges");
-        for (edge, _) in &vec_edges {
-            collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
-        }
+    let vec_edges = graph.vector_search_edges_scored(&embedding, 10, at).await?;
+    tracing::debug!(count = vec_edges.len(), "context: vector search edges");
+    for (edge, _) in &vec_edges {
+        collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
     }
 
     // 3. Walk 1-hop from matched entities (excluding the principal to avoid pulling the entire graph)
@@ -545,11 +537,8 @@ pub async fn gather_pre_extraction_context_at(
         .cloned()
         .collect();
     if !non_principal_ids.is_empty() {
-        let hop_edges = if let Some(at_ts) = at {
-            graph.walk_one_hop_at(&non_principal_ids, 30, at_ts).await?
-        } else {
-            graph.walk_one_hop(&non_principal_ids, 30).await?
-        };
+        let hop_results = graph.walk_n_hops(&non_principal_ids, 1, 30, at).await?;
+        let hop_edges: Vec<_> = hop_results.into_iter().map(|(e, _)| e).collect();
         tracing::debug!(count = hop_edges.len(), from = non_principal_ids.len(), "context: 1-hop edges (non-principal)");
         for edge in &hop_edges {
             collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
@@ -585,7 +574,8 @@ async fn gather_context_by_names(
                     properties: HashMap::new(),
                     user_id: None,
                 });
-                let hop_edges = graph.walk_one_hop(&[e.id.clone()], 20).await?;
+                let hop_results = graph.walk_n_hops(&[e.id.clone()], 1, 20, None).await?;
+                let hop_edges: Vec<_> = hop_results.into_iter().map(|(e, _)| e).collect();
                 for edge in &hop_edges {
                     if seen_edge_ids.insert(edge.edge_id) {
                         if seen_node_ids.insert(edge.subject_id.clone()) {

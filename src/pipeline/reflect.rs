@@ -92,20 +92,19 @@ async fn reflect_entity(
 }
 
 async fn reflect_global(state: &AppState, graph: &dyn GraphBackend) -> Result<ReflectResponse> {
-    let (total_entities, total_facts, oldest_str, newest_str, avg_confidence) =
-        graph.graph_stats().await?;
+    let gs = graph.graph_stats().await?;
 
-    let oldest_fact = oldest_str.and_then(|s| s.parse::<DateTime<Utc>>().ok());
-    let newest_fact = newest_str.and_then(|s| s.parse::<DateTime<Utc>>().ok());
+    let oldest_fact = gs.oldest_valid_at.and_then(|s| s.parse::<DateTime<Utc>>().ok());
+    let newest_fact = gs.newest_valid_at.and_then(|s| s.parse::<DateTime<Utc>>().ok());
 
     let entities_by_type = graph.entity_type_counts().await?;
 
     let stats = MemoryStats {
-        total_entities,
-        total_facts,
+        total_entities: gs.entity_count,
+        total_facts: gs.edge_count,
         oldest_fact,
         newest_fact,
-        avg_confidence,
+        avg_confidence: gs.avg_confidence,
         entities_by_type,
     };
 
@@ -113,8 +112,8 @@ async fn reflect_global(state: &AppState, graph: &dyn GraphBackend) -> Result<Re
     let under_documented = graph.under_documented_entities(2).await?;
     let gaps: Vec<String> = under_documented
         .iter()
-        .map(|(name, etype, count)| {
-            format!("{name} ({etype}) — {count} fact(s)")
+        .map(|e| {
+            format!("{} — {} fact(s)", e.name, e.edge_count)
         })
         .collect();
 

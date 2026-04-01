@@ -3,8 +3,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use crate::credibility::SourceCredibility;
-use crate::models::{EdgeRow, Entity, EntityRow, ProvenanceResponse, Relation, SupersessionRecord};
+use crate::models::{EdgeRow, Entity, EntityRow, GraphStats, MemoryTierStats, ProvenanceResponse, Relation, UnderDocumentedEntity};
 
 #[async_trait]
 pub trait GraphBackend: Send + Sync {
@@ -19,15 +18,11 @@ pub trait GraphBackend: Send + Sync {
     async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>>;
 
     // --- Edge search ---
-    async fn fulltext_search_edges(&self, query_str: &str) -> Result<Vec<EdgeRow>>;
-    async fn fulltext_search_edges_at(&self, query_str: &str, at: DateTime<Utc>) -> Result<Vec<EdgeRow>>;
-    async fn vector_search_edges_scored(&self, embedding: &[f32], k: usize) -> Result<Vec<(EdgeRow, f32)>>;
-    async fn vector_search_edges_at(&self, embedding: &[f32], k: usize, at: DateTime<Utc>) -> Result<Vec<EdgeRow>>;
+    async fn fulltext_search_edges(&self, query_str: &str, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>>;
+    async fn vector_search_edges_scored(&self, embedding: &[f32], k: usize, at: Option<DateTime<Utc>>) -> Result<Vec<(EdgeRow, f32)>>;
 
     // --- Graph traversal ---
-    async fn walk_one_hop(&self, entity_ids: &[String], limit: usize) -> Result<Vec<EdgeRow>>;
-    async fn walk_one_hop_at(&self, entity_ids: &[String], limit: usize, at: DateTime<Utc>) -> Result<Vec<EdgeRow>>;
-    async fn walk_n_hops(&self, seed_entity_ids: &[String], max_hops: usize, limit_per_hop: usize) -> Result<Vec<(EdgeRow, usize)>>;
+    async fn walk_n_hops(&self, seed_entity_ids: &[String], max_hops: usize, limit_per_hop: usize, at: Option<DateTime<Utc>>) -> Result<Vec<(EdgeRow, usize)>>;
     async fn entity_timeline(&self, entity_name: &str) -> Result<Vec<EdgeRow>>;
     async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>>;
 
@@ -35,23 +30,22 @@ pub trait GraphBackend: Send + Sync {
     async fn upsert_entity(&self, entity: &Entity) -> Result<()>;
     async fn create_edge(&self, from_id: &str, to_id: &str, rel: &Relation) -> Result<i64>;
     async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()>;
-    async fn compound_edge_confidence(&self, edge_id: i64, new_agent: &str, new_confidence: f32) -> Result<f32>;
     async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()>;
     async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()>;
     async fn delete_entity(&self, entity_id: &str) -> Result<usize>;
 
     // --- Memory tier management ---
     async fn promote_working_memory(&self) -> Result<usize>;
-    async fn memory_tier_stats(&self) -> Result<(usize, usize)>;
+    async fn memory_tier_stats(&self) -> Result<MemoryTierStats>;
     async fn decay_stale_edges(&self, stale_before: DateTime<Utc>, now: DateTime<Utc>) -> Result<usize>;
     async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize>;
 
     // --- Facts / reflection ---
     async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>>;
     async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>>;
-    async fn graph_stats(&self) -> Result<(usize, usize, Option<String>, Option<String>, f32)>;
+    async fn graph_stats(&self) -> Result<GraphStats>;
     async fn all_relation_types(&self) -> Result<Vec<String>>;
-    async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<(String, String, usize)>>;
+    async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<UnderDocumentedEntity>>;
     async fn entity_type_counts(&self) -> Result<HashMap<String, usize>>;
 
     // --- Dump / pagination ---
@@ -60,8 +54,6 @@ pub trait GraphBackend: Send + Sync {
     async fn list_entities_by_recency(&self, offset: usize, limit: usize) -> Result<Vec<EntityRow>>;
 
     // --- Supersession / provenance ---
-    async fn create_supersession(&self, old_edge_id: i64, new_edge_id: i64, superseded_at: DateTime<Utc>, old_fact: &str, new_fact: &str) -> Result<()>;
-    async fn get_supersession_chain(&self, edge_id: i64) -> Result<Vec<SupersessionRecord>>;
     async fn get_provenance(&self, edge_id: i64) -> Result<ProvenanceResponse>;
 
     // --- Discovery ---
@@ -79,8 +71,4 @@ pub trait GraphBackend: Send + Sync {
 
     // --- Clustering ---
     async fn find_entity_clusters(&self, min_size: usize) -> Result<Vec<Vec<String>>>;
-
-    // --- Credibility persistence ---
-    async fn save_source_credibility(&self, cred: &SourceCredibility) -> Result<()>;
-    async fn load_all_source_credibility(&self) -> Result<Vec<SourceCredibility>>;
 }

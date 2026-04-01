@@ -75,7 +75,7 @@ async fn create_edge_and_search() {
     let edge_id = g.create_edge("e1", "e2", &make_relation("Alice knows Bob")).await.unwrap();
     assert!(edge_id > 0);
 
-    let edges = g.fulltext_search_edges("knows bob").await.unwrap();
+    let edges = g.fulltext_search_edges("knows bob", None).await.unwrap();
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].subject_name, "Alice");
     assert_eq!(edges[0].object_name, "Bob");
@@ -90,7 +90,7 @@ async fn invalidate_edge() {
 
     g.invalidate_edge(edge_id, Utc::now()).await.unwrap();
 
-    let edges = g.fulltext_search_edges("knows bob").await.unwrap();
+    let edges = g.fulltext_search_edges("knows bob", None).await.unwrap();
     assert!(edges.is_empty());
 }
 
@@ -129,7 +129,8 @@ async fn walk_one_hop() {
     g.create_edge("e1", "e2", &make_relation("A-B")).await.unwrap();
     g.create_edge("e2", "e3", &make_relation("B-C")).await.unwrap();
 
-    let hops = g.walk_one_hop(&["e1".to_string()], 10).await.unwrap();
+    let results = g.walk_n_hops(&["e1".to_string()], 1, 10, None).await.unwrap();
+    let hops: Vec<_> = results.into_iter().map(|(e, _)| e).collect();
     assert_eq!(hops.len(), 1);
     assert_eq!(hops[0].fact, "A-B");
 }
@@ -143,7 +144,7 @@ async fn walk_n_hops() {
     g.create_edge("e1", "e2", &make_relation("A-B")).await.unwrap();
     g.create_edge("e2", "e3", &make_relation("B-C")).await.unwrap();
 
-    let results = g.walk_n_hops(&["e1".to_string()], 2, 10).await.unwrap();
+    let results = g.walk_n_hops(&["e1".to_string()], 2, 10, None).await.unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].1, 1); // first hop
     assert_eq!(results[1].1, 2); // second hop
@@ -156,10 +157,10 @@ async fn graph_stats() {
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
     g.create_edge("e1", "e2", &make_relation("fact")).await.unwrap();
 
-    let (entities, edges, _oldest, _newest, avg) = g.graph_stats().await.unwrap();
-    assert_eq!(entities, 2);
-    assert_eq!(edges, 1);
-    assert!((avg - 0.9).abs() < 0.01);
+    let stats = g.graph_stats().await.unwrap();
+    assert_eq!(stats.entity_count, 2);
+    assert_eq!(stats.edge_count, 1);
+    assert!((stats.avg_confidence - 0.9).abs() < 0.01);
 }
 
 #[tokio::test]
@@ -169,9 +170,9 @@ async fn memory_tier_stats() {
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
     g.create_edge("e1", "e2", &make_relation("fact")).await.unwrap();
 
-    let (working, long_term) = g.memory_tier_stats().await.unwrap();
-    assert_eq!(working, 1);
-    assert_eq!(long_term, 0);
+    let tier = g.memory_tier_stats().await.unwrap();
+    assert_eq!(tier.working_count, 1);
+    assert_eq!(tier.long_term_count, 0);
 }
 
 #[tokio::test]

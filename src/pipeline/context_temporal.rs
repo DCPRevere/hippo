@@ -19,7 +19,7 @@ pub async fn context_temporal(state: &AppState, graph: &dyn GraphBackend, req: T
     let mut seen_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
     // Step 1: Fulltext search on fact text with temporal filter
-    let ft_edges = graph.fulltext_search_edges_at(&req.query, at).await?;
+    let ft_edges = graph.fulltext_search_edges(&req.query, Some(at)).await?;
     tracing::info!(count = ft_edges.len(), "context_temporal: fulltext edge results");
     for edge in ft_edges {
         if seen_ids.insert(edge.edge_id) {
@@ -41,8 +41,8 @@ pub async fn context_temporal(state: &AppState, graph: &dyn GraphBackend, req: T
 
         if !exact.is_empty() {
             let ids: Vec<String> = exact.iter().map(|e| e.id.clone()).collect();
-            let hop_edges = graph.walk_one_hop_at(&ids, 50, at).await?;
-            for edge in hop_edges {
+            let hop_results = graph.walk_n_hops(&ids, 1, 50, Some(at)).await?;
+            for (edge, _hop) in hop_results {
                 if seen_ids.insert(edge.edge_id) {
                     relevance_scores.insert(edge.edge_id, 0.9);
                     edges.push(edge);
@@ -54,8 +54,8 @@ pub async fn context_temporal(state: &AppState, graph: &dyn GraphBackend, req: T
 
         if !partial.is_empty() {
             let ids: Vec<String> = partial.iter().map(|e| e.id.clone()).collect();
-            let hop_edges = graph.walk_one_hop_at(&ids, 20, at).await?;
-            for edge in hop_edges {
+            let hop_results = graph.walk_n_hops(&ids, 1, 20, Some(at)).await?;
+            for (edge, _hop) in hop_results {
                 if seen_ids.insert(edge.edge_id) {
                     relevance_scores.insert(edge.edge_id, 0.6);
                     edges.push(edge);
@@ -67,8 +67,8 @@ pub async fn context_temporal(state: &AppState, graph: &dyn GraphBackend, req: T
     // Step 3: Vector search fallback with temporal filter
     if edges.is_empty() {
         tracing::info!("context_temporal: no fulltext results, falling back to vector search");
-        let vec_results = graph.vector_search_edges_at(&embedding, 20, at).await?;
-        for edge in vec_results {
+        let vec_results = graph.vector_search_edges_scored(&embedding, 20, Some(at)).await?;
+        for (edge, _score) in vec_results {
             if seen_ids.insert(edge.edge_id) {
                 relevance_scores.insert(edge.edge_id, 0.5);
                 edges.push(edge);

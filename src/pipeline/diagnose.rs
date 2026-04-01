@@ -14,7 +14,7 @@ pub async fn diagnose(state: &AppState, graph: &dyn GraphBackend, req: ContextRe
     let mut steps = Vec::new();
 
     // Step 1: Fulltext search on fact text
-    let ft_edges = graph.fulltext_search_edges(&req.query).await?;
+    let ft_edges = graph.fulltext_search_edges(&req.query, None).await?;
     steps.push(DiagnoseStep {
         step: "fulltext_facts".to_string(),
         description: format!(
@@ -72,7 +72,8 @@ pub async fn diagnose(state: &AppState, graph: &dyn GraphBackend, req: ContextRe
 
     if !exact.is_empty() {
         let ids: Vec<String> = exact.iter().map(|e| e.id.clone()).collect();
-        let hop_edges = graph.walk_one_hop(&ids, 50).await?;
+        let hop_results = graph.walk_n_hops(&ids, 1, 50, None).await?;
+        let hop_edges: Vec<_> = hop_results.into_iter().map(|(e, _)| e).collect();
         steps.push(DiagnoseStep {
             step: "exact_entity_hop".to_string(),
             description: format!("One-hop from exact entity matches {:?} — relevance 0.9", exact.iter().map(|e| &e.name).collect::<Vec<_>>()),
@@ -102,7 +103,8 @@ pub async fn diagnose(state: &AppState, graph: &dyn GraphBackend, req: ContextRe
 
     if !partial.is_empty() {
         let ids: Vec<String> = partial.iter().map(|e| e.id.clone()).collect();
-        let hop_edges = graph.walk_one_hop(&ids, 20).await?;
+        let hop_results = graph.walk_n_hops(&ids, 1, 20, None).await?;
+        let hop_edges: Vec<_> = hop_results.into_iter().map(|(e, _)| e).collect();
         steps.push(DiagnoseStep {
             step: "partial_entity_hop".to_string(),
             description: format!("One-hop from partial entity matches {:?} — relevance 0.6", partial.iter().map(|e| &e.name).collect::<Vec<_>>()),
@@ -131,7 +133,7 @@ pub async fn diagnose(state: &AppState, graph: &dyn GraphBackend, req: ContextRe
     // Step 3: Vector fallback
     if edges.is_empty() {
         let embedding = state.llm.embed(&req.query).await?;
-        let vec_results = graph.vector_search_edges_scored(&embedding, 20).await?;
+        let vec_results = graph.vector_search_edges_scored(&embedding, 20, None).await?;
         steps.push(DiagnoseStep {
             step: "vector_fallback".to_string(),
             description: "No fulltext results — falling back to vector search on edge embeddings".to_string(),

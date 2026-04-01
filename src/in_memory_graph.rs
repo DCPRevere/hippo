@@ -113,6 +113,32 @@ impl InMemoryGraph {
             properties: RwLock::new(HashMap::new()),
         }
     }
+
+    async fn walk_one_hop_inner(
+        &self,
+        entity_ids: &[String],
+        limit: usize,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Vec<EdgeRow>> {
+        let edges = self.edges.read().await;
+        let entities = self.entities.read().await;
+        let id_set: std::collections::HashSet<&str> =
+            entity_ids.iter().map(|s| s.as_str()).collect();
+        Ok(edges
+            .iter()
+            .filter(|e| {
+                let active = match at {
+                    Some(t) => e.is_active_at(t),
+                    None => e.is_active(),
+                };
+                active
+                    && (id_set.contains(e.from_id.as_str())
+                        || id_set.contains(e.to_id.as_str()))
+            })
+            .take(limit)
+            .map(|e| e.to_row(&entities))
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -172,28 +198,19 @@ impl GraphBackend for InMemoryGraph {
 
     // --- Edge search ---
 
-    async fn fulltext_search_edges(&self, query_str: &str) -> Result<Vec<EdgeRow>> {
+    async fn fulltext_search_edges(&self, query_str: &str, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
         let lower = query_str.to_lowercase();
         let edges = self.edges.read().await;
         let entities = self.entities.read().await;
         Ok(edges
             .iter()
-            .filter(|e| e.is_active() && e.fact.to_lowercase().contains(&lower))
-            .map(|e| e.to_row(&entities))
-            .collect())
-    }
-
-    async fn fulltext_search_edges_at(
-        &self,
-        query_str: &str,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<EdgeRow>> {
-        let lower = query_str.to_lowercase();
-        let edges = self.edges.read().await;
-        let entities = self.entities.read().await;
-        Ok(edges
-            .iter()
-            .filter(|e| e.is_active_at(at) && e.fact.to_lowercase().contains(&lower))
+            .filter(|e| {
+                let active = match at {
+                    Some(t) => e.is_active_at(t),
+                    None => e.is_active(),
+                };
+                active && e.fact.to_lowercase().contains(&lower)
+            })
             .map(|e| e.to_row(&entities))
             .collect())
     }
@@ -202,12 +219,19 @@ impl GraphBackend for InMemoryGraph {
         &self,
         embedding: &[f32],
         k: usize,
+        at: Option<DateTime<Utc>>,
     ) -> Result<Vec<(EdgeRow, f32)>> {
         let edges = self.edges.read().await;
         let entities = self.entities.read().await;
         let mut scored: Vec<(EdgeRow, f32)> = edges
             .iter()
-            .filter(|e| e.is_active() && !e.embedding.is_empty())
+            .filter(|e| {
+                let active = match at {
+                    Some(t) => e.is_active_at(t),
+                    None => e.is_active(),
+                };
+                active && !e.embedding.is_empty()
+            })
             .map(|e| {
                 let score = cosine_similarity(embedding, &e.embedding);
                 (e.to_row(&entities), score)
@@ -218,84 +242,21 @@ impl GraphBackend for InMemoryGraph {
         Ok(scored)
     }
 
-    async fn vector_search_edges_at(
-        &self,
-        embedding: &[f32],
-        k: usize,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<EdgeRow>> {
-        let edges = self.edges.read().await;
-        let entities = self.entities.read().await;
-        let mut scored: Vec<(EdgeRow, f32)> = edges
-            .iter()
-            .filter(|e| e.is_active_at(at) && !e.embedding.is_empty())
-            .map(|e| {
-                let score = cosine_similarity(embedding, &e.embedding);
-                (e.to_row(&entities), score)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(k);
-        Ok(scored.into_iter().map(|(row, _)| row).collect())
-    }
-
     // --- Graph traversal ---
-
-    async fn walk_one_hop(
-        &self,
-        entity_ids: &[String],
-        limit: usize,
-    ) -> Result<Vec<EdgeRow>> {
-        let edges = self.edges.read().await;
-        let entities = self.entities.read().await;
-        let id_set: std::collections::HashSet<&str> =
-            entity_ids.iter().map(|s| s.as_str()).collect();
-        Ok(edges
-            .iter()
-            .filter(|e| {
-                e.is_active()
-                    && (id_set.contains(e.from_id.as_str())
-                        || id_set.contains(e.to_id.as_str()))
-            })
-            .take(limit)
-            .map(|e| e.to_row(&entities))
-            .collect())
-    }
-
-    async fn walk_one_hop_at(
-        &self,
-        entity_ids: &[String],
-        limit: usize,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<EdgeRow>> {
-        let edges = self.edges.read().await;
-        let entities = self.entities.read().await;
-        let id_set: std::collections::HashSet<&str> =
-            entity_ids.iter().map(|s| s.as_str()).collect();
-        Ok(edges
-            .iter()
-            .filter(|e| {
-                e.is_active_at(at)
-                    && (id_set.contains(e.from_id.as_str())
-                        || id_set.contains(e.to_id.as_str()))
-            })
-            .take(limit)
-            .map(|e| e.to_row(&entities))
-            .collect())
-    }
 
     async fn walk_n_hops(
         &self,
         seed_entity_ids: &[String],
         max_hops: usize,
         limit_per_hop: usize,
+        at: Option<DateTime<Utc>>,
     ) -> Result<Vec<(EdgeRow, usize)>> {
         let mut results = Vec::new();
         let mut frontier: Vec<String> = seed_entity_ids.to_vec();
         let mut visited_edges: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
         for hop in 1..=max_hops {
-            let hop_edges = self.walk_one_hop(&frontier, limit_per_hop).await?;
+            let hop_edges = self.walk_one_hop_inner(&frontier, limit_per_hop, at).await?;
             let mut next_frontier = Vec::new();
             for edge in hop_edges {
                 if visited_edges.insert(edge.edge_id) {
@@ -397,27 +358,6 @@ impl GraphBackend for InMemoryGraph {
         Ok(())
     }
 
-    async fn compound_edge_confidence(
-        &self,
-        edge_id: i64,
-        new_agent: &str,
-        new_confidence: f32,
-    ) -> Result<f32> {
-        let mut edges = self.edges.write().await;
-        if let Some(e) = edges.iter_mut().find(|e| e.edge_id == edge_id) {
-            if !e.source_agents.contains(&new_agent.to_string()) {
-                e.source_agents.push(new_agent.to_string());
-            }
-            // Bayesian compounding: 1 - (1-a)(1-b)
-            let combined = 1.0 - (1.0 - e.confidence) * (1.0 - new_confidence);
-            e.confidence = combined;
-            e.decayed_confidence = combined;
-            Ok(combined)
-        } else {
-            Ok(new_confidence)
-        }
-    }
-
     async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> {
         let mut edges = self.edges.write().await;
         for e in edges.iter_mut() {
@@ -496,17 +436,17 @@ impl GraphBackend for InMemoryGraph {
         Ok(count)
     }
 
-    async fn memory_tier_stats(&self) -> Result<(usize, usize)> {
+    async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> {
         let edges = self.edges.read().await;
-        let working = edges
+        let working_count = edges
             .iter()
             .filter(|e| e.is_active() && matches!(e.memory_tier, MemoryTier::Working))
             .count();
-        let long_term = edges
+        let long_term_count = edges
             .iter()
             .filter(|e| e.is_active() && matches!(e.memory_tier, MemoryTier::LongTerm))
             .count();
-        Ok((working, long_term))
+        Ok(crate::models::MemoryTierStats { working_count, long_term_count })
     }
 
     async fn decay_stale_edges(
@@ -561,21 +501,25 @@ impl GraphBackend for InMemoryGraph {
             .collect())
     }
 
-    async fn graph_stats(&self) -> Result<(usize, usize, Option<String>, Option<String>, f32)> {
+    async fn graph_stats(&self) -> Result<crate::models::GraphStats> {
         let entities = self.entities.read().await;
         let edges = self.edges.read().await;
-        let active = edges.iter().filter(|e| e.is_active()).count();
-        let avg_conf = if active > 0 {
-            edges
-                .iter()
-                .filter(|e| e.is_active())
-                .map(|e| e.confidence)
-                .sum::<f32>()
-                / active as f32
+        let active: Vec<&StoredEdge> = edges.iter().filter(|e| e.is_active()).collect();
+        let edge_count = active.len();
+        let avg_confidence = if edge_count > 0 {
+            active.iter().map(|e| e.confidence).sum::<f32>() / edge_count as f32
         } else {
             0.0
         };
-        Ok((entities.len(), active, None, None, avg_conf))
+        let oldest_valid_at = active.iter().map(|e| e.valid_at).min().map(|t| t.to_rfc3339());
+        let newest_valid_at = active.iter().map(|e| e.valid_at).max().map(|t| t.to_rfc3339());
+        Ok(crate::models::GraphStats {
+            entity_count: entities.len(),
+            edge_count,
+            oldest_valid_at,
+            newest_valid_at,
+            avg_confidence,
+        })
     }
 
     async fn all_relation_types(&self) -> Result<Vec<String>> {
@@ -594,7 +538,7 @@ impl GraphBackend for InMemoryGraph {
     async fn under_documented_entities(
         &self,
         threshold: usize,
-    ) -> Result<Vec<(String, String, usize)>> {
+    ) -> Result<Vec<crate::models::UnderDocumentedEntity>> {
         let entities = self.entities.read().await;
         let edges = self.edges.read().await;
         let mut result = Vec::new();
@@ -606,7 +550,11 @@ impl GraphBackend for InMemoryGraph {
                 })
                 .count();
             if count < threshold {
-                result.push((entity.id.clone(), entity.name.clone(), count));
+                result.push(crate::models::UnderDocumentedEntity {
+                    id: entity.id.clone(),
+                    name: entity.name.clone(),
+                    edge_count: count,
+                });
             }
         }
         Ok(result)
@@ -645,33 +593,6 @@ impl GraphBackend for InMemoryGraph {
     }
 
     // --- Supersession / provenance ---
-
-    async fn create_supersession(
-        &self,
-        old_edge_id: i64,
-        new_edge_id: i64,
-        superseded_at: DateTime<Utc>,
-        old_fact: &str,
-        new_fact: &str,
-    ) -> Result<()> {
-        self.supersessions.write().await.push(SupersessionRecord {
-            old_edge_id,
-            new_edge_id,
-            superseded_at,
-            old_fact: old_fact.to_string(),
-            new_fact: new_fact.to_string(),
-        });
-        Ok(())
-    }
-
-    async fn get_supersession_chain(&self, edge_id: i64) -> Result<Vec<SupersessionRecord>> {
-        let sups = self.supersessions.read().await;
-        Ok(sups
-            .iter()
-            .filter(|s| s.old_edge_id == edge_id || s.new_edge_id == edge_id)
-            .cloned()
-            .collect())
-    }
 
     async fn get_provenance(&self, edge_id: i64) -> Result<ProvenanceResponse> {
         let sups = self.supersessions.read().await;
@@ -879,9 +800,57 @@ impl GraphBackend for InMemoryGraph {
             .collect())
     }
 
-    // --- Credibility persistence ---
+}
 
-    async fn save_source_credibility(&self, cred: &SourceCredibility) -> Result<()> {
+impl InMemoryGraph {
+    pub async fn compound_edge_confidence(
+        &self,
+        edge_id: i64,
+        new_agent: &str,
+        new_confidence: f32,
+    ) -> Result<f32> {
+        let mut edges = self.edges.write().await;
+        if let Some(e) = edges.iter_mut().find(|e| e.edge_id == edge_id) {
+            if !e.source_agents.contains(&new_agent.to_string()) {
+                e.source_agents.push(new_agent.to_string());
+            }
+            let combined = 1.0 - (1.0 - e.confidence) * (1.0 - new_confidence);
+            e.confidence = combined;
+            e.decayed_confidence = combined;
+            Ok(combined)
+        } else {
+            Ok(new_confidence)
+        }
+    }
+
+    pub async fn create_supersession(
+        &self,
+        old_edge_id: i64,
+        new_edge_id: i64,
+        superseded_at: DateTime<Utc>,
+        old_fact: &str,
+        new_fact: &str,
+    ) -> Result<()> {
+        self.supersessions.write().await.push(SupersessionRecord {
+            old_edge_id,
+            new_edge_id,
+            superseded_at,
+            old_fact: old_fact.to_string(),
+            new_fact: new_fact.to_string(),
+        });
+        Ok(())
+    }
+
+    pub async fn get_supersession_chain(&self, edge_id: i64) -> Result<Vec<SupersessionRecord>> {
+        let sups = self.supersessions.read().await;
+        Ok(sups
+            .iter()
+            .filter(|s| s.old_edge_id == edge_id || s.new_edge_id == edge_id)
+            .cloned()
+            .collect())
+    }
+
+    pub async fn save_source_credibility(&self, cred: &SourceCredibility) -> Result<()> {
         let mut store = self.source_credibility.write().await;
         if let Some(existing) = store.iter_mut().find(|c| c.agent_id == cred.agent_id) {
             *existing = cred.clone();
@@ -891,7 +860,7 @@ impl GraphBackend for InMemoryGraph {
         Ok(())
     }
 
-    async fn load_all_source_credibility(&self) -> Result<Vec<SourceCredibility>> {
+    pub async fn load_all_source_credibility(&self) -> Result<Vec<SourceCredibility>> {
         Ok(self.source_credibility.read().await.clone())
     }
 }

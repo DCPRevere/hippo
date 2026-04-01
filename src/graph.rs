@@ -635,7 +635,7 @@ impl GraphClient {
         Ok(0)
     }
 
-    pub async fn memory_tier_stats(&self) -> Result<(usize, usize)> {
+    pub async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> {
         let query = "\
             MATCH ()-[r:RELATION]-() \
             WHERE r.invalid_at IS NULL \
@@ -649,11 +649,11 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
             let mut iter = row.into_iter();
-            let working = iter.next().map(|v| extract_int(&v) as usize).unwrap_or(0);
-            let long_term = iter.next().map(|v| extract_int(&v) as usize).unwrap_or(0);
-            return Ok((working, long_term));
+            let working_count = iter.next().map(|v| extract_int(&v) as usize).unwrap_or(0);
+            let long_term_count = iter.next().map(|v| extract_int(&v) as usize).unwrap_or(0);
+            return Ok(crate::models::MemoryTierStats { working_count, long_term_count });
         }
-        Ok((0, 0))
+        Ok(crate::models::MemoryTierStats { working_count: 0, long_term_count: 0 })
     }
 
     pub async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> {
@@ -943,7 +943,7 @@ impl GraphClient {
     }
 
     /// Return graph statistics: (entity_count, fact_count, oldest_valid_at, newest_valid_at, avg_confidence).
-    pub async fn graph_stats(&self) -> Result<(usize, usize, Option<String>, Option<String>, f32)> {
+    pub async fn graph_stats(&self) -> Result<crate::models::GraphStats> {
         let mut graph = self.conn().lock().await;
 
         // Entity count
@@ -963,19 +963,19 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
             let vals: Vec<FalkorValue> = row;
-            let fact_count = vals.get(0).map(extract_int).unwrap_or(0) as usize;
-            let oldest = vals.get(1).and_then(|v| {
+            let edge_count = vals.get(0).map(extract_int).unwrap_or(0) as usize;
+            let oldest_valid_at = vals.get(1).and_then(|v| {
                 let s = extract_string(v);
                 if s.is_empty() { None } else { Some(s) }
             });
-            let newest = vals.get(2).and_then(|v| {
+            let newest_valid_at = vals.get(2).and_then(|v| {
                 let s = extract_string(v);
                 if s.is_empty() { None } else { Some(s) }
             });
-            let avg_conf = vals.get(3).map(extract_float).unwrap_or(0.0);
-            Ok((entity_count, fact_count, oldest, newest, avg_conf))
+            let avg_confidence = vals.get(3).map(extract_float).unwrap_or(0.0);
+            Ok(crate::models::GraphStats { entity_count, edge_count, oldest_valid_at, newest_valid_at, avg_confidence })
         } else {
-            Ok((entity_count, 0, None, None, 0.0))
+            Ok(crate::models::GraphStats { entity_count, edge_count: 0, oldest_valid_at: None, newest_valid_at: None, avg_confidence: 0.0 })
         }
     }
 
@@ -994,14 +994,14 @@ impl GraphClient {
     }
 
     /// Return entities with fewer than `threshold` active edges.
-    pub async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<(String, String, usize)>> {
+    pub async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<crate::models::UnderDocumentedEntity>> {
         let mut graph = self.conn().lock().await;
         let query = format!(
             "MATCH (e:Entity) \
              OPTIONAL MATCH (e)-[r:RELATION]-() WHERE r.invalid_at IS NULL \
              WITH e, count(r) AS edge_count \
              WHERE edge_count < {threshold} \
-             RETURN e.name, e.entity_type, edge_count \
+             RETURN e.id, e.name, edge_count \
              ORDER BY edge_count ASC \
              LIMIT 20"
         );
@@ -1011,10 +1011,10 @@ impl GraphClient {
         Ok(rows.into_iter()
             .filter_map(|row| {
                 let vals: Vec<FalkorValue> = row;
-                let name = vals.get(0).map(extract_string)?;
-                let entity_type = vals.get(1).map(extract_string).unwrap_or_default();
-                let count = vals.get(2).map(extract_int).unwrap_or(0) as usize;
-                Some((name, entity_type, count))
+                let id = vals.get(0).map(extract_string)?;
+                let name = vals.get(1).map(extract_string).unwrap_or_default();
+                let edge_count = vals.get(2).map(extract_int).unwrap_or(0) as usize;
+                Some(crate::models::UnderDocumentedEntity { id, name, edge_count })
             })
             .collect())
     }
@@ -1408,37 +1408,77 @@ impl GraphBackend for GraphClient {
     async fn fulltext_search_entities(&self, query_str: &str) -> Result<Vec<EntityRow>> { self.fulltext_search_entities(query_str).await }
     async fn vector_search_entities(&self, embedding: &[f32], k: usize) -> Result<Vec<(EntityRow, f32)>> { self.vector_search_entities(embedding, k).await }
     async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> { self.get_entity_by_id(entity_id).await }
-    async fn fulltext_search_edges(&self, query_str: &str) -> Result<Vec<EdgeRow>> { self.fulltext_search_edges(query_str).await }
-    async fn fulltext_search_edges_at(&self, query_str: &str, at: DateTime<Utc>) -> Result<Vec<EdgeRow>> { self.fulltext_search_edges_at(query_str, at).await }
-    async fn vector_search_edges_scored(&self, embedding: &[f32], k: usize) -> Result<Vec<(EdgeRow, f32)>> { self.vector_search_edges_scored(embedding, k).await }
-    async fn vector_search_edges_at(&self, embedding: &[f32], k: usize, at: DateTime<Utc>) -> Result<Vec<EdgeRow>> { self.vector_search_edges_at(embedding, k, at).await }
-    async fn walk_one_hop(&self, entity_ids: &[String], limit: usize) -> Result<Vec<EdgeRow>> { self.walk_one_hop(entity_ids, limit).await }
-    async fn walk_one_hop_at(&self, entity_ids: &[String], limit: usize, at: DateTime<Utc>) -> Result<Vec<EdgeRow>> { self.walk_one_hop_at(entity_ids, limit, at).await }
-    async fn walk_n_hops(&self, seed_entity_ids: &[String], max_hops: usize, limit_per_hop: usize) -> Result<Vec<(EdgeRow, usize)>> { self.walk_n_hops(seed_entity_ids, max_hops, limit_per_hop).await }
+    async fn fulltext_search_edges(&self, query_str: &str, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
+        match at {
+            Some(t) => self.fulltext_search_edges_at(query_str, t).await,
+            None => GraphClient::fulltext_search_edges(self, query_str).await,
+        }
+    }
+    async fn vector_search_edges_scored(&self, embedding: &[f32], k: usize, at: Option<DateTime<Utc>>) -> Result<Vec<(EdgeRow, f32)>> {
+        match at {
+            Some(t) => {
+                let rows = self.vector_search_edges_at(embedding, k, t).await?;
+                Ok(rows.into_iter().map(|r| {
+                    let score = cosine_sim(embedding, &r.embedding);
+                    (r, score)
+                }).collect())
+            }
+            None => GraphClient::vector_search_edges_scored(self, embedding, k).await,
+        }
+    }
+    async fn walk_n_hops(&self, seed_entity_ids: &[String], max_hops: usize, limit_per_hop: usize, at: Option<DateTime<Utc>>) -> Result<Vec<(EdgeRow, usize)>> {
+        // Delegate to inherent walk_n_hops which uses walk_one_hop or walk_one_hop_at internally
+        match at {
+            Some(t) => {
+                // Manually do n-hop walk with temporal filtering
+                let mut results = Vec::new();
+                let mut frontier: Vec<String> = seed_entity_ids.to_vec();
+                let mut visited_edges: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                for hop in 1..=max_hops {
+                    let hop_edges = self.walk_one_hop_at(&frontier, limit_per_hop, t).await?;
+                    let mut next_frontier = Vec::new();
+                    for edge in hop_edges {
+                        if visited_edges.insert(edge.edge_id) {
+                            if !frontier.contains(&edge.subject_id) {
+                                next_frontier.push(edge.subject_id.clone());
+                            }
+                            if !frontier.contains(&edge.object_id) {
+                                next_frontier.push(edge.object_id.clone());
+                            }
+                            results.push((edge, hop));
+                        }
+                    }
+                    if next_frontier.is_empty() {
+                        break;
+                    }
+                    frontier = next_frontier;
+                }
+                Ok(results)
+            }
+            None => GraphClient::walk_n_hops(self, seed_entity_ids, max_hops, limit_per_hop).await,
+        }
+    }
     async fn entity_timeline(&self, entity_name: &str) -> Result<Vec<EdgeRow>> { self.entity_timeline(entity_name).await }
     async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> { self.find_all_active_edges_from(node_id).await }
     async fn upsert_entity(&self, entity: &crate::models::Entity) -> Result<()> { self.upsert_entity(entity).await }
     async fn create_edge(&self, from_id: &str, to_id: &str, rel: &crate::models::Relation) -> Result<i64> { self.create_edge(from_id, to_id, rel).await }
     async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> { self.invalidate_edge(edge_id, at).await }
-    async fn compound_edge_confidence(&self, edge_id: i64, new_agent: &str, new_confidence: f32) -> Result<f32> { self.compound_edge_confidence(edge_id, new_agent, new_confidence).await }
     async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> { self.increment_salience(edge_ids).await }
     async fn delete_entity(&self, entity_id: &str) -> Result<usize> { self.delete_entity(entity_id).await }
     async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()> { self.merge_placeholder(placeholder_id, resolved_id).await }
     async fn promote_working_memory(&self) -> Result<usize> { self.promote_working_memory().await }
     async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> { self.expire_ttl_edges(now).await }
-    async fn memory_tier_stats(&self) -> Result<(usize, usize)> { self.memory_tier_stats().await }
+    async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> { self.memory_tier_stats().await }
     async fn decay_stale_edges(&self, stale_before: DateTime<Utc>, now: DateTime<Utc>) -> Result<usize> { self.decay_stale_edges(stale_before, now).await }
     async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>> { self.entity_facts(entity_name).await }
     async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> { self.get_entity_facts(entity_id).await }
-    async fn graph_stats(&self) -> Result<(usize, usize, Option<String>, Option<String>, f32)> { self.graph_stats().await }
+    async fn graph_stats(&self) -> Result<crate::models::GraphStats> { self.graph_stats().await }
     async fn all_relation_types(&self) -> Result<Vec<String>> { self.all_relation_types().await }
-    async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<(String, String, usize)>> { self.under_documented_entities(threshold).await }
+    async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<crate::models::UnderDocumentedEntity>> { self.under_documented_entities(threshold).await }
     async fn entity_type_counts(&self) -> Result<HashMap<String, usize>> { self.entity_type_counts().await }
     async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> { self.dump_all_entities().await }
     async fn dump_all_edges(&self) -> Result<Vec<EdgeRow>> { self.dump_all_edges().await }
     async fn list_entities_by_recency(&self, offset: usize, limit: usize) -> Result<Vec<EntityRow>> { self.list_entities_by_recency(offset, limit).await }
-    async fn create_supersession(&self, old_edge_id: i64, new_edge_id: i64, superseded_at: DateTime<Utc>, old_fact: &str, new_fact: &str) -> Result<()> { self.create_supersession(old_edge_id, new_edge_id, superseded_at, old_fact, new_fact).await }
-    async fn get_supersession_chain(&self, edge_id: i64) -> Result<Vec<SupersessionRecord>> { self.get_supersession_chain(edge_id).await }
     async fn get_provenance(&self, edge_id: i64) -> Result<crate::models::ProvenanceResponse> { self.get_provenance(edge_id).await }
     async fn find_close_unlinked(&self, node_id: &str, embedding: &[f32], threshold: f32) -> Result<Vec<(EntityRow, f32)>> { self.find_close_unlinked(node_id, embedding, threshold).await }
     async fn find_placeholder_nodes(&self, cutoff: DateTime<Utc>) -> Result<Vec<EntityRow>> { self.find_placeholder_nodes(cutoff).await }
@@ -1448,8 +1488,15 @@ impl GraphBackend for GraphClient {
     async fn set_entity_property(&self, entity_id: &str, key: &str, value: &str) -> Result<()> { self.set_entity_property(entity_id, key, value).await }
     async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> { self.find_entity_by_property(key, value).await }
     async fn find_entity_clusters(&self, min_size: usize) -> Result<Vec<Vec<String>>> { self.find_entity_clusters(min_size).await }
-    async fn save_source_credibility(&self, cred: &crate::credibility::SourceCredibility) -> Result<()> { self.save_source_credibility(cred).await }
-    async fn load_all_source_credibility(&self) -> Result<Vec<crate::credibility::SourceCredibility>> { self.load_all_source_credibility().await }
+}
+
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() { return 0.0; }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    dot / (norm_a * norm_b)
 }
 
 fn sanitise(s: &str) -> String {

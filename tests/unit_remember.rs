@@ -277,9 +277,9 @@ async fn remember_new_edges_are_working_tier() {
         .await
         .unwrap();
 
-    let (working, long_term) = graph.memory_tier_stats().await.unwrap();
-    assert_eq!(working, 1, "new edge should be Working tier");
-    assert_eq!(long_term, 0);
+    let tier = graph.memory_tier_stats().await.unwrap();
+    assert_eq!(tier.working_count, 1, "new edge should be Working tier");
+    assert_eq!(tier.long_term_count, 0);
 }
 
 // ---- Source tracking ----

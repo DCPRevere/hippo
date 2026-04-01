@@ -75,6 +75,56 @@ impl SqliteGraph {
         self.next_edge_id.store(max_id + 1, Ordering::Relaxed);
         Ok(())
     }
+
+    async fn walk_one_hop_inner(&self, entity_ids: &[String], limit: usize, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
+        if entity_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let conn = self.conn.lock().await;
+        let placeholders: Vec<String> = entity_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let ph = placeholders.join(",");
+        if let Some(at) = at {
+            let at_str = at.to_rfc3339();
+            let next = entity_ids.len() + 1;
+            let sql = format!(
+                "{} WHERE e.valid_at <= ?{next} AND (e.invalid_at IS NULL OR e.invalid_at > ?{next})
+                 AND (e.from_id IN ({ph}) OR e.to_id IN ({ph})) LIMIT ?{}",
+                EDGES_SELECT,
+                next + 1
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let limit_i64 = limit as i64;
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = entity_ids
+                .iter()
+                .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
+            param_values.push(Box::new(at_str));
+            param_values.push(Box::new(limit_i64));
+            let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let rows = stmt
+                .query_map(params_ref.as_slice(), row_to_edge)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        } else {
+            let sql = format!(
+                "{} WHERE e.invalid_at IS NULL AND (e.from_id IN ({ph}) OR e.to_id IN ({ph})) LIMIT ?{}",
+                EDGES_SELECT,
+                entity_ids.len() + 1
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let limit_i64 = limit as i64;
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = entity_ids
+                .iter()
+                .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
+            param_values.push(Box::new(limit_i64));
+            let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let rows = stmt
+                .query_map(params_ref.as_slice(), row_to_edge)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        }
+    }
 }
 
 fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<EntityRow> {
@@ -275,52 +325,58 @@ impl GraphBackend for SqliteGraph {
 
     // --- Edge search ---
 
-    async fn fulltext_search_edges(&self, query_str: &str) -> Result<Vec<EdgeRow>> {
+    async fn fulltext_search_edges(&self, query_str: &str, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
         let conn = self.conn.lock().await;
         let pattern = format!("%{}%", query_str.to_lowercase());
-        let sql = format!(
-            "{} WHERE e.invalid_at IS NULL AND LOWER(e.fact) LIKE ?1",
-            EDGES_SELECT
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params![pattern], row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    async fn fulltext_search_edges_at(
-        &self,
-        query_str: &str,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<EdgeRow>> {
-        let conn = self.conn.lock().await;
-        let pattern = format!("%{}%", query_str.to_lowercase());
-        let at_str = at.to_rfc3339();
-        let sql = format!(
-            "{} WHERE e.valid_at <= ?1 AND (e.invalid_at IS NULL OR e.invalid_at > ?1)
-             AND LOWER(e.fact) LIKE ?2",
-            EDGES_SELECT
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params![at_str, pattern], row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        if let Some(at) = at {
+            let at_str = at.to_rfc3339();
+            let sql = format!(
+                "{} WHERE e.valid_at <= ?1 AND (e.invalid_at IS NULL OR e.invalid_at > ?1)
+                 AND LOWER(e.fact) LIKE ?2",
+                EDGES_SELECT
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![at_str, pattern], row_to_edge)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        } else {
+            let sql = format!(
+                "{} WHERE e.invalid_at IS NULL AND LOWER(e.fact) LIKE ?1",
+                EDGES_SELECT
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![pattern], row_to_edge)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        }
     }
 
     async fn vector_search_edges_scored(
         &self,
         embedding: &[f32],
         k: usize,
+        at: Option<DateTime<Utc>>,
     ) -> Result<Vec<(EdgeRow, f32)>> {
         let conn = self.conn.lock().await;
-        let sql = format!("{} WHERE e.invalid_at IS NULL", EDGES_SELECT);
-        let mut stmt = conn.prepare(&sql)?;
-        let edges = stmt
-            .query_map([], row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(stmt);
+        let edges: Vec<EdgeRow> = if let Some(at) = at {
+            let at_str = at.to_rfc3339();
+            let sql = format!(
+                "{} WHERE e.valid_at <= ?1 AND (e.invalid_at IS NULL OR e.invalid_at > ?1)",
+                EDGES_SELECT
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![at_str], row_to_edge)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        } else {
+            let sql = format!("{} WHERE e.invalid_at IS NULL", EDGES_SELECT);
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], row_to_edge)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
         drop(conn);
 
         let mut scored: Vec<(EdgeRow, f32)> = edges
@@ -336,113 +392,21 @@ impl GraphBackend for SqliteGraph {
         Ok(scored)
     }
 
-    async fn vector_search_edges_at(
-        &self,
-        embedding: &[f32],
-        k: usize,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<EdgeRow>> {
-        let conn = self.conn.lock().await;
-        let at_str = at.to_rfc3339();
-        let sql = format!(
-            "{} WHERE e.valid_at <= ?1 AND (e.invalid_at IS NULL OR e.invalid_at > ?1)",
-            EDGES_SELECT
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let edges = stmt
-            .query_map(params![at_str], row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(stmt);
-        drop(conn);
-
-        let mut scored: Vec<(EdgeRow, f32)> = edges
-            .into_iter()
-            .filter(|e| !e.embedding.is_empty())
-            .map(|e| {
-                let score = cosine_similarity(embedding, &e.embedding);
-                (e, score)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(k);
-        Ok(scored.into_iter().map(|(row, _)| row).collect())
-    }
-
     // --- Graph traversal ---
-
-    async fn walk_one_hop(&self, entity_ids: &[String], limit: usize) -> Result<Vec<EdgeRow>> {
-        if entity_ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let conn = self.conn.lock().await;
-        let placeholders: Vec<String> = entity_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
-        let ph = placeholders.join(",");
-        let sql = format!(
-            "{} WHERE e.invalid_at IS NULL AND (e.from_id IN ({ph}) OR e.to_id IN ({ph})) LIMIT ?{}",
-            EDGES_SELECT,
-            entity_ids.len() + 1
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let limit_i64 = limit as i64;
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = entity_ids
-            .iter()
-            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
-        param_values.push(Box::new(limit_i64));
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_ref.as_slice(), row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    async fn walk_one_hop_at(
-        &self,
-        entity_ids: &[String],
-        limit: usize,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<EdgeRow>> {
-        if entity_ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let conn = self.conn.lock().await;
-        let at_str = at.to_rfc3339();
-        let placeholders: Vec<String> = entity_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
-        let ph = placeholders.join(",");
-        let next = entity_ids.len() + 1;
-        let sql = format!(
-            "{} WHERE e.valid_at <= ?{next} AND (e.invalid_at IS NULL OR e.invalid_at > ?{next})
-             AND (e.from_id IN ({ph}) OR e.to_id IN ({ph})) LIMIT ?{}",
-            EDGES_SELECT,
-            next + 1
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let limit_i64 = limit as i64;
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = entity_ids
-            .iter()
-            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
-        param_values.push(Box::new(at_str));
-        param_values.push(Box::new(limit_i64));
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_ref.as_slice(), row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     async fn walk_n_hops(
         &self,
         seed_entity_ids: &[String],
         max_hops: usize,
         limit_per_hop: usize,
+        at: Option<DateTime<Utc>>,
     ) -> Result<Vec<(EdgeRow, usize)>> {
         let mut results = Vec::new();
         let mut frontier: Vec<String> = seed_entity_ids.to_vec();
         let mut visited_edges: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
         for hop in 1..=max_hops {
-            let hop_edges = self.walk_one_hop(&frontier, limit_per_hop).await?;
+            let hop_edges = self.walk_one_hop_inner(&frontier, limit_per_hop, at).await?;
             let mut next_frontier = Vec::new();
             for edge in hop_edges {
                 if visited_edges.insert(edge.edge_id) {
@@ -562,40 +526,6 @@ impl GraphBackend for SqliteGraph {
         Ok(())
     }
 
-    async fn compound_edge_confidence(
-        &self,
-        edge_id: i64,
-        new_agent: &str,
-        new_confidence: f32,
-    ) -> Result<f32> {
-        let conn = self.conn.lock().await;
-        let result: Option<(f32, String)> = conn
-            .query_row(
-                "SELECT confidence, source_agents FROM edges WHERE edge_id = ?1",
-                params![edge_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
-
-        if let Some((old_conf, agents_str)) = result {
-            let combined = 1.0 - (1.0 - old_conf) * (1.0 - new_confidence);
-            let new_agents = if agents_str.split(',').any(|a| a == new_agent) {
-                agents_str
-            } else if agents_str.is_empty() {
-                new_agent.to_string()
-            } else {
-                format!("{},{}", agents_str, new_agent)
-            };
-            conn.execute(
-                "UPDATE edges SET confidence = ?1, decayed_confidence = ?1, source_agents = ?2 WHERE edge_id = ?3",
-                params![combined, new_agents, edge_id],
-            )?;
-            Ok(combined)
-        } else {
-            Ok(new_confidence)
-        }
-    }
-
     async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> {
         if edge_ids.is_empty() {
             return Ok(());
@@ -653,19 +583,19 @@ impl GraphBackend for SqliteGraph {
         Ok(count)
     }
 
-    async fn memory_tier_stats(&self) -> Result<(usize, usize)> {
+    async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> {
         let conn = self.conn.lock().await;
-        let working: usize = conn.query_row(
+        let working_count: usize = conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE invalid_at IS NULL AND memory_tier = 'working'",
             [],
             |row| row.get(0),
         )?;
-        let long_term: usize = conn.query_row(
+        let long_term_count: usize = conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE invalid_at IS NULL AND memory_tier = 'long_term'",
             [],
             |row| row.get(0),
         )?;
-        Ok((working, long_term))
+        Ok(crate::models::MemoryTierStats { working_count, long_term_count })
     }
 
     async fn decay_stale_edges(
@@ -742,15 +672,15 @@ impl GraphBackend for SqliteGraph {
         Ok(rows)
     }
 
-    async fn graph_stats(&self) -> Result<(usize, usize, Option<String>, Option<String>, f32)> {
+    async fn graph_stats(&self) -> Result<crate::models::GraphStats> {
         let conn = self.conn.lock().await;
         let entity_count: usize = conn.query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
-        let active_edges: usize = conn.query_row(
+        let edge_count: usize = conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE invalid_at IS NULL",
             [],
             |row| row.get(0),
         )?;
-        let oldest: Option<String> = conn
+        let oldest_valid_at: Option<String> = conn
             .query_row(
                 "SELECT MIN(valid_at) FROM edges WHERE invalid_at IS NULL",
                 [],
@@ -758,7 +688,7 @@ impl GraphBackend for SqliteGraph {
             )
             .ok()
             .flatten();
-        let newest: Option<String> = conn
+        let newest_valid_at: Option<String> = conn
             .query_row(
                 "SELECT MAX(valid_at) FROM edges WHERE invalid_at IS NULL",
                 [],
@@ -766,13 +696,19 @@ impl GraphBackend for SqliteGraph {
             )
             .ok()
             .flatten();
-        let avg_conf: f32 = conn
+        let avg_confidence: f32 = conn
             .query_row(
                 "SELECT COALESCE(AVG(confidence), 0.0) FROM edges WHERE invalid_at IS NULL",
                 [],
                 |row| row.get(0),
             )?;
-        Ok((entity_count, active_edges, oldest, newest, avg_conf))
+        Ok(crate::models::GraphStats {
+            entity_count,
+            edge_count,
+            oldest_valid_at,
+            newest_valid_at,
+            avg_confidence,
+        })
     }
 
     async fn all_relation_types(&self) -> Result<Vec<String>> {
@@ -789,7 +725,7 @@ impl GraphBackend for SqliteGraph {
     async fn under_documented_entities(
         &self,
         threshold: usize,
-    ) -> Result<Vec<(String, String, usize)>> {
+    ) -> Result<Vec<crate::models::UnderDocumentedEntity>> {
         let conn = self.conn.lock().await;
         let threshold_i64 = threshold as i64;
         let mut stmt = conn.prepare(
@@ -801,7 +737,11 @@ impl GraphBackend for SqliteGraph {
         )?;
         let rows = stmt
             .query_map(params![threshold_i64], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, usize>(2)?))
+                Ok(crate::models::UnderDocumentedEntity {
+                    id: row.get::<_, String>(0)?,
+                    name: row.get::<_, String>(1)?,
+                    edge_count: row.get::<_, usize>(2)?,
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
@@ -859,44 +799,6 @@ impl GraphBackend for SqliteGraph {
     }
 
     // --- Supersession / provenance ---
-
-    async fn create_supersession(
-        &self,
-        old_edge_id: i64,
-        new_edge_id: i64,
-        superseded_at: DateTime<Utc>,
-        old_fact: &str,
-        new_fact: &str,
-    ) -> Result<()> {
-        let conn = self.conn.lock().await;
-        conn.execute(
-            "INSERT INTO supersessions (old_edge_id, new_edge_id, superseded_at, old_fact, new_fact)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![old_edge_id, new_edge_id, superseded_at.to_rfc3339(), old_fact, new_fact],
-        )?;
-        Ok(())
-    }
-
-    async fn get_supersession_chain(&self, edge_id: i64) -> Result<Vec<SupersessionRecord>> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT old_edge_id, new_edge_id, superseded_at, old_fact, new_fact
-             FROM supersessions WHERE old_edge_id = ?1 OR new_edge_id = ?1",
-        )?;
-        let rows = stmt
-            .query_map(params![edge_id], |row| {
-                let at_str: String = row.get(2)?;
-                Ok(SupersessionRecord {
-                    old_edge_id: row.get(0)?,
-                    new_edge_id: row.get(1)?,
-                    superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
-                    old_fact: row.get(3)?,
-                    new_fact: row.get(4)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     async fn get_provenance(&self, edge_id: i64) -> Result<ProvenanceResponse> {
         let conn = self.conn.lock().await;
@@ -1178,9 +1080,10 @@ impl GraphBackend for SqliteGraph {
             .collect())
     }
 
-    // --- Credibility persistence ---
+}
 
-    async fn save_source_credibility(&self, cred: &SourceCredibility) -> Result<()> {
+impl SqliteGraph {
+    pub async fn save_source_credibility(&self, cred: &SourceCredibility) -> Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
             "INSERT INTO source_credibility (agent_id, credibility, fact_count, contradiction_rate)
@@ -1194,7 +1097,7 @@ impl GraphBackend for SqliteGraph {
         Ok(())
     }
 
-    async fn load_all_source_credibility(&self) -> Result<Vec<SourceCredibility>> {
+    pub async fn load_all_source_credibility(&self) -> Result<Vec<SourceCredibility>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
             "SELECT agent_id, credibility, fact_count, contradiction_rate FROM source_credibility",
@@ -1206,6 +1109,78 @@ impl GraphBackend for SqliteGraph {
                     credibility: row.get(1)?,
                     fact_count: row.get::<_, i64>(2)? as usize,
                     contradiction_rate: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub async fn compound_edge_confidence(
+        &self,
+        edge_id: i64,
+        new_agent: &str,
+        new_confidence: f32,
+    ) -> Result<f32> {
+        let conn = self.conn.lock().await;
+        let result: Option<(f32, String)> = conn
+            .query_row(
+                "SELECT confidence, source_agents FROM edges WHERE edge_id = ?1",
+                params![edge_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        if let Some((old_conf, agents_str)) = result {
+            let combined = 1.0 - (1.0 - old_conf) * (1.0 - new_confidence);
+            let new_agents = if agents_str.split(',').any(|a| a == new_agent) {
+                agents_str
+            } else if agents_str.is_empty() {
+                new_agent.to_string()
+            } else {
+                format!("{},{}", agents_str, new_agent)
+            };
+            conn.execute(
+                "UPDATE edges SET confidence = ?1, decayed_confidence = ?1, source_agents = ?2 WHERE edge_id = ?3",
+                params![combined, new_agents, edge_id],
+            )?;
+            Ok(combined)
+        } else {
+            Ok(new_confidence)
+        }
+    }
+
+    pub async fn create_supersession(
+        &self,
+        old_edge_id: i64,
+        new_edge_id: i64,
+        superseded_at: DateTime<Utc>,
+        old_fact: &str,
+        new_fact: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO supersessions (old_edge_id, new_edge_id, superseded_at, old_fact, new_fact)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![old_edge_id, new_edge_id, superseded_at.to_rfc3339(), old_fact, new_fact],
+        )?;
+        Ok(())
+    }
+
+    pub async fn get_supersession_chain(&self, edge_id: i64) -> Result<Vec<SupersessionRecord>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT old_edge_id, new_edge_id, superseded_at, old_fact, new_fact
+             FROM supersessions WHERE old_edge_id = ?1 OR new_edge_id = ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![edge_id], |row| {
+                let at_str: String = row.get(2)?;
+                Ok(SupersessionRecord {
+                    old_edge_id: row.get(0)?,
+                    new_edge_id: row.get(1)?,
+                    superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+                    old_fact: row.get(3)?,
+                    new_fact: row.get(4)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

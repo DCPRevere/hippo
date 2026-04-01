@@ -37,9 +37,9 @@ pub async fn run_maintenance_loop(
 
 pub async fn run_housekeeping(state: &AppState, graph: &dyn GraphBackend) -> Result<()> {
     // Refresh entity/fact gauges
-    if let Ok((entities, facts, _, _, _)) = graph.graph_stats().await {
-        state.metrics.entity_count.store(entities as u64, Ordering::Relaxed);
-        state.metrics.fact_count.store(facts as u64, Ordering::Relaxed);
+    if let Ok(stats) = graph.graph_stats().await {
+        state.metrics.entity_count.store(stats.entity_count as u64, Ordering::Relaxed);
+        state.metrics.fact_count.store(stats.edge_count as u64, Ordering::Relaxed);
     }
 
     // Promote facts from working to long-term memory
@@ -308,7 +308,8 @@ async fn inference_scan(state: &AppState, graph: &dyn GraphBackend, node_ids: &[
         };
 
         let entity_facts = graph.get_entity_facts(node_id).await?;
-        let hop_edges = graph.walk_one_hop(&[node_id.clone()], 20).await?;
+        let hop_results = graph.walk_n_hops(&[node_id.clone()], 1, 20, None).await?;
+        let hop_edges: Vec<_> = hop_results.into_iter().map(|(e, _)| e).collect();
 
         // Build neighbour context — group facts by neighbour name
         let mut neighbour_map: std::collections::HashMap<String, Vec<String>> =

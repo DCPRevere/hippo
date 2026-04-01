@@ -67,15 +67,15 @@ async fn maintain_promotes_working_to_long_term() {
     );
     graph.create_edge("a", "b", &rel).await.unwrap();
 
-    let (working_before, _) = graph.memory_tier_stats().await.unwrap();
+    let working_before = graph.memory_tier_stats().await.unwrap().working_count;
     assert_eq!(working_before, 1);
 
     let promoted = graph.promote_working_memory().await.unwrap();
     assert_eq!(promoted, 1, "should promote 1 edge");
 
-    let (working_after, long_term_after) = graph.memory_tier_stats().await.unwrap();
-    assert_eq!(working_after, 0);
-    assert_eq!(long_term_after, 1);
+    let tier = graph.memory_tier_stats().await.unwrap();
+    assert_eq!(tier.working_count, 0);
+    assert_eq!(tier.long_term_count, 1);
 }
 
 #[tokio::test]
@@ -118,7 +118,7 @@ async fn maintain_expires_ttl_edges() {
     let expired = graph.expire_ttl_edges(Utc::now()).await.unwrap();
     assert_eq!(expired, 1, "should expire 1 edge past TTL");
 
-    let (working, _) = graph.memory_tier_stats().await.unwrap();
+    let working = graph.memory_tier_stats().await.unwrap().working_count;
     assert_eq!(working, 0, "expired edge should no longer be active");
 }
 
@@ -141,7 +141,7 @@ async fn maintain_does_not_expire_future_ttl() {
     let expired = graph.expire_ttl_edges(Utc::now()).await.unwrap();
     assert_eq!(expired, 0, "future TTL should not be expired");
 
-    let (working, _) = graph.memory_tier_stats().await.unwrap();
+    let working = graph.memory_tier_stats().await.unwrap().working_count;
     assert_eq!(working, 1, "edge should still be active");
 }
 
