@@ -13,6 +13,10 @@ pub mod graph;
 pub mod graph_backend;
 pub mod in_memory_graph;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod postgres_graph;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod qdrant_graph;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod sqlite_graph;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http;

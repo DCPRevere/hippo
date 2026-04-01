@@ -105,6 +105,55 @@ impl GraphRegistry {
             graphs: Mutex::new(HashMap::new()),
         }
     }
+
+    /// Create a registry backed by PostgreSQL.
+    /// All graphs share the same Postgres instance, distinguished by `graph_name` column.
+    pub async fn postgres(connection_string: &str, default_graph: &str) -> Result<Self> {
+        // Verify connectivity
+        let test = crate::postgres_graph::PostgresGraph::new(connection_string, default_graph).await?;
+        test.ping().await?;
+
+        let conn_str = connection_string.to_string();
+        let registry = Self {
+            factory: Box::new(move |name: &str| {
+                let pool = futures::executor::block_on(
+                    crate::postgres_graph::PostgresGraph::new(&conn_str, name),
+                )
+                .expect("failed to connect to PostgreSQL");
+                Arc::new(pool) as Arc<dyn GraphBackend>
+            }),
+            default_graph: default_graph.to_string(),
+            graphs: Mutex::new(HashMap::new()),
+        };
+
+        registry.get(default_graph).await;
+
+        Ok(registry)
+    }
+
+    /// Create a registry backed by Qdrant vector database.
+    pub async fn qdrant(url: &str, default_graph: &str) -> Result<Self> {
+        // Verify connectivity
+        let test = crate::qdrant_graph::QdrantGraph::new(url, default_graph).await?;
+        test.ping().await?;
+
+        let url_owned = url.to_string();
+        let registry = Self {
+            factory: Box::new(move |name: &str| {
+                let graph = futures::executor::block_on(
+                    crate::qdrant_graph::QdrantGraph::new(&url_owned, name),
+                )
+                .expect("failed to connect to Qdrant");
+                Arc::new(graph) as Arc<dyn GraphBackend>
+            }),
+            default_graph: default_graph.to_string(),
+            graphs: Mutex::new(HashMap::new()),
+        };
+
+        registry.get(default_graph).await;
+
+        Ok(registry)
+    }
 }
 
 impl GraphRegistry {

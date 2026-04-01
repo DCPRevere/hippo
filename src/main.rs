@@ -33,6 +33,16 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Using SQLite graph backend at {}", config.graph.sqlite.path);
             GraphRegistry::sqlite(&config.graph.name, config.graph.sqlite.path.clone())
         }
+        config::GraphBackendType::Postgres => {
+            let url = &config.graph.postgres.url;
+            tracing::info!("Using PostgreSQL graph backend at {url}");
+            GraphRegistry::postgres(url, &config.graph.name).await?
+        }
+        config::GraphBackendType::Qdrant => {
+            let url = &config.graph.qdrant.url;
+            tracing::info!("Using Qdrant graph backend at {url}");
+            GraphRegistry::qdrant(url, &config.graph.name).await?
+        }
         config::GraphBackendType::FalkorDB => {
             let connection_string = config.graph.falkordb_connection_string();
             tracing::info!("Connecting to FalkorDB at {connection_string}");

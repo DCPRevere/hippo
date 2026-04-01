@@ -51,6 +51,8 @@ impl Default for LlmProvider {
 pub enum GraphBackendType {
     FalkorDB,
     Memory,
+    Postgres,
+    Qdrant,
     Sqlite,
 }
 
@@ -69,6 +71,8 @@ pub struct GraphConfig {
     pub name: String,
     pub sqlite: SqliteConfig,
     pub falkordb: FalkorDbConfig,
+    pub postgres: PostgresConfig,
+    pub qdrant: QdrantConfig,
 }
 
 impl Default for GraphConfig {
@@ -78,6 +82,8 @@ impl Default for GraphConfig {
             name: "hippo".to_string(),
             sqlite: SqliteConfig::default(),
             falkordb: FalkorDbConfig::default(),
+            postgres: PostgresConfig::default(),
+            qdrant: QdrantConfig::default(),
         }
     }
 }
@@ -112,6 +118,34 @@ impl Default for FalkorDbConfig {
     fn default() -> Self {
         Self {
             url: "redis://localhost:6379".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PostgresConfig {
+    pub url: String,
+}
+
+impl Default for PostgresConfig {
+    fn default() -> Self {
+        Self {
+            url: "postgres://localhost/hippo".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct QdrantConfig {
+    pub url: String,
+}
+
+impl Default for QdrantConfig {
+    fn default() -> Self {
+        Self {
+            url: "http://localhost:6334".to_string(),
         }
     }
 }
@@ -376,6 +410,8 @@ impl Config {
         if let Ok(v) = std::env::var("GRAPH_BACKEND") {
             config.graph.backend = match v.as_str() {
                 "falkordb" => GraphBackendType::FalkorDB,
+                "postgres" => GraphBackendType::Postgres,
+                "qdrant" => GraphBackendType::Qdrant,
                 "sqlite" => GraphBackendType::Sqlite,
                 _ => GraphBackendType::Memory,
             };
@@ -388,6 +424,12 @@ impl Config {
         }
         if let Ok(v) = std::env::var("SQLITE_PATH") {
             config.graph.sqlite.path = v;
+        }
+        if let Ok(v) = std::env::var("POSTGRES_URL") {
+            config.graph.postgres.url = v;
+        }
+        if let Ok(v) = std::env::var("QDRANT_URL") {
+            config.graph.qdrant.url = v;
         }
 
         // LLM
