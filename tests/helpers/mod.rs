@@ -141,27 +141,27 @@ async fn start_agent_inner_opts(allow_admin: bool, force_mock: bool) -> TestAgen
     panic!("hippo did not become healthy in time (port {port})");
 }
 
-/// Seed a fixture graph into a running agent via POST /admin/seed.
+/// Seed a fixture graph into a running agent via POST /seed.
 pub async fn seed_fixture(client: &Client, base_url: &str, fixture: &fixtures::GraphFixture) {
     let body = fixture.to_seed_json();
     let resp = client
-        .post(format!("{base_url}/admin/seed"))
+        .post(format!("{base_url}/seed"))
         .json(&body)
         .send()
         .await
-        .expect("admin/seed request failed");
-    assert!(resp.status().is_success(), "admin/seed failed: {:?}", resp.text().await);
+        .expect("seed request failed");
+    assert!(resp.status().is_success(), "seed failed: {:?}", resp.text().await);
 }
 
-/// Seed a partial graph (custom JSON) via POST /admin/seed.
+/// Seed a partial graph (custom JSON) via POST /seed.
 pub async fn seed_raw(client: &Client, base_url: &str, body: &serde_json::Value) {
     let resp = client
-        .post(format!("{base_url}/admin/seed"))
+        .post(format!("{base_url}/seed"))
         .json(body)
         .send()
         .await
-        .expect("admin/seed request failed");
-    assert!(resp.status().is_success(), "admin/seed failed: {:?}", resp.text().await);
+        .expect("seed request failed");
+    assert!(resp.status().is_success(), "seed failed: {:?}", resp.text().await);
 }
 
 // ---- HTTP helpers ----

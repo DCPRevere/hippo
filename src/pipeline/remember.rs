@@ -1,11 +1,12 @@
 use std::sync::atomic::Ordering;
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use std::collections::{HashMap, HashSet};
 
+use crate::events::GraphEvent;
 use crate::graph_backend::GraphBackend;
 use crate::math::cosine_similarity;
 use crate::models::{
@@ -197,6 +198,12 @@ pub async fn remember(
                 entities_created += 1;
 
                 tracing::info!(name = %name, id = %id, "remember: created node");
+                let _ = state.event_tx.send(GraphEvent::EntityCreated {
+                    id: id.clone(),
+                    name: name.clone(),
+                    entity_type: node_type.clone(),
+                    graph: graph.graph_name().to_string(),
+                });
                 execution_trace.push(OpExecutionTrace {
                     op: "create_node".to_string(),
                     outcome: "created".to_string(),
@@ -267,10 +274,18 @@ pub async fn remember(
                     memory_tier: MemoryTier::Working,
                 };
 
-                graph.create_edge(&from_id, &to_id, &rel).await?;
+                let edge_id = graph.create_edge(&from_id, &to_id, &rel).await?;
                 facts_written += 1;
 
                 tracing::info!(fact = %fact, relation = %relation, "remember: wrote edge");
+                let _ = state.event_tx.send(GraphEvent::EdgeCreated {
+                    edge_id,
+                    from_name: from.clone(),
+                    to_name: to.clone(),
+                    fact: fact.clone(),
+                    relation_type: relation.clone(),
+                    graph: graph.graph_name().to_string(),
+                });
                 execution_trace.push(OpExecutionTrace {
                     op: "create_edge".to_string(),
                     outcome: "written".to_string(),
@@ -285,6 +300,11 @@ pub async fn remember(
                 if let Some(eid) = edge_id {
                     graph.invalidate_edge(*eid, now).await?;
                     tracing::info!(edge_id = %eid, reason = %reason, "remember: invalidated edge by id");
+                    let _ = state.event_tx.send(GraphEvent::EdgeInvalidated {
+                        edge_id: *eid,
+                        fact: fact.clone().unwrap_or_default(),
+                        graph: graph.graph_name().to_string(),
+                    });
                     invalidated = true;
                     facts_invalidated += 1;
                 } else if let Some(fact_text) = fact {
@@ -295,6 +315,11 @@ pub async fn remember(
                         if *score > 0.85 && edge.invalid_at.is_none() {
                             graph.invalidate_edge(edge.edge_id, now).await?;
                             tracing::info!(fact = %edge.fact, reason = %reason, "remember: invalidated edge by similarity");
+                            let _ = state.event_tx.send(GraphEvent::EdgeInvalidated {
+                                edge_id: edge.edge_id,
+                                fact: edge.fact.clone(),
+                                graph: graph.graph_name().to_string(),
+                            });
                             invalidated = true;
                             facts_invalidated += 1;
                             break;
@@ -326,6 +351,12 @@ pub async fn remember(
         },
     };
     send_progress(&progress_tx, RememberProgress::Complete(response.clone())).await;
+    let _ = state.event_tx.send(GraphEvent::RememberComplete {
+        graph: graph.graph_name().to_string(),
+        entities_created,
+        facts_written,
+        contradictions_invalidated: facts_invalidated,
+    });
     Ok(response)
 }
 
@@ -358,6 +389,15 @@ pub async fn gather_pre_extraction_context(
     state: &AppState,
     graph: &dyn GraphBackend,
     statement: &str,
+) -> Result<GraphContext> {
+    gather_pre_extraction_context_at(state, graph, statement, None).await
+}
+
+pub async fn gather_pre_extraction_context_at(
+    state: &AppState,
+    graph: &dyn GraphBackend,
+    statement: &str,
+    at: Option<DateTime<Utc>>,
 ) -> Result<GraphContext> {
     let mut seen_node_ids: HashSet<String> = HashSet::new();
     let mut nodes: Vec<SubgraphNode> = Vec::new();
@@ -444,10 +484,18 @@ pub async fn gather_pre_extraction_context(
 
     // 2. Vector search for semantically related edges
     let embedding = state.llm.embed(statement).await?;
-    let vec_edges = graph.vector_search_edges_scored(&embedding, 10).await?;
-    tracing::debug!(count = vec_edges.len(), "context: vector search edges");
-    for (edge, _) in &vec_edges {
-        collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
+    if let Some(at_ts) = at {
+        let vec_edges = graph.vector_search_edges_at(&embedding, 10, at_ts).await?;
+        tracing::debug!(count = vec_edges.len(), "context: vector search edges (at)");
+        for edge in &vec_edges {
+            collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
+        }
+    } else {
+        let vec_edges = graph.vector_search_edges_scored(&embedding, 10).await?;
+        tracing::debug!(count = vec_edges.len(), "context: vector search edges");
+        for (edge, _) in &vec_edges {
+            collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);
+        }
     }
 
     // 3. Walk 1-hop from matched entities (excluding the principal to avoid pulling the entire graph)
@@ -456,7 +504,11 @@ pub async fn gather_pre_extraction_context(
         .cloned()
         .collect();
     if !non_principal_ids.is_empty() {
-        let hop_edges = graph.walk_one_hop(&non_principal_ids, 30).await?;
+        let hop_edges = if let Some(at_ts) = at {
+            graph.walk_one_hop_at(&non_principal_ids, 30, at_ts).await?
+        } else {
+            graph.walk_one_hop(&non_principal_ids, 30).await?
+        };
         tracing::debug!(count = hop_edges.len(), from = non_principal_ids.len(), "context: 1-hop edges (non-principal)");
         for edge in &hop_edges {
             collect_edge(edge, &mut seen_node_ids, &mut nodes, &mut seen_edge_ids, &mut edges);

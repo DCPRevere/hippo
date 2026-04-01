@@ -5,6 +5,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::config::Config;
 use crate::credibility::CredibilityRegistry;
+use crate::events::GraphEvent;
 use crate::graph::GraphRegistry;
 use crate::llm_service::LlmService;
 
@@ -19,6 +20,8 @@ pub struct AppState {
     pub checked_pairs: Arc<RwLock<HashSet<(String, String)>>>,
     pub metrics: Arc<MetricsState>,
     pub credibility: Arc<RwLock<CredibilityRegistry>>,
+    /// Broadcast channel for real-time graph mutation events (SSE).
+    pub event_tx: tokio::sync::broadcast::Sender<GraphEvent>,
 }
 
 impl AppState {
@@ -30,6 +33,7 @@ impl AppState {
     /// Construct an `AppState` for unit tests (no FalkorDB connection needed).
     pub fn for_test(llm: Arc<dyn LlmService>, config: Config) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(200);
+        let (event_tx, _) = tokio::sync::broadcast::channel::<GraphEvent>(256);
         Self {
             graphs: None,
             llm,
@@ -40,6 +44,7 @@ impl AppState {
             checked_pairs: Arc::new(RwLock::new(HashSet::new())),
             metrics: Arc::new(MetricsState::new()),
             credibility: Arc::new(RwLock::new(CredibilityRegistry::new())),
+            event_tx,
         }
     }
 }

@@ -84,6 +84,7 @@ async fn context_returns_matching_facts_by_fulltext() {
             max_hops: Some(1),
             memory_tier_filter: None,
             graph: None,
+            at: None,
         },
         None,
     )
@@ -119,6 +120,7 @@ async fn context_multi_hop_finds_london_via_acme() {
             max_hops: Some(2),
             memory_tier_filter: None,
             graph: None,
+            at: None,
         },
         None,
     )
@@ -192,6 +194,7 @@ async fn context_filters_by_memory_tier() {
             max_hops: Some(1),
             memory_tier_filter: Some("long_term".into()),
             graph: None,
+            at: None,
         },
         None,
     )
@@ -224,6 +227,7 @@ async fn context_empty_query_does_not_panic() {
             max_hops: Some(1),
             memory_tier_filter: None,
             graph: None,
+            at: None,
         },
         None,
     )
@@ -251,6 +255,7 @@ async fn context_nonexistent_entity_returns_empty() {
             max_hops: Some(1),
             memory_tier_filter: None,
             graph: None,
+            at: None,
         },
         None,
     )
@@ -319,6 +324,7 @@ async fn context_orders_by_relevance() {
             max_hops: Some(1),
             memory_tier_filter: None,
             graph: None,
+            at: None,
         },
         None,
     )

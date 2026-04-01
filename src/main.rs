@@ -80,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let (recent_nodes_tx, recent_nodes_rx) = tokio::sync::mpsc::channel::<String>(200);
+    let (event_tx, _) = tokio::sync::broadcast::channel::<hippo::events::GraphEvent>(256);
 
     let state = Arc::new(AppState {
         graphs: Some(graphs),
@@ -91,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
         checked_pairs: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
         metrics: Arc::new(hippo::state::MetricsState::new()),
         credibility: Arc::new(tokio::sync::RwLock::new(cred_registry)),
+        event_tx,
     });
 
     // Shutdown signal — broadcasts to all receivers when SIGINT/SIGTERM arrives

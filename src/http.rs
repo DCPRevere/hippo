@@ -1,11 +1,17 @@
 use axum::{
     extract::{rejection::JsonRejection, FromRequest, Path, Query, Request, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse,
+    },
     routing::{delete, get, post},
     Json, Router,
 };
+use futures::Stream;
+use std::convert::Infallible;
 use std::sync::Arc;
+use tokio_stream::StreamExt as _;
 use tower_http::trace::TraceLayer;
 
 use crate::error::AppError;
@@ -134,7 +140,7 @@ struct GraphQuery {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let mut app = Router::new()
+    let app = Router::new()
         // Core endpoints
         .route("/remember", post(remember_handler))
         .route("/remember/batch", post(remember_batch_handler))
@@ -148,17 +154,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Operations
         .route("/maintain", post(maintain_handler))
         .route("/graph", get(graph_handler))
+        // SSE
+        .route("/events", get(events_handler))
         // Observability
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
         // Graphs
         .route("/graphs", get(graphs_list_handler))
-        .route("/graphs/drop/{name}", delete(graphs_drop_handler));
-
-    if state.config.allow_admin {
-        app = app
-            .route("/admin/seed", post(admin_seed_handler));
-    }
+        .route("/graphs/drop/{name}", delete(graphs_drop_handler))
+        // Seed
+        .route("/seed", post(seed_handler));
 
     app.layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -264,7 +269,7 @@ async fn context_handler(
     ValidJson(req): ValidJson<ContextRequest>,
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let ctx = remember::gather_pre_extraction_context(&state, &*graph, &req.query).await?;
+    let ctx = remember::gather_pre_extraction_context_at(&state, &*graph, &req.query, req.at).await?;
     Ok(json_ok(ctx))
 }
 
@@ -381,9 +386,40 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
 
 
 
+// -- SSE ----------------------------------------------------------------------
+
+async fn events_handler(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<GraphQuery>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.event_tx.subscribe();
+    let graph_filter = params.graph;
+
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
+        .filter_map(move |result| {
+            match result {
+                Ok(event) => {
+                    // Apply optional graph filter
+                    if let Some(ref g) = graph_filter {
+                        if event.graph() != g {
+                            return None;
+                        }
+                    }
+                    let event_name = event.event_name().to_string();
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    Some(Ok(Event::default().event(event_name).data(data)))
+                }
+                // Skip lagged messages
+                Err(_) => None,
+            }
+        });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 // -- Admin --------------------------------------------------------------------
 
-async fn admin_seed_handler(
+async fn seed_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AdminSeedRequest>,
 ) -> Result<JsonOk, AppError> {

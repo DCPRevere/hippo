@@ -1,6 +1,7 @@
 pub mod config;
 pub mod credibility;
 pub mod error;
+pub mod events;
 pub mod fixtures;
 pub mod graph;
 pub mod graph_backend;

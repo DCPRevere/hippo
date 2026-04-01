@@ -2,6 +2,7 @@ use std::sync::atomic::Ordering;
 
 use anyhow::Result;
 use chrono::Utc;
+use crate::events::GraphEvent;
 use crate::graph_backend::GraphBackend;
 use crate::math::cosine_similarity;
 use crate::models::Relation;
@@ -159,6 +160,9 @@ pub async fn run_once(
     }
     placeholder_resolution(state, graph).await?;
 
+    let _ = state.event_tx.send(GraphEvent::MaintenanceComplete {
+        graph: graph.graph_name().to_string(),
+    });
     Ok(())
 }
 

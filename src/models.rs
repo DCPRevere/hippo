@@ -208,6 +208,8 @@ pub struct ContextRequest {
     #[serde(default)]
     pub memory_tier_filter: Option<String>,
     pub graph: Option<String>,
+    #[serde(default)]
+    pub at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]

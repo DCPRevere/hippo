@@ -180,6 +180,7 @@ pub async fn smart_query(state: &AppState, graph: &dyn GraphBackend, req: SmartQ
                 max_hops: None,
                 memory_tier_filter: None,
                 graph: req.graph,
+                at: None,
             };
             let resp = context::context(state, graph, ctx_req, None).await?;
             Ok(SmartQueryResponse {
