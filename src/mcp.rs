@@ -129,16 +129,17 @@ pub fn handle_tool_call(
     params: Value,
     client: &reqwest::blocking::Client,
     base_url: &str,
+    api_key: Option<&str>,
 ) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
 
     let result = match tool_name {
-        "remember" => call_remember(client, base_url, &arguments),
-        "recall" => call_recall(client, base_url, &arguments),
-        "reflect" => call_reflect(client, base_url, &arguments),
-        "timeline" => call_timeline(client, base_url, &arguments),
-        "recall_at" => call_recall_at(client, base_url, &arguments),
+        "remember" => call_remember(client, base_url, &arguments, api_key),
+        "recall" => call_recall(client, base_url, &arguments, api_key),
+        "reflect" => call_reflect(client, base_url, &arguments, api_key),
+        "timeline" => call_timeline(client, base_url, &arguments, api_key),
+        "recall_at" => call_recall_at(client, base_url, &arguments, api_key),
         _ => Err(format!("Unknown tool: {tool_name}")),
     };
 
@@ -199,12 +200,13 @@ fn post(
     client: &reqwest::blocking::Client,
     url: &str,
     body: &Value,
+    api_key: Option<&str>,
 ) -> Result<String, String> {
-    let resp = client
-        .post(url)
-        .json(body)
-        .send()
-        .map_err(|e| e.to_string())?;
+    let mut req = client.post(url).json(body);
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+    let resp = req.send().map_err(|e| e.to_string())?;
 
     let status = resp.status();
     let text = resp.text().map_err(|e| e.to_string())?;
@@ -237,19 +239,21 @@ fn call_remember(
     client: &reqwest::blocking::Client,
     base_url: &str,
     args: &Value,
+    api_key: Option<&str>,
 ) -> Result<String, String> {
     require_str(args, "statement")?;
     let body = build_body(&[
         ("statement", args.get("statement")),
         ("source_agent", args.get("source_agent")),
     ]);
-    post(client, &format!("{base_url}/remember"), &body)
+    post(client, &format!("{base_url}/remember"), &body, api_key)
 }
 
 fn call_recall(
     client: &reqwest::blocking::Client,
     base_url: &str,
     args: &Value,
+    api_key: Option<&str>,
 ) -> Result<String, String> {
     require_str(args, "query")?;
     let body = build_body(&[
@@ -257,32 +261,35 @@ fn call_recall(
         ("limit", args.get("limit")),
         ("max_hops", args.get("max_hops")),
     ]);
-    post(client, &format!("{base_url}/context"), &body)
+    post(client, &format!("{base_url}/context"), &body, api_key)
 }
 
 fn call_reflect(
     client: &reqwest::blocking::Client,
     base_url: &str,
     args: &Value,
+    api_key: Option<&str>,
 ) -> Result<String, String> {
     let body = build_body(&[
         ("about", args.get("about")),
     ]);
-    post(client, &format!("{base_url}/reflect"), &body)
+    post(client, &format!("{base_url}/reflect"), &body, api_key)
 }
 
 fn call_timeline(
     client: &reqwest::blocking::Client,
     base_url: &str,
     args: &Value,
+    api_key: Option<&str>,
 ) -> Result<String, String> {
     let entity = require_str(args, "entity")?;
     let encoded = encode_path_segment(entity);
 
-    let resp = client
-        .get(format!("{base_url}/timeline/{encoded}"))
-        .send()
-        .map_err(|e| e.to_string())?;
+    let mut req = client.get(format!("{base_url}/timeline/{encoded}"));
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+    let resp = req.send().map_err(|e| e.to_string())?;
 
     let status = resp.status();
     let text = resp.text().map_err(|e| e.to_string())?;
@@ -296,6 +303,7 @@ fn call_recall_at(
     client: &reqwest::blocking::Client,
     base_url: &str,
     args: &Value,
+    api_key: Option<&str>,
 ) -> Result<String, String> {
     require_str(args, "query")?;
     require_str(args, "at")?;
@@ -304,5 +312,5 @@ fn call_recall_at(
         ("at", args.get("at")),
         ("limit", args.get("limit")),
     ]);
-    post(client, &format!("{base_url}/context/temporal"), &body)
+    post(client, &format!("{base_url}/context/temporal"), &body, api_key)
 }
