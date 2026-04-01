@@ -1,4 +1,4 @@
-# hippo-go
+# hippo-sdk (Go)
 
 Go SDK for the [Hippo](https://github.com/dcprevere/hippo) natural-language database.
 
@@ -7,7 +7,7 @@ Zero external dependencies -- uses only the Go standard library.
 ## Install
 
 ```
-go get github.com/dcprevere/hippo-go
+go get github.com/dcprevere/hippo/sdks/go
 ```
 
 Requires Go 1.21 or later.
@@ -22,7 +22,7 @@ import (
     "fmt"
     "log"
 
-    hippo "github.com/dcprevere/hippo-go"
+    hippo "github.com/dcprevere/hippo/sdks/go"
 )
 
 func main() {
