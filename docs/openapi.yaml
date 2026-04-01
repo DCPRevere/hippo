@@ -1,0 +1,1304 @@
+openapi: "3.1.0"
+info:
+  title: Hippo API
+  version: "0.1.0"
+  description: >
+    Hippo is a natural-language knowledge-graph memory service.
+    It ingests plain-text statements, extracts entities and relations,
+    and answers questions over the stored graph.
+
+servers:
+  - url: http://localhost:21693
+    description: Local development server
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Memory
+    description: Core memory operations (remember, context, ask)
+  - name: Graph
+    description: Entity, edge, and full-graph endpoints
+  - name: Admin
+    description: User management, API keys, seed, and graph lifecycle (requires admin role)
+  - name: Observability
+    description: Health checks, metrics, and SSE event streams
+
+paths:
+  /openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      summary: Serve the OpenAPI specification
+      tags: [Observability]
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI YAML document
+          content:
+            text/yaml:
+              schema:
+                type: string
+
+  /remember:
+    post:
+      operationId: remember
+      summary: Ingest a natural-language statement into the knowledge graph
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RememberRequest"
+      responses:
+        "200":
+          description: Statement processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RememberResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /remember/batch:
+    post:
+      operationId: rememberBatch
+      summary: Ingest multiple statements in a single request
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchRememberRequest"
+      responses:
+        "200":
+          description: Batch processed (individual items may have failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchRememberResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /context:
+    post:
+      operationId: getContext
+      summary: Retrieve relevant facts for a query
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextRequest"
+      responses:
+        "200":
+          description: Matching facts ranked by relevance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /ask:
+    post:
+      operationId: ask
+      summary: Ask a natural-language question and receive a synthesised answer
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRequest"
+      responses:
+        "200":
+          description: Answer generated from stored knowledge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /entities/{id}:
+    get:
+      operationId: getEntity
+      summary: Get an entity by ID
+      tags: [Graph]
+      parameters:
+        - $ref: "#/components/parameters/EntityId"
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: The entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityRow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteEntity
+      summary: Delete an entity and invalidate its edges
+      tags: [Graph]
+      parameters:
+        - $ref: "#/components/parameters/EntityId"
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: Entity deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityDeleteResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /entities/{id}/edges:
+    get:
+      operationId: getEntityEdges
+      summary: List all active edges from an entity
+      tags: [Graph]
+      parameters:
+        - $ref: "#/components/parameters/EntityId"
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: Array of edges
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EdgeRow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /edges/{id}:
+    get:
+      operationId: getEdge
+      summary: Get an edge by its numeric ID
+      tags: [Graph]
+      parameters:
+        - $ref: "#/components/parameters/EdgeId"
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: The edge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EdgeRow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /edges/{id}/provenance:
+    get:
+      operationId: getEdgeProvenance
+      summary: Get supersession provenance for an edge
+      tags: [Graph]
+      parameters:
+        - $ref: "#/components/parameters/EdgeId"
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: Provenance chain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvenanceResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /maintain:
+    post:
+      operationId: maintain
+      summary: Trigger a maintenance pass (decay, promotion, cleanup)
+      tags: [Graph]
+      responses:
+        "200":
+          description: Maintenance completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: maintenance complete
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /graph:
+    get:
+      operationId: getGraph
+      summary: Dump the full graph (entities and edges)
+      tags: [Graph]
+      parameters:
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: Full graph dump
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphDump"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /graphs:
+    get:
+      operationId: listGraphs
+      summary: List all known graphs
+      tags: [Graph]
+      responses:
+        "200":
+          description: Graph listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphsListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /graphs/drop/{name}:
+    delete:
+      operationId: dropGraph
+      summary: Drop and reinitialise a graph (admin only)
+      tags: [Admin]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the graph to drop
+      responses:
+        "200":
+          description: Graph dropped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /seed:
+    post:
+      operationId: seed
+      summary: Seed the graph with entities and edges directly (admin only)
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSeedRequest"
+      responses:
+        "200":
+          description: Seed completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSeedResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users:
+    post:
+      operationId: createUser
+      summary: Create a new user with an initial API key (admin only)
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "200":
+          description: User created, API key returned (shown once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateUserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      operationId: listUsers
+      summary: List all users (admin only)
+      tags: [Admin]
+      responses:
+        "200":
+          description: User listing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users/{user_id}:
+    delete:
+      operationId: deleteUser
+      summary: Delete a user (admin only)
+      tags: [Admin]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users/{user_id}/keys:
+    post:
+      operationId: createApiKey
+      summary: Create an additional API key for a user (admin only)
+      tags: [Admin]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKeyRequest"
+      responses:
+        "200":
+          description: Key created, raw key returned (shown once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateKeyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      operationId: listApiKeys
+      summary: List API keys for a user (admin only)
+      tags: [Admin]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key listing (labels and timestamps only, no secrets)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApiKeyInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users/{user_id}/keys/{label}:
+    delete:
+      operationId: revokeApiKey
+      summary: Revoke an API key by label (admin only)
+      tags: [Admin]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: label
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      tags: [Observability]
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Graph backend unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /metrics:
+    get:
+      operationId: metrics
+      summary: Prometheus-format metrics
+      tags: [Observability]
+      security: []
+      responses:
+        "200":
+          description: Metrics in Prometheus text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /events:
+    get:
+      operationId: events
+      summary: Server-Sent Events stream of graph mutations
+      tags: [Observability]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/GraphQuery"
+      responses:
+        "200":
+          description: SSE stream of GraphEvent objects
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/GraphEvent"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        API key authentication. Pass the key as `Authorization: Bearer <api_key>`.
+        Keys are prefixed with `hippo_`.
+
+  parameters:
+    EntityId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Entity UUID
+    EdgeId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Edge numeric ID
+    GraphQuery:
+      name: graph
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Target graph name (defaults to the user's default graph)
+
+  responses:
+    BadRequest:
+      description: Validation or parse error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Admin access required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadGateway:
+      description: Upstream LLM call failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+
+    # -- Memory request/response types -----------------------------------------
+
+    RememberRequest:
+      type: object
+      required: [statement]
+      properties:
+        statement:
+          type: string
+          description: Natural-language statement to ingest
+          minLength: 1
+        source_agent:
+          type: string
+          description: Identifier of the agent or tool that produced the statement
+        source_credibility_hint:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Optional credibility weight for the source
+        graph:
+          type: string
+          description: Target graph (defaults to user's default)
+        ttl_secs:
+          type: integer
+          format: uint64
+          description: Optional TTL in seconds, overrides the global default
+
+    RememberResponse:
+      type: object
+      required:
+        - entities_created
+        - entities_resolved
+        - facts_written
+        - contradictions_invalidated
+        - usage
+        - trace
+      properties:
+        entities_created:
+          type: integer
+        entities_resolved:
+          type: integer
+        facts_written:
+          type: integer
+        contradictions_invalidated:
+          type: integer
+        usage:
+          $ref: "#/components/schemas/LlmUsage"
+        trace:
+          $ref: "#/components/schemas/RememberTrace"
+
+    RememberTrace:
+      type: object
+      required: [operations, execution]
+      properties:
+        operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphOp"
+        revised_operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphOp"
+        execution:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpExecutionTrace"
+
+    OpExecutionTrace:
+      type: object
+      required: [op, outcome]
+      properties:
+        op:
+          type: string
+        outcome:
+          type: string
+        details:
+          type: string
+
+    GraphOp:
+      type: object
+      description: A graph mutation operation (discriminated by `op` field)
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [create_node, update_node, create_edge, invalidate_edge]
+        ref:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        properties:
+          type: object
+          additionalProperties:
+            type: string
+        id:
+          type: string
+        set:
+          type: object
+          additionalProperties:
+            type: string
+        from:
+          type: string
+        to:
+          type: string
+        relation:
+          type: string
+        fact:
+          type: string
+        confidence:
+          type: number
+          format: float
+        edge_id:
+          type: integer
+          format: int64
+        reason:
+          type: string
+
+    LlmUsage:
+      type: object
+      required: [llm_calls, embed_calls, input_tokens, output_tokens]
+      properties:
+        llm_calls:
+          type: integer
+        embed_calls:
+          type: integer
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+
+    BatchRememberRequest:
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 100
+          description: Statements to ingest (max 100)
+        source_agent:
+          type: string
+        parallel:
+          type: boolean
+          default: false
+          description: Process statements in parallel when true
+        graph:
+          type: string
+        ttl_secs:
+          type: integer
+          format: uint64
+
+    BatchRememberResponse:
+      type: object
+      required: [total, succeeded, failed, results]
+      properties:
+        total:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/BatchRememberResult"
+
+    BatchRememberResult:
+      type: object
+      required: [statement, ok]
+      properties:
+        statement:
+          type: string
+        ok:
+          type: boolean
+        facts_written:
+          type: integer
+        entities_created:
+          type: integer
+        error:
+          type: string
+
+    ContextRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+        limit:
+          type: integer
+        max_hops:
+          type: integer
+        memory_tier_filter:
+          type: string
+          enum: [working, long_term]
+        graph:
+          type: string
+        at:
+          type: string
+          format: date-time
+          description: Point-in-time temporal filter (RFC 3339)
+        scoring:
+          $ref: "#/components/schemas/ScoringParams"
+
+    ContextResponse:
+      type: object
+      required: [facts]
+      properties:
+        facts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextFact"
+
+    ContextFact:
+      type: object
+      required:
+        - fact
+        - subject
+        - relation_type
+        - object
+        - confidence
+        - salience
+        - valid_at
+        - edge_id
+        - hops
+        - source_agents
+        - memory_tier
+      properties:
+        fact:
+          type: string
+        subject:
+          type: string
+        relation_type:
+          type: string
+        object:
+          type: string
+        confidence:
+          type: number
+          format: float
+        salience:
+          type: integer
+          format: int64
+        valid_at:
+          type: string
+          format: date-time
+        edge_id:
+          type: integer
+          format: int64
+        hops:
+          type: integer
+        source_agents:
+          type: array
+          items:
+            type: string
+        memory_tier:
+          type: string
+
+    ScoringParams:
+      type: object
+      properties:
+        w_relevance:
+          type: number
+          format: float
+          default: 0.50
+        w_confidence:
+          type: number
+          format: float
+          default: 0.10
+        w_recency:
+          type: number
+          format: float
+          default: 0.25
+        w_salience:
+          type: number
+          format: float
+          default: 0.15
+        mmr_lambda:
+          type: number
+          format: float
+          default: 0.70
+          description: MMR trade-off between relevance (1.0) and diversity (0.0)
+
+    AskRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          minLength: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+        graph:
+          type: string
+        verbose:
+          type: boolean
+          default: false
+          description: When true, include the supporting facts in the response
+
+    AskResponse:
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+        facts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextFact"
+          description: Present only when verbose=true
+
+    # -- Graph resource types --------------------------------------------------
+
+    EntityRow:
+      type: object
+      required: [id, name, entity_type, resolved, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        entity_type:
+          type: string
+        resolved:
+          type: boolean
+        hint:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+
+    EdgeRow:
+      type: object
+      required:
+        - edge_id
+        - subject_id
+        - subject_name
+        - fact
+        - relation_type
+        - confidence
+        - salience
+        - valid_at
+        - object_id
+        - object_name
+        - decayed_confidence
+        - source_agents
+        - memory_tier
+      properties:
+        edge_id:
+          type: integer
+          format: int64
+        subject_id:
+          type: string
+        subject_name:
+          type: string
+        fact:
+          type: string
+        relation_type:
+          type: string
+        confidence:
+          type: number
+          format: float
+        salience:
+          type: integer
+          format: int64
+        valid_at:
+          type: string
+        invalid_at:
+          type: string
+        object_id:
+          type: string
+        object_name:
+          type: string
+        decayed_confidence:
+          type: number
+          format: float
+        source_agents:
+          type: string
+        memory_tier:
+          type: string
+        expires_at:
+          type: string
+
+    EntityDeleteResponse:
+      type: object
+      required: [id, name, edges_invalidated]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        edges_invalidated:
+          type: integer
+
+    ProvenanceResponse:
+      type: object
+      required: [edge_id, supersedes]
+      properties:
+        edge_id:
+          type: integer
+          format: int64
+        superseded_by:
+          $ref: "#/components/schemas/SupersessionRecord"
+        supersedes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupersessionRecord"
+
+    SupersessionRecord:
+      type: object
+      required: [old_edge_id, new_edge_id, superseded_at, old_fact, new_fact]
+      properties:
+        old_edge_id:
+          type: integer
+          format: int64
+        new_edge_id:
+          type: integer
+          format: int64
+        superseded_at:
+          type: string
+          format: date-time
+        old_fact:
+          type: string
+        new_fact:
+          type: string
+
+    GraphDump:
+      type: object
+      required: [graph, entities, edges]
+      properties:
+        graph:
+          type: string
+          description: Graph name
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntityRow"
+        edges:
+          type: object
+          required: [active, invalidated]
+          properties:
+            active:
+              type: array
+              items:
+                $ref: "#/components/schemas/EdgeRow"
+            invalidated:
+              type: array
+              items:
+                $ref: "#/components/schemas/EdgeRow"
+
+    GraphsListResponse:
+      type: object
+      required: [default, graphs]
+      properties:
+        default:
+          type: string
+          description: Name of the default graph
+        graphs:
+          type: array
+          items:
+            type: string
+
+    # -- Admin types -----------------------------------------------------------
+
+    AdminSeedRequest:
+      type: object
+      required: [entities, edges]
+      properties:
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSeedEntity"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSeedEdge"
+        graph:
+          type: string
+
+    AdminSeedEntity:
+      type: object
+      required: [id, name, entity_type]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        entity_type:
+          type: string
+        resolved:
+          type: boolean
+          default: true
+        hint:
+          type: string
+
+    AdminSeedEdge:
+      type: object
+      required: [subject_id, object_id, fact, relation_type]
+      properties:
+        subject_id:
+          type: string
+        object_id:
+          type: string
+        fact:
+          type: string
+        relation_type:
+          type: string
+        confidence:
+          type: number
+          format: float
+          default: 0.9
+        salience:
+          type: integer
+          format: int64
+          default: 0
+        valid_at:
+          type: string
+          description: RFC 3339 timestamp (defaults to now)
+        source_agents:
+          type: string
+          default: seed
+          description: Pipe-delimited list of source agents
+        memory_tier:
+          type: string
+          default: long_term
+          enum: [working, long_term]
+
+    AdminSeedResponse:
+      type: object
+      required: [entities_created, edges_created]
+      properties:
+        entities_created:
+          type: integer
+        edges_created:
+          type: integer
+
+    CreateUserRequest:
+      type: object
+      required: [user_id, display_name]
+      properties:
+        user_id:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          default: user
+          enum: [user, admin]
+        graphs:
+          type: array
+          items:
+            type: string
+          default: []
+          description: >
+            Graph names the user may access.
+            Use ["*"] for unrestricted access.
+
+    CreateUserResponse:
+      type: object
+      required: [user_id, api_key]
+      properties:
+        user_id:
+          type: string
+        api_key:
+          type: string
+          description: Raw API key (shown once, starts with hippo_)
+
+    CreateKeyRequest:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          description: Human-readable label for the key (must be unique per user)
+
+    CreateKeyResponse:
+      type: object
+      required: [user_id, label, api_key]
+      properties:
+        user_id:
+          type: string
+        label:
+          type: string
+        api_key:
+          type: string
+          description: Raw API key (shown once)
+
+    UserInfo:
+      type: object
+      required: [user_id, display_name, role, graphs, key_count]
+      properties:
+        user_id:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+        graphs:
+          type: array
+          items:
+            type: string
+        key_count:
+          type: integer
+
+    ApiKeyInfo:
+      type: object
+      required: [label, created_at]
+      properties:
+        label:
+          type: string
+        created_at:
+          type: string
+
+    HealthResponse:
+      type: object
+      required: [status, graph]
+      properties:
+        status:
+          type: string
+          example: ok
+        graph:
+          type: string
+          description: Default graph name
+
+    # -- SSE event types -------------------------------------------------------
+
+    GraphEvent:
+      type: object
+      description: >
+        Server-sent event payload. Discriminated by the `type` field.
+        Possible types: entity_created, edge_created, edge_invalidated,
+        entity_deleted, remember_complete, maintenance_complete.
+      required: [type, graph]
+      properties:
+        type:
+          type: string
+          enum:
+            - entity_created
+            - edge_created
+            - edge_invalidated
+            - entity_deleted
+            - remember_complete
+            - maintenance_complete
+        graph:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        entity_type:
+          type: string
+        edge_id:
+          type: integer
+          format: int64
+        from_name:
+          type: string
+        to_name:
+          type: string
+        fact:
+          type: string
+        relation_type:
+          type: string
+        edges_invalidated:
+          type: integer
+        entities_created:
+          type: integer
+        facts_written:
+          type: integer
+        contradictions_invalidated:
+          type: integer

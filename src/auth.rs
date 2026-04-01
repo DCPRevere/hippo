@@ -501,8 +501,47 @@ impl FromRequestParts<Arc<AppState>> for Auth {
         };
 
         match store.authenticate(raw_key).await {
-            Some(user) => Ok(Auth(user)),
-            None => Err(AppError::unauthorized("invalid API key")),
+            Some(user) => {
+                if let Some(ref audit) = state.audit {
+                    let audit = Arc::clone(audit);
+                    let uid = user.user_id.clone();
+                    tokio::spawn(async move {
+                        audit
+                            .log(crate::audit::AuditEntry {
+                                user_id: uid,
+                                action: "auth.success".into(),
+                                details: String::new(),
+                            })
+                            .await;
+                    });
+                }
+                if let Some(ref limiter) = state.rate_limiter {
+                    if limiter.check(&user.user_id).is_err() {
+                        return Err(AppError::too_many_requests("rate limit exceeded"));
+                    }
+                }
+                Ok(Auth(user))
+            }
+            None => {
+                if let Some(ref audit) = state.audit {
+                    let audit = Arc::clone(audit);
+                    let partial = if raw_key.len() > 10 {
+                        format!("{}...", &raw_key[..10])
+                    } else {
+                        raw_key.to_string()
+                    };
+                    tokio::spawn(async move {
+                        audit
+                            .log(crate::audit::AuditEntry {
+                                user_id: "unknown".into(),
+                                action: "auth.failure".into(),
+                                details: format!("partial_key: {partial}"),
+                            })
+                            .await;
+                    });
+                }
+                Err(AppError::unauthorized("invalid API key"))
+            }
         }
     }
 }

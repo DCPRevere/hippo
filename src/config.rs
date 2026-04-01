@@ -235,6 +235,22 @@ impl Default for AuthConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub requests_per_minute: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            requests_per_minute: 120,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct EvalConfig {
     pub fixture_mode: String,
     pub fixture_path: String,
@@ -249,6 +265,24 @@ impl Default for EvalConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct TlsConfig {
+    pub enabled: bool,
+    pub cert_path: String,
+    pub key_path: String,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_path: String::new(),
+            key_path: String::new(),
+        }
+    }
+}
+
 // --- Top-level Config ---
 
 #[derive(Debug, Clone, Deserialize)]
@@ -259,6 +293,8 @@ pub struct Config {
     pub llm: LlmConfig,
     pub pipeline: PipelineConfig,
     pub auth: AuthConfig,
+    pub rate_limit: RateLimitConfig,
+    pub tls: TlsConfig,
     pub eval: EvalConfig,
 
     // Secrets — env-var only, never in TOML.
@@ -276,6 +312,8 @@ impl Default for Config {
             llm: LlmConfig::default(),
             pipeline: PipelineConfig::default(),
             auth: AuthConfig::default(),
+            rate_limit: RateLimitConfig::default(),
+            tls: TlsConfig::default(),
             eval: EvalConfig::default(),
             anthropic_auth: None,
             openai_api_key: None,
@@ -397,6 +435,25 @@ impl Config {
             config.auth.allow_admin = v == "1";
         }
 
+        // Rate limiting
+        if let Ok(v) = std::env::var("HIPPO_RATE_LIMIT") {
+            config.rate_limit.enabled = v == "1";
+        }
+        if let Ok(v) = std::env::var("HIPPO_RPM") {
+            config.rate_limit.requests_per_minute = v.parse().context("invalid HIPPO_RPM")?;
+        }
+
+        // TLS
+        if let Ok(v) = std::env::var("HIPPO_TLS") {
+            config.tls.enabled = v == "1";
+        }
+        if let Ok(v) = std::env::var("HIPPO_TLS_CERT") {
+            config.tls.cert_path = v;
+        }
+        if let Ok(v) = std::env::var("HIPPO_TLS_KEY") {
+            config.tls.key_path = v;
+        }
+
         // Eval / fixtures (legacy two-variable pattern preserved)
         if std::env::var("EVAL_RECORD").is_ok() {
             config.eval.fixture_mode = "record".to_string();
@@ -458,6 +515,8 @@ impl Config {
                 allow_admin: true,
                 ..Default::default()
             },
+            rate_limit: RateLimitConfig::default(),
+            tls: TlsConfig::default(),
             eval: EvalConfig::default(),
             anthropic_auth: Some(AnthropicAuth::ApiKey("test-key".to_string())),
             openai_api_key: None,

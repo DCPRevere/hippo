@@ -1,0 +1,33 @@
+export { HippoClient } from "./client.js";
+export {
+  HippoError,
+  AuthenticationError,
+  ForbiddenError,
+  RateLimitError,
+} from "./errors.js";
+export type {
+  AskRequest,
+  AskResponse,
+  BatchResult,
+  ContextRequest,
+  ContextResponse,
+  CreateKeyRequest,
+  CreateKeyResponse,
+  CreateUserRequest,
+  CreateUserResponse,
+  Fact,
+  GraphEdge,
+  GraphNode,
+  HealthResponse,
+  HippoClientOptions,
+  KeySummary,
+  ListKeysResponse,
+  ListUsersResponse,
+  RememberBatchRequest,
+  RememberBatchResponse,
+  RememberRequest,
+  RememberResponse,
+  TraceInfo,
+  UsageInfo,
+  UserSummary,
+} from "./models.js";

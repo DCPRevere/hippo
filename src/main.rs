@@ -7,7 +7,7 @@ use hippo::config::{self, AnthropicAuth, Config};
 use hippo::graph::GraphRegistry;
 use hippo::llm::{self, LlmClient};
 use hippo::state::AppState;
-use hippo::{credibility, http, pipeline};
+use hippo::{audit, credibility, http, pipeline};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -75,18 +75,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Hydrate credibility registry
-    let mut cred_registry = credibility::CredibilityRegistry::new();
-    match graphs.get_default().await.load_all_source_credibility().await {
-        Ok(entries) => {
-            let count: usize = entries.len();
-            cred_registry.hydrate(entries);
-            tracing::info!("Loaded {count} source credibility entries");
-        }
-        Err(e) => {
-            tracing::warn!("Failed to load credibility, starting empty: {e}");
-        }
-    }
+    // Credibility registry starts empty; entries accumulate during operation.
+    let cred_registry = credibility::CredibilityRegistry::new();
 
     // Set up auth
     if config.auth.insecure {
@@ -118,6 +108,23 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Initialise audit log
+    let audit = {
+        let audit_graph = graphs.get(audit::AUDIT_GRAPH).await;
+        Some(Arc::new(audit::AuditLog::new(audit_graph)))
+    };
+
+    // Rate limiter
+    let rate_limiter = if config.rate_limit.enabled {
+        tracing::info!(
+            "Rate limiting enabled ({} req/min per user)",
+            config.rate_limit.requests_per_minute
+        );
+        Some(hippo::rate_limit::RateLimiter::new(config.rate_limit.requests_per_minute))
+    } else {
+        None
+    };
+
     let (recent_nodes_tx, recent_nodes_rx) = tokio::sync::mpsc::channel::<String>(200);
     let (event_tx, _) = tokio::sync::broadcast::channel::<hippo::events::GraphEvent>(256);
 
@@ -133,6 +140,8 @@ async fn main() -> anyhow::Result<()> {
         credibility: Arc::new(tokio::sync::RwLock::new(cred_registry)),
         event_tx,
         user_store: user_store.map(|s| s as Arc<dyn hippo::auth::UserStore>),
+        audit,
+        rate_limiter,
     });
 
     // Shutdown signal — broadcasts to all receivers when SIGINT/SIGTERM arrives
@@ -144,12 +153,35 @@ async fn main() -> anyhow::Result<()> {
 
     // Start HTTP server
     let addr = format!("0.0.0.0:{}", state.config.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Listening on {addr}");
+    let router = http::router(state.clone());
 
-    axum::serve(listener, http::router(state))
-        .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+    if state.config.tls.enabled {
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            &state.config.tls.cert_path,
+            &state.config.tls.key_path,
+        )
         .await?;
+        tracing::info!("Listening on {addr} (HTTPS/TLS)");
+
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+        tokio::spawn(async move {
+            shutdown_signal(shutdown_tx).await;
+            shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+        });
+
+        axum_server::bind_rustls(addr.parse()?, tls_config)
+            .handle(handle)
+            .serve(router.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        tracing::info!("Listening on {addr} (HTTP)");
+
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+            .await?;
+    }
 
     tracing::info!("Shutdown complete");
     Ok(())

@@ -410,10 +410,26 @@ pub struct MemoryStats {
 
 // Memory tier stats
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MemoryTierStats {
     pub working_count: usize,
     pub long_term_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphStats {
+    pub entity_count: usize,
+    pub edge_count: usize,
+    pub oldest_valid_at: Option<String>,
+    pub newest_valid_at: Option<String>,
+    pub avg_confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UnderDocumentedEntity {
+    pub id: String,
+    pub name: String,
+    pub edge_count: usize,
 }
 
 // Streaming progress events for /context/stream
@@ -588,7 +604,7 @@ pub struct AdminSeedEntity {
 
 fn default_true() -> bool { true }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AdminSeedEdge {
     pub subject_id: String,
     pub object_id: String,
@@ -613,6 +629,40 @@ fn default_tier() -> String { "long_term".to_string() }
 pub struct AdminSeedResponse {
     pub entities_created: usize,
     pub edges_created: usize,
+}
+
+// Backup / restore types
+
+#[derive(Debug, Deserialize)]
+pub struct BackupRequest {
+    pub graph: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupPayload {
+    pub graph: String,
+    pub exported_at: String,
+    pub entities: Vec<BackupEntity>,
+    pub edges: Vec<AdminSeedEdge>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupEntity {
+    pub id: String,
+    pub name: String,
+    pub entity_type: String,
+    #[serde(default = "default_true")]
+    pub resolved: bool,
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreRequest {
+    pub graph: String,
+    pub exported_at: String,
+    pub entities: Vec<BackupEntity>,
+    pub edges: Vec<AdminSeedEdge>,
+    pub target_graph: Option<String>,
 }
 
 // FalkorDB row types for parsing results

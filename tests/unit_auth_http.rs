@@ -44,6 +44,8 @@ async fn test_state_with_auth() -> (Arc<AppState>, String) {
         )),
         event_tx,
         user_store: Some(Arc::new(store)),
+        audit: None,
+        rate_limiter: None,
     });
 
     (state, admin_key)
@@ -407,6 +409,8 @@ async fn insecure_mode_bypasses_auth() {
         )),
         event_tx,
         user_store: Some(Arc::new(store)),
+        audit: None,
+        rate_limiter: None,
     });
 
     // No auth header at all → still 200 (insecure mode)

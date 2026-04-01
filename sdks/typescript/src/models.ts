@@ -1,0 +1,143 @@
+// ---------------------------------------------------------------------------
+// Request types
+// ---------------------------------------------------------------------------
+
+export interface RememberRequest {
+  statement: string;
+  source_agent?: string;
+  graph?: string;
+  ttl_secs?: number;
+}
+
+export interface RememberBatchRequest {
+  statements: string[];
+  source_agent?: string;
+  parallel?: boolean;
+  graph?: string;
+  ttl_secs?: number;
+}
+
+export interface ContextRequest {
+  query: string;
+  limit?: number;
+  max_hops?: number;
+  graph?: string;
+}
+
+export interface AskRequest {
+  question: string;
+  limit?: number;
+  graph?: string;
+  verbose?: boolean;
+}
+
+export interface CreateUserRequest {
+  user_id: string;
+  display_name: string;
+  role?: string;
+  graphs?: string[];
+}
+
+export interface CreateKeyRequest {
+  label: string;
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+export interface UsageInfo {
+  [key: string]: unknown;
+}
+
+export interface TraceInfo {
+  [key: string]: unknown;
+}
+
+export interface RememberResponse {
+  entities_created: number;
+  entities_resolved: number;
+  facts_written: number;
+  contradictions_invalidated: number;
+  usage: UsageInfo;
+  trace: TraceInfo;
+}
+
+export interface BatchResult {
+  [key: string]: unknown;
+}
+
+export interface RememberBatchResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BatchResult[];
+}
+
+export interface GraphNode {
+  [key: string]: unknown;
+}
+
+export interface GraphEdge {
+  [key: string]: unknown;
+}
+
+export interface ContextResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface Fact {
+  [key: string]: unknown;
+}
+
+export interface AskResponse {
+  answer: string;
+  facts?: Fact[];
+}
+
+export interface CreateUserResponse {
+  user_id: string;
+  api_key: string;
+}
+
+export interface UserSummary {
+  user_id: string;
+  display_name: string;
+  role: string;
+  graphs: string[];
+  key_count: number;
+}
+
+export interface ListUsersResponse {
+  users: UserSummary[];
+}
+
+export interface CreateKeyResponse {
+  user_id: string;
+  label: string;
+  api_key: string;
+}
+
+export interface KeySummary {
+  label: string;
+  created_at: string;
+}
+
+export interface ListKeysResponse {
+  keys: KeySummary[];
+}
+
+export interface HealthResponse {
+  status: string;
+  graph: string;
+}
+
+// ---------------------------------------------------------------------------
+// Client options
+// ---------------------------------------------------------------------------
+
+export interface HippoClientOptions {
+  baseUrl?: string;
+  apiKey?: string;
+}

@@ -14,10 +14,12 @@ use std::sync::Arc;
 use tokio_stream::StreamExt as _;
 use tower_http::trace::TraceLayer;
 
+use crate::audit::AuditEntry;
 use crate::auth::Auth;
 use crate::error::AppError;
 use crate::models::{
     AdminSeedRequest, AdminSeedResponse, AskRequest,
+    BackupEntity, BackupPayload, BackupRequest, RestoreRequest,
     BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
     ContextRequest, HealthResponse, RememberRequest,
 };
@@ -138,6 +140,7 @@ impl Validate for BatchRememberRequest {
 #[derive(Debug, serde::Deserialize)]
 struct GraphQuery {
     graph: Option<String>,
+    format: Option<String>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -165,6 +168,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/graphs/drop/{name}", delete(graphs_drop_handler))
         // Seed
         .route("/seed", post(seed_handler))
+        // Admin backup/restore
+        .route("/admin/backup", post(backup_handler))
+        .route("/admin/restore", post(restore_handler))
+        // OpenAPI spec
+        .route("/openapi.yaml", get(crate::openapi::openapi_handler))
         // Admin user management
         .route("/admin/users", post(admin_create_user_handler))
         .route("/admin/users", get(admin_list_users_handler))
@@ -186,6 +194,15 @@ async fn remember_handler(
     ValidJson(req): ValidJson<RememberRequest>,
 ) -> Result<JsonOk, AppError> {
     let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "remember".into(),
+            details: format!("statement: {}", &req.statement[..80.min(req.statement.len())]),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
+    }
     let resp = remember::remember(&state, &*graph, req, None, Some(&user.user_id)).await?;
     Ok(json_ok(resp))
 }
@@ -396,18 +413,46 @@ async fn graph_handler(
     State(state): State<Arc<AppState>>,
     Auth(user): Auth,
     Query(params): Query<GraphQuery>,
-) -> Result<JsonOk, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
     let entities = graph.dump_all_entities().await?;
     let all_edges = graph.dump_all_edges().await?;
-    let (active, invalidated): (Vec<_>, Vec<_>) = all_edges
-        .into_iter()
-        .partition(|e| e.invalid_at.is_none());
-    Ok(json_ok(serde_json::json!({
-        "graph": graph.graph_name(),
-        "entities": entities,
-        "edges": { "active": active, "invalidated": invalidated },
-    })))
+
+    let fmt = params.format.as_deref().unwrap_or("json");
+    match fmt {
+        "graphml" => {
+            let body = crate::export::to_graphml(&entities, &all_edges);
+            Ok((
+                StatusCode::OK,
+                [
+                    ("content-type", "application/xml"),
+                    ("content-disposition", "attachment; filename=\"graph.graphml\""),
+                ],
+                body,
+            ).into_response())
+        }
+        "csv" => {
+            let body = crate::export::to_csv(&entities, &all_edges);
+            Ok((
+                StatusCode::OK,
+                [
+                    ("content-type", "text/csv"),
+                    ("content-disposition", "attachment; filename=\"graph.csv\""),
+                ],
+                body,
+            ).into_response())
+        }
+        _ => {
+            let (active, invalidated): (Vec<_>, Vec<_>) = all_edges
+                .into_iter()
+                .partition(|e| e.invalid_at.is_none());
+            Ok(json_ok(serde_json::json!({
+                "graph": graph.graph_name(),
+                "entities": entities,
+                "edges": { "active": active, "invalidated": invalidated },
+            })).into_response())
+        }
+    }
 }
 
 // -- Observability ------------------------------------------------------------
@@ -537,7 +582,155 @@ async fn seed_handler(
         edges_created += 1;
     }
 
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "seed".into(),
+            details: format!("entities: {entities_created}, edges: {edges_created}"),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
+    }
+
     Ok(json_ok(AdminSeedResponse {
+        entities_created,
+        edges_created,
+    }))
+}
+
+// -- Admin backup/restore -----------------------------------------------------
+
+async fn backup_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Json(req): Json<BackupRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let entities = graph.dump_all_entities().await?;
+    let edges = graph.dump_all_edges().await?;
+
+    let backup_entities: Vec<BackupEntity> = entities
+        .iter()
+        .map(|e| BackupEntity {
+            id: e.id.clone(),
+            name: e.name.clone(),
+            entity_type: e.entity_type.clone(),
+            resolved: e.resolved,
+            hint: e.hint.clone(),
+        })
+        .collect();
+
+    let backup_edges: Vec<crate::models::AdminSeedEdge> = edges
+        .iter()
+        .map(|e| crate::models::AdminSeedEdge {
+            subject_id: e.subject_id.clone(),
+            object_id: e.object_id.clone(),
+            fact: e.fact.clone(),
+            relation_type: e.relation_type.clone(),
+            confidence: e.confidence,
+            salience: e.salience,
+            valid_at: Some(e.valid_at.clone()),
+            source_agents: e.source_agents.clone(),
+            memory_tier: e.memory_tier.clone(),
+        })
+        .collect();
+
+    let payload = BackupPayload {
+        graph: graph.graph_name().to_string(),
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        entities: backup_entities,
+        edges: backup_edges,
+    };
+
+    let body = serde_json::to_string_pretty(&payload).unwrap_or_default();
+    Ok((
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("content-disposition", "attachment; filename=\"backup.json\""),
+        ],
+        body,
+    ))
+}
+
+async fn restore_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Json(req): Json<RestoreRequest>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    // Determine target graph: explicit target_graph, or the graph name from the backup
+    let target = req.target_graph.as_deref().unwrap_or(&req.graph);
+    let graph = state.resolve_graph_for_user(Some(target), &user).await?;
+
+    use chrono::Utc;
+    use crate::llm::pseudo_embed;
+    use crate::models::{Entity, MemoryTier, Relation};
+
+    let mut entities_created = 0usize;
+    let mut edges_created = 0usize;
+
+    // Upsert entities
+    for e in &req.entities {
+        let embedding = pseudo_embed(&e.name);
+        let entity = Entity {
+            id: e.id.clone(),
+            name: e.name.clone(),
+            entity_type: e.entity_type.clone(),
+            resolved: e.resolved,
+            hint: e.hint.clone(),
+            content: None,
+            created_at: Utc::now(),
+            embedding,
+        };
+        graph.upsert_entity(&entity).await.map_err(|err| {
+            AppError::internal(format!("entity '{}': {err}", e.name))
+        })?;
+        entities_created += 1;
+    }
+
+    // Create edges (same logic as seed_handler)
+    for edge in &req.edges {
+        let embedding = pseudo_embed(&edge.fact);
+        let valid_at = edge.valid_at.as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        let tier = match edge.memory_tier.as_str() {
+            "working" => MemoryTier::Working,
+            _ => MemoryTier::LongTerm,
+        };
+        let source_agents: Vec<String> = edge.source_agents
+            .split('|')
+            .map(|s| s.to_string())
+            .collect();
+        let relation = Relation {
+            fact: edge.fact.clone(),
+            relation_type: edge.relation_type.clone(),
+            embedding,
+            source_agents,
+            valid_at,
+            invalid_at: None,
+            confidence: edge.confidence,
+            salience: edge.salience,
+            created_at: valid_at,
+            memory_tier: tier,
+            expires_at: None,
+        };
+        graph.create_edge(&edge.subject_id, &edge.object_id, &relation).await.map_err(|err| {
+            AppError::internal(format!("edge '{}': {err}", edge.fact))
+        })?;
+        edges_created += 1;
+    }
+
+    Ok(json_ok(crate::models::AdminSeedResponse {
         entities_created,
         edges_created,
     }))
@@ -570,6 +763,16 @@ async fn graphs_drop_handler(
         state.checked_pairs.write().await.clear();
         state.credibility.write().await.clear();
         state.metrics.reset();
+    }
+
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "graph.drop".into(),
+            details: format!("graph: {name}"),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
     }
 
     Ok(json_ok(serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") })))
@@ -606,6 +809,16 @@ async fn admin_create_user_handler(
         .create_user(&req.user_id, &req.display_name, &req.role, &req.graphs)
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "user.create".into(),
+            details: format!("user_id: {}", req.user_id),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
+    }
 
     Ok(json_ok(serde_json::json!({
         "user_id": req.user_id,
@@ -647,6 +860,16 @@ async fn admin_delete_user_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "user.delete".into(),
+            details: format!("user_id: {user_id}"),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
+    }
+
     Ok(json_ok(serde_json::json!({ "ok": true })))
 }
 
@@ -683,6 +906,16 @@ async fn admin_create_key_handler(
         .create_api_key(&user_id, &req.label)
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "key.create".into(),
+            details: format!("user_id: {user_id}, label: {}", req.label),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
+    }
 
     Ok(json_ok(serde_json::json!({
         "user_id": user_id,
@@ -723,6 +956,16 @@ async fn admin_revoke_key_handler(
         .revoke_api_key(&user_id, &label)
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if let Some(ref audit) = state.audit {
+        let audit = Arc::clone(audit);
+        let entry = AuditEntry {
+            user_id: user.user_id.clone(),
+            action: "key.revoke".into(),
+            details: format!("user_id: {user_id}, label: {label}"),
+        };
+        tokio::spawn(async move { audit.log(entry).await });
+    }
 
     Ok(json_ok(serde_json::json!({ "ok": true })))
 }

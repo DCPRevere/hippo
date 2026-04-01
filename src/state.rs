@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::audit::AuditLog;
 use crate::auth::UserStore;
 use crate::config::Config;
 use crate::credibility::CredibilityRegistry;
@@ -27,6 +28,10 @@ pub struct AppState {
     pub event_tx: tokio::sync::broadcast::Sender<GraphEvent>,
     /// User store for API key authentication. None means auth is disabled.
     pub user_store: Option<Arc<dyn UserStore>>,
+    /// Audit log for recording security and mutation events.
+    pub audit: Option<Arc<AuditLog>>,
+    /// Per-user rate limiter. None when rate limiting is disabled.
+    pub rate_limiter: Option<crate::rate_limit::RateLimiter>,
 }
 
 impl AppState {
@@ -51,6 +56,8 @@ impl AppState {
             credibility: Arc::new(RwLock::new(CredibilityRegistry::new())),
             event_tx,
             user_store: None,
+            audit: None,
+            rate_limiter: None,
         }
     }
 
