@@ -12,6 +12,7 @@ use futures::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_stream::StreamExt as _;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use crate::audit::AuditEntry;
@@ -182,7 +183,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/admin/users/{user_id}/keys", get(admin_list_keys_handler))
         .route("/admin/users/{user_id}/keys/{label}", delete(admin_revoke_key_handler));
 
+    let ui_dir = std::env::var("HIPPO_UI_DIR").unwrap_or_else(|_| "ui/build".to_string());
+    let ui_service = ServeDir::new(&ui_dir)
+        .not_found_service(ServeFile::new(format!("{}/index.html", ui_dir)));
+
     app.layer(TraceLayer::new_for_http())
+        .fallback_service(ui_service)
         .with_state(state)
 }
 
