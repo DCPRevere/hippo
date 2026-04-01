@@ -3,10 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::auth::UserStore;
 use crate::config::Config;
 use crate::credibility::CredibilityRegistry;
+use crate::error::AppError;
 use crate::events::GraphEvent;
 use crate::graph::GraphRegistry;
+use crate::graph_backend::GraphBackend;
 use crate::llm_service::LlmService;
 
 pub struct AppState {
@@ -22,6 +25,8 @@ pub struct AppState {
     pub credibility: Arc<RwLock<CredibilityRegistry>>,
     /// Broadcast channel for real-time graph mutation events (SSE).
     pub event_tx: tokio::sync::broadcast::Sender<GraphEvent>,
+    /// User store for API key authentication. None means auth is disabled.
+    pub user_store: Option<Arc<dyn UserStore>>,
 }
 
 impl AppState {
@@ -45,7 +50,32 @@ impl AppState {
             metrics: Arc::new(MetricsState::new()),
             credibility: Arc::new(RwLock::new(CredibilityRegistry::new())),
             event_tx,
+            user_store: None,
         }
+    }
+
+    /// Resolve a graph by name and check that the user has access.
+    pub async fn resolve_graph_for_user(
+        &self,
+        graph_name: Option<&str>,
+        user: &crate::auth::AuthenticatedUser,
+    ) -> Result<Arc<dyn GraphBackend>, AppError> {
+        let graph = self.graph_registry().resolve(graph_name).await;
+        let name = graph.graph_name();
+
+        // Reserved system namespace — only admins can access hippo-* and admin-* graphs
+        if crate::auth::is_system_graph(name) && !user.is_admin() {
+            return Err(AppError::forbidden("system graphs are not accessible"));
+        }
+
+        if !user.can_access_graph(name) {
+            return Err(AppError::forbidden(format!(
+                "user '{}' does not have access to graph '{}'",
+                user.user_id,
+                name
+            )));
+        }
+        Ok(graph)
     }
 }
 

@@ -29,6 +29,12 @@ pub enum GraphEvent {
         facts_written: usize,
         contradictions_invalidated: usize,
     },
+    EntityDeleted {
+        id: String,
+        name: String,
+        edges_invalidated: usize,
+        graph: String,
+    },
     MaintenanceComplete {
         graph: String,
     },
@@ -41,6 +47,7 @@ impl GraphEvent {
             GraphEvent::EntityCreated { .. } => "entity_created",
             GraphEvent::EdgeCreated { .. } => "edge_created",
             GraphEvent::EdgeInvalidated { .. } => "edge_invalidated",
+            GraphEvent::EntityDeleted { .. } => "entity_deleted",
             GraphEvent::RememberComplete { .. } => "remember_complete",
             GraphEvent::MaintenanceComplete { .. } => "maintenance_complete",
         }
@@ -52,6 +59,7 @@ impl GraphEvent {
             GraphEvent::EntityCreated { graph, .. }
             | GraphEvent::EdgeCreated { graph, .. }
             | GraphEvent::EdgeInvalidated { graph, .. }
+            | GraphEvent::EntityDeleted { graph, .. }
             | GraphEvent::RememberComplete { graph, .. }
             | GraphEvent::MaintenanceComplete { graph, .. } => graph,
         }
