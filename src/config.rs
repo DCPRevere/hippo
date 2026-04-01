@@ -67,8 +67,8 @@ impl Default for GraphBackendType {
 pub struct GraphConfig {
     pub backend: GraphBackendType,
     pub name: String,
-    pub falkordb_url: String,
-    pub sqlite_path: String,
+    pub sqlite: SqliteConfig,
+    pub falkordb: FalkorDbConfig,
 }
 
 impl Default for GraphConfig {
@@ -76,15 +76,43 @@ impl Default for GraphConfig {
         Self {
             backend: GraphBackendType::default(),
             name: "hippo".to_string(),
-            falkordb_url: "redis://localhost:6379".to_string(),
-            sqlite_path: "hippo.db".to_string(),
+            sqlite: SqliteConfig::default(),
+            falkordb: FalkorDbConfig::default(),
         }
     }
 }
 
 impl GraphConfig {
     pub fn falkordb_connection_string(&self) -> String {
-        self.falkordb_url.replace("redis://", "falkor://")
+        self.falkordb.url.replace("redis://", "falkor://")
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SqliteConfig {
+    pub path: String,
+}
+
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self {
+            path: "hippo.db".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FalkorDbConfig {
+    pub url: String,
+}
+
+impl Default for FalkorDbConfig {
+    fn default() -> Self {
+        Self {
+            url: "redis://localhost:6379".to_string(),
+        }
     }
 }
 
@@ -285,10 +313,10 @@ impl Config {
             config.graph.name = v;
         }
         if let Ok(v) = std::env::var("FALKORDB_URL") {
-            config.graph.falkordb_url = v;
+            config.graph.falkordb.url = v;
         }
         if let Ok(v) = std::env::var("SQLITE_PATH") {
-            config.graph.sqlite_path = v;
+            config.graph.sqlite.path = v;
         }
 
         // LLM

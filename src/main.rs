@@ -30,8 +30,8 @@ async fn main() -> anyhow::Result<()> {
             GraphRegistry::in_memory(&config.graph.name)
         }
         config::GraphBackendType::Sqlite => {
-            tracing::info!("Using SQLite graph backend at {}", config.graph.sqlite_path);
-            GraphRegistry::sqlite(&config.graph.name, config.graph.sqlite_path.clone())
+            tracing::info!("Using SQLite graph backend at {}", config.graph.sqlite.path);
+            GraphRegistry::sqlite(&config.graph.name, config.graph.sqlite.path.clone())
         }
         config::GraphBackendType::FalkorDB => {
             let connection_string = config.graph.falkordb_connection_string();

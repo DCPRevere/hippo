@@ -3,8 +3,12 @@ port = 21693
 [graph]
 backend = "memory"                    # memory | sqlite | falkordb
 name = "hippo"
-sqlite_path = "hippo.db"
-falkordb_url = "redis://localhost:6379"
+
+[graph.sqlite]
+path = "hippo.db"
+
+[graph.falkordb]
+url = "redis://localhost:6379"
 
 [llm]
 provider = "anthropic"                # anthropic | openai
