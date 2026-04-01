@@ -107,49 +107,6 @@ pub struct ExtractedEntity {
     pub content: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractedFact {
-    pub subject: String,
-    pub relation_type: String,
-    pub object: String,
-    pub fact: String,
-    pub confidence: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityUpdate {
-    pub old_name: String,
-    pub new_name: String,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityAttribute {
-    pub entity: String,
-    pub attribute: String,
-    pub value: String,
-    pub confidence: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrichmentResult {
-    #[serde(default)]
-    pub entity_attributes: Vec<EntityAttribute>,
-    #[serde(default)]
-    pub facts: Vec<ExtractedFact>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractionResult {
-    pub entities: Vec<ExtractedEntity>,
-    #[serde(default)]
-    pub entity_updates: Vec<EntityUpdate>,
-    #[serde(default)]
-    pub entity_attributes: Vec<EntityAttribute>,
-    pub explicit_facts: Vec<ExtractedFact>,
-    pub implied_facts: Vec<ExtractedFact>,
-}
-
 // Operations-based extraction types (LLM returns graph mutations)
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,21 +231,6 @@ pub struct TemporalContextRequest {
 }
 
 #[derive(Debug, Serialize)]
-pub struct TimelineResponse {
-    pub entity: String,
-    pub events: Vec<TimelineEvent>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TimelineEvent {
-    pub fact: String,
-    pub relation_type: String,
-    pub valid_at: DateTime<Utc>,
-    pub invalid_at: Option<DateTime<Utc>>,
-    pub superseded: bool,
-}
-
-#[derive(Debug, Serialize)]
 pub struct ContextResponse {
     pub facts: Vec<ContextFact>,
 }
@@ -340,27 +282,6 @@ pub struct ProvenanceResponse {
 // Diagnostics
 
 #[derive(Debug, Serialize)]
-pub struct DiagnoseResponse {
-    pub query: String,
-    pub steps: Vec<DiagnoseStep>,
-    pub final_facts: Vec<ContextFact>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DiagnoseStep {
-    pub step: String,
-    pub description: String,
-    pub results: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GraphDumpResponse {
-    pub entities: Vec<GraphEntity>,
-    pub active_edges: Vec<GraphEdge>,
-    pub invalidated_edges: Vec<GraphEdge>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct GraphEntity {
     pub name: String,
     pub entity_type: String,
@@ -380,23 +301,6 @@ pub struct GraphEdge {
 }
 
 // Reflect types
-
-#[derive(Debug, Deserialize)]
-pub struct ReflectRequest {
-    pub about: Option<String>,
-    pub suggest_questions: Option<bool>,
-    pub graph: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ReflectResponse {
-    pub entity: Option<String>,
-    pub known: Vec<ContextFact>,
-    pub uncertain: Vec<ContextFact>,
-    pub gaps: Vec<String>,
-    pub suggested_questions: Vec<String>,
-    pub stats: Option<MemoryStats>,
-}
 
 #[derive(Debug, Serialize)]
 pub struct MemoryStats {
@@ -423,27 +327,6 @@ pub struct GraphStats {
     pub oldest_valid_at: Option<String>,
     pub newest_valid_at: Option<String>,
     pub avg_confidence: f32,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UnderDocumentedEntity {
-    pub id: String,
-    pub name: String,
-    pub edge_count: usize,
-}
-
-// Streaming progress events for /context/stream
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "event", content = "data", rename_all = "snake_case")]
-pub enum ContextProgress {
-    Embedding,
-    FulltextHits { count: usize },
-    VectorHits { count: usize },
-    HopResults { hop: usize, count: usize },
-    Ranked { total: usize },
-    Done { facts: Vec<ContextFact> },
-    Error(String),
 }
 
 // Streaming progress events for /remember/stream
@@ -503,24 +386,6 @@ pub struct BatchRememberResult {
 
 // Consolidation types
 
-#[derive(Debug, Deserialize)]
-pub struct ConsolidateRequest {
-    pub max_entity_pairs: Option<usize>,
-    pub prune_threshold: Option<f32>,
-    pub dry_run: Option<bool>,
-    pub graph: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ConsolidateResponse {
-    pub links_created: usize,
-    pub facts_pruned: usize,
-    pub clusters_found: usize,
-    pub duration_ms: u64,
-    pub dry_run: bool,
-    pub report: ConsolidateReport,
-}
-
 #[derive(Debug, Serialize)]
 pub struct ConsolidateReport {
     pub new_links: Vec<NewLinkReport>,
@@ -543,27 +408,6 @@ pub struct PrunedFactReport {
 }
 
 // Smart query types
-
-#[derive(Debug, Deserialize)]
-pub struct SmartQueryRequest {
-    pub query: String,
-    pub limit: Option<usize>,
-    pub graph: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SmartQueryResponse {
-    pub intent: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub facts: Vec<ContextFact>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reflect: Option<ReflectResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeline: Option<TimelineResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stats: Option<MemoryStats>,
-    pub routed_to: String,
-}
 
 // Ask types (NL question → NL answer)
 

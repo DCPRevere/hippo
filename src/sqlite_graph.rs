@@ -427,19 +427,6 @@ impl GraphBackend for SqliteGraph {
         Ok(results)
     }
 
-    async fn entity_timeline(&self, entity_name: &str) -> Result<Vec<EdgeRow>> {
-        let conn = self.conn.lock().await;
-        let pattern = format!("%{}%", entity_name.to_lowercase());
-        let sql = format!(
-            "{} WHERE LOWER(ef.name) LIKE ?1 OR LOWER(et.name) LIKE ?1 ORDER BY e.valid_at",
-            EDGES_SELECT
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params![pattern], row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> {
         let conn = self.conn.lock().await;
@@ -526,23 +513,6 @@ impl GraphBackend for SqliteGraph {
         Ok(())
     }
 
-    async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> {
-        if edge_ids.is_empty() {
-            return Ok(());
-        }
-        let conn = self.conn.lock().await;
-        let placeholders: Vec<String> = edge_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
-        let ph = placeholders.join(",");
-        let sql = format!("UPDATE edges SET salience = salience + 1 WHERE edge_id IN ({ph})");
-        let mut stmt = conn.prepare(&sql)?;
-        let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = edge_ids
-            .iter()
-            .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-        stmt.execute(params_ref.as_slice())?;
-        Ok(())
-    }
 
     async fn delete_entity(&self, entity_id: &str) -> Result<usize> {
         let conn = self.conn.lock().await;
@@ -626,39 +596,6 @@ impl GraphBackend for SqliteGraph {
 
     // --- Facts / reflection ---
 
-    async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>> {
-        let conn = self.conn.lock().await;
-        let lower = entity_name.to_lowercase();
-        // Find entity IDs matching the name exactly
-        let mut id_stmt = conn.prepare(
-            "SELECT id FROM entities WHERE LOWER(name) = ?1",
-        )?;
-        let ids: Vec<String> = id_stmt
-            .query_map(params![lower], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(id_stmt);
-
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
-        let ph = placeholders.join(",");
-        let sql = format!(
-            "{} WHERE e.invalid_at IS NULL AND (e.from_id IN ({ph}) OR e.to_id IN ({ph}))",
-            EDGES_SELECT
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
-            .iter()
-            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_ref.as_slice(), row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().await;
@@ -711,57 +648,8 @@ impl GraphBackend for SqliteGraph {
         })
     }
 
-    async fn all_relation_types(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT relation_type FROM edges WHERE invalid_at IS NULL ORDER BY relation_type",
-        )?;
-        let rows = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    async fn under_documented_entities(
-        &self,
-        threshold: usize,
-    ) -> Result<Vec<crate::models::UnderDocumentedEntity>> {
-        let conn = self.conn.lock().await;
-        let threshold_i64 = threshold as i64;
-        let mut stmt = conn.prepare(
-            "SELECT ent.id, ent.name,
-                    (SELECT COUNT(*) FROM edges e
-                     WHERE e.invalid_at IS NULL AND (e.from_id = ent.id OR e.to_id = ent.id)) AS cnt
-             FROM entities ent
-             HAVING cnt < ?1",
-        )?;
-        let rows = stmt
-            .query_map(params![threshold_i64], |row| {
-                Ok(crate::models::UnderDocumentedEntity {
-                    id: row.get::<_, String>(0)?,
-                    name: row.get::<_, String>(1)?,
-                    edge_count: row.get::<_, usize>(2)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    async fn entity_type_counts(&self) -> Result<HashMap<String, usize>> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT entity_type, COUNT(*) FROM entities GROUP BY entity_type",
-        )?;
-        let mut counts = HashMap::new();
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
-        })?;
-        for row in rows {
-            let (t, c) = row?;
-            counts.insert(t, c);
-        }
-        Ok(counts)
-    }
 
     // --- Dump / pagination ---
 
@@ -898,88 +786,9 @@ impl GraphBackend for SqliteGraph {
         Ok(rows)
     }
 
-    async fn find_two_hop_unlinked_pairs(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(EntityRow, EntityRow)>> {
-        // Load adjacency from DB, then compute in-memory (same approach as InMemoryGraph)
-        let conn = self.conn.lock().await;
-
-        let mut edge_stmt = conn.prepare(
-            "SELECT from_id, to_id FROM edges WHERE invalid_at IS NULL",
-        )?;
-        let edge_pairs: Vec<(String, String)> = edge_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(edge_stmt);
-
-        let mut ent_stmt = conn.prepare(
-            "SELECT id, name, entity_type, resolved, hint, content, created_at, embedding FROM entities",
-        )?;
-        let entities: Vec<EntityRow> = ent_stmt
-            .query_map([], row_to_entity)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(ent_stmt);
-        drop(conn);
-
-        let entity_map: HashMap<&str, &EntityRow> = entities.iter().map(|e| (e.id.as_str(), e)).collect();
-
-        let mut adj: HashMap<&str, std::collections::HashSet<&str>> = HashMap::new();
-        for (from, to) in &edge_pairs {
-            adj.entry(from.as_str()).or_default().insert(to.as_str());
-            adj.entry(to.as_str()).or_default().insert(from.as_str());
-        }
-
-        let entity_ids: Vec<&str> = entities.iter().map(|e| e.id.as_str()).collect();
-        let mut pairs = Vec::new();
-        'outer: for (i, &a_id) in entity_ids.iter().enumerate() {
-            let a_neighbors = adj.get(a_id).cloned().unwrap_or_default();
-            for &b_id in entity_ids.iter().skip(i + 1) {
-                if a_neighbors.contains(b_id) {
-                    continue;
-                }
-                let b_neighbors = adj.get(b_id).cloned().unwrap_or_default();
-                let shared = a_neighbors.intersection(&b_neighbors).count();
-                if shared > 0 {
-                    if let (Some(a), Some(b)) = (entity_map.get(a_id), entity_map.get(b_id)) {
-                        pairs.push(((*a).clone(), (*b).clone()));
-                        if pairs.len() >= limit {
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(pairs)
-    }
 
     // --- Archive ---
 
-    async fn archive_low_confidence_edges(
-        &self,
-        threshold: f32,
-        dry_run: bool,
-    ) -> Result<Vec<EdgeRow>> {
-        let conn = self.conn.lock().await;
-        let sql = format!(
-            "{} WHERE e.invalid_at IS NULL AND e.confidence < ?1",
-            EDGES_SELECT
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params![threshold], row_to_edge)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(stmt);
-
-        if !dry_run {
-            let now = Utc::now().to_rfc3339();
-            conn.execute(
-                "UPDATE edges SET invalid_at = ?1 WHERE invalid_at IS NULL AND confidence < ?2",
-                params![now, threshold],
-            )?;
-        }
-        Ok(rows)
-    }
 
     // --- Entity updates ---
 
@@ -1026,59 +835,6 @@ impl GraphBackend for SqliteGraph {
 
     // --- Clustering ---
 
-    async fn find_entity_clusters(&self, min_size: usize) -> Result<Vec<Vec<String>>> {
-        let conn = self.conn.lock().await;
-
-        let mut ent_stmt = conn.prepare("SELECT id FROM entities")?;
-        let entity_ids: Vec<String> = ent_stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(ent_stmt);
-
-        let mut edge_stmt = conn.prepare(
-            "SELECT from_id, to_id FROM edges WHERE invalid_at IS NULL",
-        )?;
-        let edge_pairs: Vec<(String, String)> = edge_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(edge_stmt);
-        drop(conn);
-
-        // Union-find
-        let mut parent: HashMap<String, String> = HashMap::new();
-        for id in &entity_ids {
-            parent.insert(id.clone(), id.clone());
-        }
-
-        fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
-            let p = parent.get(x).cloned().unwrap_or_else(|| x.to_string());
-            if p == x {
-                return p;
-            }
-            let root = find(parent, &p);
-            parent.insert(x.to_string(), root.clone());
-            root
-        }
-
-        for (from, to) in &edge_pairs {
-            let root_a = find(&mut parent, from);
-            let root_b = find(&mut parent, to);
-            if root_a != root_b {
-                parent.insert(root_a, root_b);
-            }
-        }
-
-        let mut clusters: HashMap<String, Vec<String>> = HashMap::new();
-        for id in &entity_ids {
-            let root = find(&mut parent, id);
-            clusters.entry(root).or_default().push(id.clone());
-        }
-
-        Ok(clusters
-            .into_values()
-            .filter(|c| c.len() >= min_size)
-            .collect())
-    }
 
 }
 

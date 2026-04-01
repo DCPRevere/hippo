@@ -1,0 +1,30 @@
+name: Release TypeScript SDK
+
+on:
+  push:
+    tags: ["typescript/v*"]
+
+defaults:
+  run:
+    working-directory: sdks/typescript
+
+jobs:
+  publish:
+    name: Build & publish to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+
+      - run: npm ci
+      - run: npm test
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

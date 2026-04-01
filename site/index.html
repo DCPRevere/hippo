@@ -559,7 +559,7 @@ section {
 .code-body pre {
   font-family: var(--font-mono);
   font-size: 0.8rem;
-  line-height: 1.85;
+  line-height: 1.45;
   color: var(--text-secondary);
   counter-reset: line;
 }
@@ -792,19 +792,23 @@ section {
 }
 
 .sdk-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
 }
 
 .sdk-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 2rem;
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
   transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   position: relative;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .sdk-card:hover {
@@ -815,7 +819,7 @@ section {
 }
 
 .sdk-icon {
-  margin-bottom: 1.25rem;
+  flex-shrink: 0;
   opacity: 0.85;
 }
 
@@ -823,8 +827,8 @@ section {
   font-family: var(--font-mono);
   font-size: 1.05rem;
   font-weight: 600;
-  margin-bottom: 0.75rem;
   letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
 .sdk-install {
@@ -835,13 +839,40 @@ section {
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 0.5rem 0.75rem;
-  margin-bottom: 1rem;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.sdk-card p {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.6;
+.copy-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.copy-btn:hover {
+  color: var(--violet-400);
+  border-color: var(--violet-400);
+  background: rgba(139, 92, 246, 0.1);
+}
+
+.copy-btn.copied {
+  color: var(--green-400);
+  border-color: var(--green-400);
+}
+
+.code-header .copy-btn {
+  margin-left: auto;
 }
 
 /* ─── CTA ─── */
@@ -958,7 +989,7 @@ footer {
 /* ─── RESPONSIVE ─── */
 @media (max-width: 1024px) {
   .features-grid { grid-template-columns: repeat(2, 1fr); }
-  .sdk-grid { grid-template-columns: 1fr; }
+  .sdk-grid { flex-direction: column; align-items: stretch; }
   .insight-grid { grid-template-columns: 1fr; gap: 2rem; }
   .api-grid { grid-template-columns: 1fr; }
   .arch-grid { grid-template-columns: 1fr; gap: 2rem; }
@@ -1115,6 +1146,7 @@ footer {
           <div class="code-dots"><span></span><span></span><span></span></div>
           <span class="code-method post">POST</span>
           <span class="code-path">/remember</span>
+          <button class="copy-btn" data-copy-block aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         </div>
         <div class="code-body">
 <pre><span class="line"><span class="bracket">{</span></span>
@@ -1141,6 +1173,7 @@ footer {
           <div class="code-dots"><span></span><span></span><span></span></div>
           <span class="code-method post">POST</span>
           <span class="code-path">/ask</span>
+          <button class="copy-btn" data-copy-block aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         </div>
         <div class="code-body">
 <pre><span class="line"><span class="bracket">{</span></span>
@@ -1260,8 +1293,8 @@ footer {
           <div class="stat-label">Retrieval Modes</div>
         </div>
         <div class="stat-card reveal reveal-delay-3">
-          <div class="stat-value">15+</div>
-          <div class="stat-label">API Endpoints</div>
+          <div class="stat-value">4</div>
+          <div class="stat-label">SDKs</div>
         </div>
         <div class="stat-card reveal reveal-delay-4">
           <div class="stat-value">N-hop</div>
@@ -1286,44 +1319,34 @@ footer {
     <div class="sdk-grid">
       <div class="sdk-card reveal reveal-delay-1">
         <div class="sdk-icon">
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-            <rect x="2" y="2" width="28" height="28" rx="4" fill="#3178C6"/>
-            <path d="M22.5 24.5v-3.2c1.2.7 2.5 1 3.5 1v-2.6c-.8 0-1.8-.4-2.5-1.1-.7-.7-1-1.5-1-2.5h-2.6v8.4c0 .9-.7 1.6-1.6 1.6s-1.6-.7-1.6-1.6.7-1.6 1.6-1.6c.3 0 .5 0 .7.1v-2.7c-.2 0-.5-.1-.7-.1-2.3 0-4.2 1.9-4.2 4.2s1.9 4.3 4.2 4.3c1.3 0 2.5-.6 3.2-1.6" fill="white" opacity="0"/>
-            <text x="11" y="24" font-family="Arial,sans-serif" font-weight="bold" font-size="18" fill="white">TS</text>
-          </svg>
+          <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/typescript/typescript-original.svg" alt="TypeScript" width="36" height="36">
         </div>
-        <h3>JavaScript / TypeScript</h3>
-        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> npm install @hippo/client</div>
-        <p>Full TypeScript types, async/await, streaming ingest via SSE. Works in Node.js and edge runtimes.</p>
+        <h3>TypeScript</h3>
+        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> npm install @hippo-ai/sdk <button class="copy-btn" data-copy="npm install @hippo-ai/sdk" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
       </div>
 
       <div class="sdk-card reveal reveal-delay-2">
         <div class="sdk-icon">
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-            <path d="M15.5 3C9.7 3 5.5 6.5 5.5 11.2c0 3.2 2 6 5 7.5-.1.8-.3 2.2-.8 3.2 0 0 2.3-.8 3.8-2 .6.1 1.3.1 2 .1 5.8 0 10.5-3.6 10.5-8s-4.7-8-10.5-8z" fill="#3776AB"/>
-            <path d="M17 3.2c5.5.5 9.5 4 9.5 8.1 0 3.2-2 6-5 7.5.1.8.3 2.2.8 3.2 0 0-2.3-.8-3.8-2-.6.1-1.3.1-2 .1" fill="#FFD43B"/>
-            <circle cx="12" cy="10.5" r="1.5" fill="white"/>
-            <circle cx="19" cy="10.5" r="1.5" fill="white"/>
-          </svg>
+          <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/python/python-original.svg" alt="Python" width="36" height="36">
         </div>
         <h3>Python</h3>
-        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> pip install hippo-memory</div>
-        <p>Async with asyncio, sync fallback, Pydantic models. Integrates with LangChain, LlamaIndex, and CrewAI.</p>
+        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> pip install hippo-sdk <button class="copy-btn" data-copy="pip install hippo-sdk" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
       </div>
 
       <div class="sdk-card reveal reveal-delay-3">
         <div class="sdk-icon">
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-            <path d="M2 16.5c0 0 2.5-4.5 6-4.5 2.5 0 3.5 1.5 5 1.5s2.5-1.5 5-1.5c3.5 0 6 4.5 6 4.5s-3 5.5-6 5.5c-2.5 0-3.5-1.5-5-1.5s-2.5 1.5-5 1.5c-3 0-6-5.5-6-5.5z" fill="#00ADD8"/>
-            <circle cx="9.5" cy="16" r="1.5" fill="#fff"/>
-            <circle cx="22.5" cy="16" r="1.5" fill="#fff"/>
-            <circle cx="9.5" cy="16" r="0.5" fill="#00ADD8"/>
-            <circle cx="22.5" cy="16" r="0.5" fill="#00ADD8"/>
-          </svg>
+          <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/go/go-original-wordmark.svg" alt="Go" width="36" height="36">
         </div>
         <h3>Go</h3>
-        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> go get github.com/dcprevere/hippo-go</div>
-        <p>Context-aware, strongly typed. Connection pooling and retry built in. Ideal for high-throughput agent systems.</p>
+        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> go get github.com/dcprevere/hippo-go <button class="copy-btn" data-copy="go get github.com/dcprevere/hippo-go" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
+      </div>
+
+      <div class="sdk-card reveal reveal-delay-4">
+        <div class="sdk-icon">
+          <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/dotnetcore/dotnetcore-original.svg" alt=".NET" width="36" height="36">
+        </div>
+        <h3>.NET</h3>
+        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> dotnet add package Hippo.Sdk <button class="copy-btn" data-copy="dotnet add package Hippo.Sdk" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
       </div>
     </div>
   </div>
@@ -1816,6 +1839,36 @@ footer {
   }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
 
   document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+})();
+
+// ─── COPY BUTTONS ───
+(function() {
+  var checkSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  var copySvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+
+  document.querySelectorAll('.copy-btn').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var text;
+      if (this.hasAttribute('data-copy')) {
+        text = this.getAttribute('data-copy');
+      } else if (this.hasAttribute('data-copy-block')) {
+        var block = this.closest('.code-block');
+        var pre = block && block.querySelector('pre');
+        text = pre ? pre.textContent : '';
+      }
+      if (!text) return;
+      var self = this;
+      navigator.clipboard.writeText(text).then(function() {
+        self.innerHTML = checkSvg;
+        self.classList.add('copied');
+        setTimeout(function() {
+          self.innerHTML = copySvg;
+          self.classList.remove('copied');
+        }, 1500);
+      });
+    });
+  });
 })();
 </script>
 

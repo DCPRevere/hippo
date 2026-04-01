@@ -1,0 +1,25 @@
+name: Release Go SDK
+
+on:
+  push:
+    tags: ["sdks/go/v*"]
+
+jobs:
+  verify:
+    name: Test & verify Go module
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdks/go/go.mod
+
+      - run: go vet ./...
+      - run: go test -race ./...
+
+      - name: Verify module is fetchable
+        run: GONOSUMCHECK=* go list -m github.com/dcprevere/hippo/sdks/go@${GITHUB_REF_NAME}

@@ -2,8 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::models::{
-    ContextFact, EdgeClassification, EnrichmentResult, EntityRow, ExtractionResult,
-    ExtractedEntity, ExtractedFact, GraphContext, OperationsResult,
+    ContextFact, EdgeClassification, EntityRow,
+    ExtractedEntity, GraphContext, OperationsResult,
 };
 
 #[async_trait]
@@ -41,13 +41,6 @@ pub trait LlmService: Send + Sync {
         relation_type: &str,
     ) -> Result<(EdgeClassification, f32)>;
 
-    async fn classify_edges_batch(
-        &self,
-        existing_facts: &[&str],
-        new_fact: &str,
-        relation_type: &str,
-    ) -> Result<Vec<(usize, EdgeClassification, f32)>>;
-
     async fn discover_link(
         &self,
         a: &EntityRow,
@@ -62,23 +55,6 @@ pub trait LlmService: Send + Sync {
         facts: &[ContextFact],
         user_display_name: Option<&str>,
     ) -> Result<String>;
-
-    async fn extract_entities_and_facts(
-        &self,
-        statement: &str,
-    ) -> Result<ExtractionResult>;
-
-    async fn extract_entities_and_facts_with_context(
-        &self,
-        statement: &str,
-        context: &GraphContext,
-    ) -> Result<ExtractionResult>;
-
-    async fn infer_additional_facts(
-        &self,
-        extracted_facts: &[ExtractedFact],
-        entity_context: &[(String, Vec<String>)],
-    ) -> Result<EnrichmentResult>;
 
     async fn find_missing_inferences(
         &self,

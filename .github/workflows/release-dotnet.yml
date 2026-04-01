@@ -1,0 +1,38 @@
+name: Release .NET SDK
+
+on:
+  push:
+    tags: ["dotnet/v*"]
+
+defaults:
+  run:
+    working-directory: sdks/dotnet
+
+jobs:
+  publish:
+    name: Pack & push to NuGet
+    runs-on: ubuntu-latest
+    environment: nuget
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#dotnet/v}" >> "$GITHUB_OUTPUT"
+
+      - run: dotnet test
+
+      - run: >
+          dotnet pack src/Hippo.Sdk/Hippo.Sdk.csproj
+          -c Release
+          -p:PackageVersion=${{ steps.version.outputs.version }}
+          -o ./nupkg
+
+      - run: >
+          dotnet nuget push ./nupkg/*.nupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key ${{ secrets.NUGET_API_KEY }}

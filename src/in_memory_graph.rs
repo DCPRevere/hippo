@@ -32,14 +32,6 @@ fn tier_string(tier: &MemoryTier) -> String {
     }
 }
 
-fn parse_tier(s: &str) -> MemoryTier {
-    if s == "working" {
-        MemoryTier::Working
-    } else {
-        MemoryTier::LongTerm
-    }
-}
-
 struct StoredEdge {
     edge_id: i64,
     from_id: String,
@@ -278,22 +270,6 @@ impl GraphBackend for InMemoryGraph {
         Ok(results)
     }
 
-    async fn entity_timeline(&self, entity_name: &str) -> Result<Vec<EdgeRow>> {
-        let lower = entity_name.to_lowercase();
-        let edges = self.edges.read().await;
-        let entities = self.entities.read().await;
-        let mut matching: Vec<_> = edges
-            .iter()
-            .filter(|e| {
-                let from_name = entities.get(&e.from_id).map_or("", |ent| &ent.name);
-                let to_name = entities.get(&e.to_id).map_or("", |ent| &ent.name);
-                from_name.to_lowercase().contains(&lower)
-                    || to_name.to_lowercase().contains(&lower)
-            })
-            .collect();
-        matching.sort_by_key(|e| e.valid_at);
-        Ok(matching.iter().map(|e| e.to_row(&entities)).collect())
-    }
 
     async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> {
         let edges = self.edges.read().await;
@@ -358,15 +334,6 @@ impl GraphBackend for InMemoryGraph {
         Ok(())
     }
 
-    async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> {
-        let mut edges = self.edges.write().await;
-        for e in edges.iter_mut() {
-            if edge_ids.contains(&e.edge_id) {
-                e.salience += 1;
-            }
-        }
-        Ok(())
-    }
 
     async fn delete_entity(&self, entity_id: &str) -> Result<usize> {
         let now = Utc::now();
@@ -467,28 +434,6 @@ impl GraphBackend for InMemoryGraph {
 
     // --- Facts / reflection ---
 
-    async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>> {
-        let lower = entity_name.to_lowercase();
-        let edges = self.edges.read().await;
-        let entities = self.entities.read().await;
-
-        // Find entity IDs matching the name
-        let matching_ids: Vec<&str> = entities
-            .values()
-            .filter(|e| e.name.to_lowercase() == lower)
-            .map(|e| e.id.as_str())
-            .collect();
-
-        Ok(edges
-            .iter()
-            .filter(|e| {
-                e.is_active()
-                    && (matching_ids.contains(&e.from_id.as_str())
-                        || matching_ids.contains(&e.to_id.as_str()))
-            })
-            .map(|e| e.to_row(&entities))
-            .collect())
-    }
 
     async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> {
         let edges = self.edges.read().await;
@@ -522,52 +467,8 @@ impl GraphBackend for InMemoryGraph {
         })
     }
 
-    async fn all_relation_types(&self) -> Result<Vec<String>> {
-        let edges = self.edges.read().await;
-        let mut types: Vec<String> = edges
-            .iter()
-            .filter(|e| e.is_active())
-            .map(|e| e.relation_type.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        types.sort();
-        Ok(types)
-    }
 
-    async fn under_documented_entities(
-        &self,
-        threshold: usize,
-    ) -> Result<Vec<crate::models::UnderDocumentedEntity>> {
-        let entities = self.entities.read().await;
-        let edges = self.edges.read().await;
-        let mut result = Vec::new();
-        for entity in entities.values() {
-            let count = edges
-                .iter()
-                .filter(|e| {
-                    e.is_active() && (e.from_id == entity.id || e.to_id == entity.id)
-                })
-                .count();
-            if count < threshold {
-                result.push(crate::models::UnderDocumentedEntity {
-                    id: entity.id.clone(),
-                    name: entity.name.clone(),
-                    edge_count: count,
-                });
-            }
-        }
-        Ok(result)
-    }
 
-    async fn entity_type_counts(&self) -> Result<HashMap<String, usize>> {
-        let entities = self.entities.read().await;
-        let mut counts = HashMap::new();
-        for entity in entities.values() {
-            *counts.entry(entity.entity_type.clone()).or_insert(0) += 1;
-        }
-        Ok(counts)
-    }
 
     // --- Dump / pagination ---
 
@@ -658,65 +559,9 @@ impl GraphBackend for InMemoryGraph {
             .collect())
     }
 
-    async fn find_two_hop_unlinked_pairs(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(EntityRow, EntityRow)>> {
-        let entities = self.entities.read().await;
-        let edges = self.edges.read().await;
-        let mut pairs = Vec::new();
-
-        // Build adjacency: entity_id -> set of connected entity_ids
-        let mut adj: HashMap<&str, std::collections::HashSet<&str>> = HashMap::new();
-        for e in edges.iter().filter(|e| e.is_active()) {
-            adj.entry(&e.from_id).or_default().insert(&e.to_id);
-            adj.entry(&e.to_id).or_default().insert(&e.from_id);
-        }
-
-        let entity_ids: Vec<&str> = entities.keys().map(|s| s.as_str()).collect();
-        'outer: for (i, &a_id) in entity_ids.iter().enumerate() {
-            let a_neighbors = adj.get(a_id).cloned().unwrap_or_default();
-            for &b_id in entity_ids.iter().skip(i + 1) {
-                if a_neighbors.contains(b_id) {
-                    continue; // directly linked
-                }
-                // Check if two-hop connected
-                let b_neighbors = adj.get(b_id).cloned().unwrap_or_default();
-                let shared = a_neighbors.intersection(&b_neighbors).count();
-                if shared > 0 {
-                    if let (Some(a), Some(b)) = (entities.get(a_id), entities.get(b_id)) {
-                        pairs.push((a.clone(), b.clone()));
-                        if pairs.len() >= limit {
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(pairs)
-    }
 
     // --- Archive ---
 
-    async fn archive_low_confidence_edges(
-        &self,
-        threshold: f32,
-        dry_run: bool,
-    ) -> Result<Vec<EdgeRow>> {
-        let mut edges = self.edges.write().await;
-        let entities = self.entities.read().await;
-        let now = Utc::now();
-        let mut archived = Vec::new();
-        for e in edges.iter_mut() {
-            if e.is_active() && e.confidence < threshold {
-                archived.push(e.to_row(&entities));
-                if !dry_run {
-                    e.invalid_at = Some(now);
-                }
-            }
-        }
-        Ok(archived)
-    }
 
     // --- Entity updates ---
 
@@ -760,45 +605,6 @@ impl GraphBackend for InMemoryGraph {
 
     // --- Clustering ---
 
-    async fn find_entity_clusters(&self, min_size: usize) -> Result<Vec<Vec<String>>> {
-        // Simple connected components via union-find
-        let entities = self.entities.read().await;
-        let edges = self.edges.read().await;
-
-        let mut parent: HashMap<String, String> = HashMap::new();
-        for id in entities.keys() {
-            parent.insert(id.clone(), id.clone());
-        }
-
-        fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
-            let p = parent.get(x).cloned().unwrap_or_else(|| x.to_string());
-            if p == x {
-                return p;
-            }
-            let root = find(parent, &p);
-            parent.insert(x.to_string(), root.clone());
-            root
-        }
-
-        for e in edges.iter().filter(|e| e.is_active()) {
-            let root_a = find(&mut parent, &e.from_id);
-            let root_b = find(&mut parent, &e.to_id);
-            if root_a != root_b {
-                parent.insert(root_a, root_b);
-            }
-        }
-
-        let mut clusters: HashMap<String, Vec<String>> = HashMap::new();
-        for id in entities.keys() {
-            let root = find(&mut parent, id);
-            clusters.entry(root).or_default().push(id.clone());
-        }
-
-        Ok(clusters
-            .into_values()
-            .filter(|c| c.len() >= min_size)
-            .collect())
-    }
 
 }
 

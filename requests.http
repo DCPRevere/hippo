@@ -1,0 +1,94 @@
+@host = http://localhost:21693
+@graph = personal
+
+### Remember a single statement
+POST {{host}}/remember
+Content-Type: application/json
+
+{
+  "statement": "",
+  "graph": "{{graph}}"
+}
+
+### Remember batch (sequential)
+POST {{host}}/remember/batch
+Content-Type: application/json
+
+{
+  "graph": "{{graph}}",
+  "statements": [
+    "",
+    "",
+    ""
+  ]
+}
+
+### Remember batch (parallel)
+POST {{host}}/remember/batch
+Content-Type: application/json
+
+{
+  "graph": "{{graph}}",
+  "parallel": true,
+  "statements": [
+    "",
+    "",
+    ""
+  ]
+}
+
+### Remember with source agent and credibility
+POST {{host}}/remember
+Content-Type: application/json
+
+{
+  "statement": "",
+  "graph": "{{graph}}",
+  "source_agent": "research-bot",
+  "source_credibility_hint": 0.7
+}
+
+### Context — shows exactly what the LLM sees
+POST {{host}}/context
+Content-Type: application/json
+
+{
+  "query": "",
+  "graph": "{{graph}}"
+}
+
+### Ask — answers a question using the knowledge graph
+POST {{host}}/ask
+Content-Type: application/json
+
+{
+  "question": "",
+  "graph": "{{graph}}"
+}
+
+### Get entity by ID
+GET {{host}}/entities/ENTITY_ID_HERE?graph={{graph}}
+
+### Get edges for an entity
+GET {{host}}/entities/ENTITY_ID_HERE/edges?graph={{graph}}
+
+### Get edge by ID
+GET {{host}}/edges/0?graph={{graph}}
+
+### Get edge provenance
+GET {{host}}/edges/0/provenance?graph={{graph}}
+
+### Full graph dump
+GET {{host}}/graph?graph={{graph}}
+
+### Run maintenance
+POST {{host}}/maintain
+
+### Health check
+GET {{host}}/health
+
+### Metrics
+GET {{host}}/metrics
+
+### List graphs
+GET {{host}}/graphs

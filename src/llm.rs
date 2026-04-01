@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use crate::config::LlmProvider;
 use crate::fixtures::{self, FixtureStore, LlmFixture};
 use crate::models::{
-    EdgeClassification, EntityRow, ExtractionResult, ExtractedEntity, ExtractedFact, EMBEDDING_DIM,
+    EdgeClassification, EntityRow, ExtractedEntity, EMBEDDING_DIM,
 };
 
 /// Canonical relation pairs: (forward, inverse).
@@ -113,16 +113,6 @@ struct AnthropicToolChoice {
 #[derive(Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
-    #[serde(default)]
-    usage: Option<AnthropicUsage>,
-}
-
-#[derive(Deserialize, Default, Clone)]
-struct AnthropicUsage {
-    #[serde(default)]
-    input_tokens: u32,
-    #[serde(default)]
-    output_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -220,231 +210,6 @@ impl LlmClient {
         self.openai_model = model;
         self.openai_embedding_model = embedding_model;
         self
-    }
-
-    pub async fn extract_entities_and_facts(&self, statement: &str) -> Result<ExtractionResult> {
-        if self.mock_mode {
-            return self.extract_entities_and_facts_mock(statement);
-        }
-
-        let system = "You are a knowledge extraction agent. Extract all entities, explicit facts, \
-            and implied facts from the given statement. Return ONLY valid JSON with no markdown, \
-            no explanation, no code fences.";
-
-        let user = format!(
-            r#"Extract from this statement: "{statement}"
-
-Return JSON matching this exact schema:
-{{
-  "entities": [
-    {{
-      "name": "string",
-      "entity_type": "string (person|place|event|concept|organization|content|unknown)",
-      "resolved": true,
-      "hint": null,
-      "content": null
-    }}
-  ],
-  "explicit_facts": [
-    {{
-      "subject": "string (entity name from entities list)",
-      "relation_type": "string (e.g. ATTENDED, MARRIED_TO, WORKS_AT, KNOWS, OWNS, PRESCRIBED_BY, BILLS)",
-      "object": "string (entity name from entities list)",
-      "fact": "string (full natural language fact statement)",
-      "confidence": 0.9
-    }}
-  ],
-  "implied_facts": []
-}}
-
-BIDIRECTIONAL RELATION RULES — follow these strictly:
-
-Asymmetric pairs (always generate BOTH directions):
-  PARENT_OF ↔ CHILD_OF, WORKS_AT ↔ EMPLOYS, OWNS ↔ OWNED_BY, LEADS ↔ LED_BY
-
-Symmetric relations (generate only ONE direction, never duplicate):
-  MARRIED_TO, SIBLING_OF, KNOWS
-
-For asymmetric relations: put the explicit fact in explicit_facts and its inverse in implied_facts.
-Example: "Bob is father of Charlie"
-  → explicit_facts: {{"subject":"Bob","relation_type":"PARENT_OF","object":"Charlie","fact":"Bob is the father of Charlie","confidence":0.95}}
-  → implied_facts: {{"subject":"Charlie","relation_type":"CHILD_OF","object":"Bob","fact":"Charlie is a child of Bob","confidence":0.95}}
-
-For symmetric relations like MARRIED_TO or SIBLING_OF, only produce one fact (do NOT add an inverse).
-
-Include the narrator/speaker as "Me" in entities when first-person language is used.
-For unknown entities (e.g. "John's spouse"), set resolved=false and provide a hint.
-When a surname can be inferred from context (e.g. children of a named parent, maiden names), use the full name for the entity.
-Attributes (surname, date_of_birth, nationality, etc.) ALWAYS go in entity_attributes, NEVER as facts in implied_facts or explicit_facts.
-Use implied_facts ONLY for relationships between entities (e.g. SIBLING_OF, CHILD_OF, PARENT_OF).
-For shell commands, quotations, code snippets, or other verbatim text, use entity_type="content" and put the full verbatim text in the "content" field."#
-        );
-
-        let text = self.call(system, &user, self.max_tokens).await?;
-        let text = clean_json(&text);
-        serde_json::from_str(text)
-            .with_context(|| format!("failed to parse extraction result — LLM returned: {text}"))
-    }
-
-    pub async fn extract_entities_and_facts_with_context(
-        &self,
-        statement: &str,
-        context: &crate::models::GraphContext,
-    ) -> Result<ExtractionResult> {
-        if context.is_empty() {
-            return self.extract_entities_and_facts(statement).await;
-        }
-        if self.mock_mode {
-            return self.extract_entities_and_facts_mock(statement);
-        }
-
-        let context_block = context.to_json();
-
-        let system = "You are a knowledge extraction agent. Extract all entities, explicit facts, \
-            and implied facts from the given statement. Use the provided graph context to make \
-            better inferences (e.g. inferring surnames, full names, relationships). \
-            IMPORTANT: Reuse existing entity names from the graph where they refer to the same \
-            real-world entity. If an entity in the statement is a more complete version of an \
-            existing name (e.g. 'Bob Smith' for existing 'Bob'), use the more complete name \
-            but note this in entity_updates. \
-            Return ONLY valid JSON with no markdown, no explanation, no code fences.";
-
-        let user = format!(
-            r#"{context_block}
-Extract from this statement: "{statement}"
-
-CRITICAL — entity naming rules:
-- If an entity from the statement matches an existing entity in the graph above, use the EXISTING name.
-- If the statement reveals a more complete name for an existing entity (e.g. "Bob" should become "Bob Smith"), use the new full name in entities AND add an entity_update entry.
-- Attributes like surname, date of birth, nationality are NOT relationships — put them in entity_attributes, not in facts.
-
-Return JSON matching this exact schema:
-{{
-  "entities": [
-    {{
-      "name": "string",
-      "entity_type": "string (person|place|event|concept|organization|content|unknown)",
-      "resolved": true,
-      "hint": null,
-      "content": null
-    }}
-  ],
-  "entity_updates": [
-    {{
-      "old_name": "string (existing name in graph)",
-      "new_name": "string (more complete name)",
-      "reason": "string"
-    }}
-  ],
-  "entity_attributes": [
-    {{
-      "entity": "string (entity name)",
-      "attribute": "string (e.g. surname, date_of_birth, nationality)",
-      "value": "string",
-      "confidence": 0.9
-    }}
-  ],
-  "explicit_facts": [
-    {{
-      "subject": "string (entity name from entities list)",
-      "relation_type": "string (e.g. ATTENDED, MARRIED_TO, WORKS_AT, KNOWS, OWNS, PRESCRIBED_BY, BILLS)",
-      "object": "string (entity name from entities list)",
-      "fact": "string (full natural language fact statement)",
-      "confidence": 0.9
-    }}
-  ],
-  "implied_facts": []
-}}
-
-BIDIRECTIONAL RELATION RULES — follow these strictly:
-
-Asymmetric pairs (always generate BOTH directions):
-  PARENT_OF ↔ CHILD_OF, WORKS_AT ↔ EMPLOYS, OWNS ↔ OWNED_BY, LEADS ↔ LED_BY
-
-Symmetric relations (generate only ONE direction, never duplicate):
-  MARRIED_TO, SIBLING_OF, KNOWS
-
-For asymmetric relations: put the explicit fact in explicit_facts and its inverse in implied_facts.
-
-For symmetric relations like MARRIED_TO or SIBLING_OF, only produce one fact (do NOT add an inverse).
-
-Include the narrator/speaker as "Me" in entities when first-person language is used.
-For unknown entities (e.g. "John's spouse"), set resolved=false and provide a hint.
-When a surname can be inferred from context (e.g. children of a named parent, maiden names), use the full name for the entity.
-Attributes (surname, date_of_birth, nationality, etc.) ALWAYS go in entity_attributes, NEVER as facts in implied_facts or explicit_facts.
-Use implied_facts ONLY for relationships between entities (e.g. SIBLING_OF, CHILD_OF, PARENT_OF).
-For shell commands, quotations, code snippets, or other verbatim text, use entity_type="content" and put the full verbatim text in the "content" field."#
-        );
-
-        let text = self.call(system, &user, self.max_tokens).await?;
-        let text = clean_json(&text);
-        serde_json::from_str(text)
-            .with_context(|| format!("failed to parse extraction result — LLM returned: {text}"))
-    }
-
-    pub async fn infer_additional_facts(
-        &self,
-        extracted_facts: &[ExtractedFact],
-        entity_context: &[(String, Vec<String>)],
-    ) -> Result<crate::models::EnrichmentResult> {
-        if self.mock_mode || entity_context.is_empty() {
-            return Ok(crate::models::EnrichmentResult {
-                entity_attributes: vec![],
-                facts: vec![],
-            });
-        }
-
-        let mut facts_block = String::from("Newly extracted facts:\n");
-        for f in extracted_facts {
-            facts_block.push_str(&format!("- \"{}\" ({} -> {})\n", f.fact, f.subject, f.object));
-        }
-
-        let mut context_block = String::from("\nKnown context for resolved entities:\n");
-        for (name, facts) in entity_context {
-            if facts.is_empty() {
-                context_block.push_str(&format!("- {name}: (no existing facts)\n"));
-            } else {
-                let facts_str = facts.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", ");
-                context_block.push_str(&format!("- {name}: {facts_str}\n"));
-            }
-        }
-
-        let system = "You are a knowledge inference agent. Given newly extracted facts and \
-            existing knowledge about entities, identify additional facts and entity attributes \
-            that can be strongly inferred but were not explicitly extracted. \
-            Return ONLY valid JSON with no markdown.";
-
-        let user = format!(
-            r#"{facts_block}{context_block}
-Infer additional relationships and attributes that follow logically. Examples:
-- If a person marries someone with a known surname, the spouse likely takes that surname
-- Children of named parents inherit the family surname
-- Siblings share parents
-
-IMPORTANT:
-- Attributes (surname, date_of_birth, nationality, etc.) go in entity_attributes, NOT in facts.
-- Facts are ONLY for relationships between entities (PARENT_OF, CHILD_OF, SIBLING_OF, etc.).
-- relation_type MUST be UPPER_SNAKE_CASE.
-- Do NOT duplicate facts or attributes that already exist in the known context above.
-- Subject and object in facts MUST be entity names, not bare attribute values.
-
-Return JSON:
-{{
-  "entity_attributes": [
-    {{"entity": "string", "attribute": "string", "value": "string", "confidence": 0.7}}
-  ],
-  "facts": [
-    {{"subject": "string", "relation_type": "STRING_UPPER", "object": "string (entity name)", "fact": "string", "confidence": 0.7}}
-  ]
-}}
-
-Only include items with confidence >= 0.7. Return empty arrays if nothing can be strongly inferred."#
-        );
-
-        let text = self.call(system, &user, self.max_tokens).await?;
-        let text = clean_json(&text);
-        serde_json::from_str(text)
-            .with_context(|| format!("failed to parse enrichment result — LLM returned: {text}"))
     }
 
     pub async fn resolve_entities(
@@ -586,68 +351,6 @@ Return: {{"classification": "contradiction", "confidence": 0.9}}"#
         };
         let confidence = v["confidence"].as_f64().unwrap_or(0.5) as f32;
         Ok((classification, confidence))
-    }
-
-    /// Classify multiple existing facts against a new fact in a single LLM call.
-    /// Returns a vec of (edge_index, classification, confidence).
-    pub async fn classify_edges_batch(
-        &self,
-        existing_facts: &[&str],
-        new_fact: &str,
-        relation_type: &str,
-    ) -> Result<Vec<(usize, EdgeClassification, f32)>> {
-        if self.mock_mode {
-            return Ok(existing_facts.iter().enumerate()
-                .map(|(i, _)| (i, EdgeClassification::Unrelated, 0.5))
-                .collect());
-        }
-
-        let system = "You are a fact classification agent. Decide the relationship between each \
-            existing fact and a new fact about the same entity pair. Return ONLY valid JSON with no markdown.";
-
-        let numbered_facts: String = existing_facts
-            .iter()
-            .enumerate()
-            .map(|(i, f)| format!("{i}: \"{f}\""))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let user = format!(
-            r#"New fact: "{new_fact}"
-Relation type: "{relation_type}"
-
-Existing facts:
-{numbered_facts}
-
-For each existing fact, classify its relationship to the new fact:
-- "duplicate": same meaning, no new information
-- "contradiction": new fact conflicts with existing (existing should be invalidated)
-- "related": related but both can coexist
-- "unrelated": different aspects, both valid
-
-Return a JSON array:
-[{{"index": 0, "classification": "unrelated", "confidence": 0.9}}, ...]"#
-        );
-
-        let text = self.call(system, &user, self.max_tokens).await?;
-        let text = clean_json(&text);
-        let items: Vec<Value> = serde_json::from_str(text)
-            .with_context(|| format!("failed to parse batch edge classification — LLM returned: {text}"))?;
-
-        let mut results = Vec::with_capacity(items.len());
-        for item in items {
-            let index = item["index"].as_u64().unwrap_or(0) as usize;
-            let classification = match item["classification"].as_str().unwrap_or("unrelated") {
-                "duplicate" => EdgeClassification::Duplicate,
-                "contradiction" => EdgeClassification::Contradiction,
-                "related" => EdgeClassification::Related,
-                _ => EdgeClassification::Unrelated,
-            };
-            let confidence = item["confidence"].as_f64().unwrap_or(0.5) as f32;
-            results.push((index, classification, confidence));
-        }
-
-        Ok(results)
     }
 
     pub async fn discover_link(
@@ -1079,106 +782,6 @@ Use the same JSON format: {{"operations": [...]}}"#
         }
     }
 
-    fn extract_entities_and_facts_mock(&self, statement: &str) -> Result<ExtractionResult> {
-        // Try pattern-based extraction first for common sentence structures.
-        if let Some(result) = self.try_pattern_extract(statement) {
-            return Ok(result);
-        }
-
-        // Fallback: uppercase-word heuristic.
-        let words: Vec<&str> = statement.split_whitespace().collect();
-        let entities: Vec<ExtractedEntity> = words.iter()
-            .filter(|w| w.chars().next().map_or(false, |c| c.is_uppercase()))
-            .take(3)
-            .map(|w| ExtractedEntity {
-                name: w.trim_end_matches(|c: char| !c.is_alphanumeric()).to_string(),
-                entity_type: "unknown".to_string(),
-                resolved: true,
-                hint: None,
-                content: None,
-            })
-            .collect();
-
-        let facts = if entities.len() >= 2 {
-            let subj = entities[0].name.clone();
-            let obj = entities[1].name.clone();
-            vec![ExtractedFact {
-                subject: subj,
-                relation_type: "RELATED_TO".to_string(),
-                object: obj,
-                fact: statement.to_string(),
-                confidence: 0.8,
-            }]
-        } else {
-            vec![]
-        };
-
-        Ok(ExtractionResult {
-            entities,
-            entity_updates: vec![],
-            entity_attributes: vec![],
-            explicit_facts: facts,
-            implied_facts: vec![],
-        })
-    }
-
-    /// Pattern-based mock extraction for common sentence structures.
-    fn try_pattern_extract(&self, statement: &str) -> Option<ExtractionResult> {
-        let patterns: &[(&str, &str, &str, &str)] = &[
-            // (keyword, relation, subject_type, object_type)
-            (" is a ", "IS_A", "person", "concept"),
-            (" is an ", "IS_A", "person", "concept"),
-            (" works at ", "WORKS_AT", "person", "organization"),
-            (" works for ", "WORKS_AT", "person", "organization"),
-            (" lives in ", "LIVES_IN", "person", "place"),
-            (" moved to ", "LIVES_IN", "person", "place"),
-            (" teaches at ", "WORKS_AT", "person", "organization"),
-        ];
-
-        for &(keyword, relation, subj_type, obj_type) in patterns {
-            if let Some(idx) = statement.to_lowercase().find(keyword) {
-                let subj = statement[..idx].trim().to_string();
-                let obj = statement[idx + keyword.len()..].trim()
-                    .trim_end_matches(|c: char| c == '.' || c == '!' || c == '?')
-                    .to_string();
-                if subj.is_empty() || obj.is_empty() {
-                    continue;
-                }
-                let entities = vec![
-                    ExtractedEntity {
-                        name: subj.clone(),
-                        entity_type: subj_type.to_string(),
-                        resolved: true,
-                        hint: None,
-                        content: None,
-                    },
-                    ExtractedEntity {
-                        name: obj.clone(),
-                        entity_type: obj_type.to_string(),
-                        resolved: true,
-                        hint: None,
-                        content: None,
-                    },
-                ];
-                let facts = vec![ExtractedFact {
-                    subject: subj,
-                    relation_type: relation.to_string(),
-                    object: obj,
-                    fact: statement.to_string(),
-                    confidence: 0.8,
-                }];
-                return Some(ExtractionResult {
-                    entities,
-                    entity_updates: vec![],
-                    entity_attributes: vec![],
-                    explicit_facts: facts,
-                    implied_facts: vec![],
-                });
-            }
-        }
-        None
-    }
-
     async fn call(&self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
         tracing::debug!(system = %system, user = %user, max_tokens, "LLM request");
         let result = self.call_inner(system, user, max_tokens).await;
@@ -1515,15 +1118,6 @@ impl LlmService for LlmClient {
         LlmClient::classify_edge(self, existing_fact, new_fact, relation_type).await
     }
 
-    async fn classify_edges_batch(
-        &self,
-        existing_facts: &[&str],
-        new_fact: &str,
-        relation_type: &str,
-    ) -> Result<Vec<(usize, EdgeClassification, f32)>> {
-        LlmClient::classify_edges_batch(self, existing_facts, new_fact, relation_type).await
-    }
-
     async fn discover_link(
         &self,
         a: &EntityRow,
@@ -1541,29 +1135,6 @@ impl LlmService for LlmClient {
         user_display_name: Option<&str>,
     ) -> Result<String> {
         LlmClient::synthesise_answer(self, question, facts, user_display_name).await
-    }
-
-    async fn extract_entities_and_facts(
-        &self,
-        statement: &str,
-    ) -> Result<ExtractionResult> {
-        LlmClient::extract_entities_and_facts(self, statement).await
-    }
-
-    async fn extract_entities_and_facts_with_context(
-        &self,
-        statement: &str,
-        context: &crate::models::GraphContext,
-    ) -> Result<ExtractionResult> {
-        LlmClient::extract_entities_and_facts_with_context(self, statement, context).await
-    }
-
-    async fn infer_additional_facts(
-        &self,
-        extracted_facts: &[ExtractedFact],
-        entity_context: &[(String, Vec<String>)],
-    ) -> Result<crate::models::EnrichmentResult> {
-        LlmClient::infer_additional_facts(self, extracted_facts, entity_context).await
     }
 
     async fn find_missing_inferences(

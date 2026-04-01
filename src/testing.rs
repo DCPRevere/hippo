@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use crate::llm;
 use crate::llm_service::LlmService;
 use crate::models::{
-    ContextFact, EdgeClassification, EnrichmentResult, EntityRow, ExtractionResult,
-    ExtractedEntity, ExtractedFact, GraphContext, OperationsResult,
+    ContextFact, EdgeClassification, EntityRow,
+    ExtractedEntity, GraphContext, OperationsResult,
 };
 
 /// A configurable LLM test double.
@@ -27,13 +27,10 @@ pub struct FakeLlm {
     operations: Mutex<VecDeque<OperationsResult>>,
     revised_operations: Mutex<VecDeque<OperationsResult>>,
     classifications: Mutex<VecDeque<(EdgeClassification, f32)>>,
-    batch_classifications: Mutex<VecDeque<Vec<(usize, EdgeClassification, f32)>>>,
     entity_resolutions: Mutex<VecDeque<(bool, f32)>>,
     batch_entity_resolutions: Mutex<VecDeque<Vec<(usize, bool, f32)>>>,
     link_discoveries: Mutex<VecDeque<Option<(String, String, f32)>>>,
     answers: Mutex<VecDeque<String>>,
-    extractions: Mutex<VecDeque<ExtractionResult>>,
-    enrichments: Mutex<VecDeque<EnrichmentResult>>,
     missing_inferences: Mutex<VecDeque<Vec<(String, String, String, f32)>>>,
     gap_questions: Mutex<VecDeque<Vec<String>>>,
 }
@@ -44,13 +41,10 @@ impl FakeLlm {
             operations: Mutex::new(VecDeque::new()),
             revised_operations: Mutex::new(VecDeque::new()),
             classifications: Mutex::new(VecDeque::new()),
-            batch_classifications: Mutex::new(VecDeque::new()),
             entity_resolutions: Mutex::new(VecDeque::new()),
             batch_entity_resolutions: Mutex::new(VecDeque::new()),
             link_discoveries: Mutex::new(VecDeque::new()),
             answers: Mutex::new(VecDeque::new()),
-            extractions: Mutex::new(VecDeque::new()),
-            enrichments: Mutex::new(VecDeque::new()),
             missing_inferences: Mutex::new(VecDeque::new()),
             gap_questions: Mutex::new(VecDeque::new()),
         }
@@ -77,15 +71,6 @@ impl FakeLlm {
         self
     }
 
-    /// Enqueue a batch classification result.
-    pub fn with_batch_classification(self, results: Vec<(usize, EdgeClassification, f32)>) -> Self {
-        self.batch_classifications
-            .lock()
-            .unwrap()
-            .push_back(results);
-        self
-    }
-
     /// Enqueue an entity resolution result for the next `resolve_entities` call.
     pub fn with_entity_resolution(self, same: bool, confidence: f32) -> Self {
         self.entity_resolutions
@@ -107,18 +92,6 @@ impl FakeLlm {
     /// Enqueue an answer for the next `synthesise_answer` call.
     pub fn with_answer(self, answer: String) -> Self {
         self.answers.lock().unwrap().push_back(answer);
-        self
-    }
-
-    /// Enqueue an extraction result.
-    pub fn with_extraction(self, result: ExtractionResult) -> Self {
-        self.extractions.lock().unwrap().push_back(result);
-        self
-    }
-
-    /// Enqueue an enrichment result.
-    pub fn with_enrichment(self, result: EnrichmentResult) -> Self {
-        self.enrichments.lock().unwrap().push_back(result);
         self
     }
 
@@ -218,26 +191,6 @@ impl LlmService for FakeLlm {
             .unwrap_or((EdgeClassification::Unrelated, 0.5)))
     }
 
-    async fn classify_edges_batch(
-        &self,
-        existing_facts: &[&str],
-        _new_fact: &str,
-        _relation_type: &str,
-    ) -> Result<Vec<(usize, EdgeClassification, f32)>> {
-        Ok(self
-            .batch_classifications
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| {
-                existing_facts
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| (i, EdgeClassification::Unrelated, 0.5))
-                    .collect()
-            }))
-    }
-
     async fn discover_link(
         &self,
         _a: &EntityRow,
@@ -265,48 +218,6 @@ impl LlmService for FakeLlm {
                     .map(|f| f.fact.clone())
                     .collect::<Vec<_>>()
                     .join("; ")
-            }))
-    }
-
-    async fn extract_entities_and_facts(
-        &self,
-        _statement: &str,
-    ) -> Result<ExtractionResult> {
-        Ok(self
-            .extractions
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| ExtractionResult {
-                entities: vec![],
-                entity_updates: vec![],
-                entity_attributes: vec![],
-                explicit_facts: vec![],
-                implied_facts: vec![],
-            }))
-    }
-
-    async fn extract_entities_and_facts_with_context(
-        &self,
-        statement: &str,
-        _context: &GraphContext,
-    ) -> Result<ExtractionResult> {
-        self.extract_entities_and_facts(statement).await
-    }
-
-    async fn infer_additional_facts(
-        &self,
-        _extracted_facts: &[ExtractedFact],
-        _entity_context: &[(String, Vec<String>)],
-    ) -> Result<EnrichmentResult> {
-        Ok(self
-            .enrichments
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| EnrichmentResult {
-                entity_attributes: vec![],
-                facts: vec![],
             }))
     }
 

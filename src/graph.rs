@@ -470,18 +470,6 @@ impl GraphClient {
         );
         self.query_edge_rows(&query).await
     }
-
-    pub async fn entity_timeline(&self, entity_name: &str) -> Result<Vec<EdgeRow>> {
-        let safe = sanitise(entity_name);
-        let query = format!(
-            "MATCH (a)-[r:RELATION]->(b) \
-             WHERE toLower(a.name) = toLower('{safe}') OR toLower(b.name) = toLower('{safe}') \
-             RETURN r, a, b \
-             ORDER BY r.valid_at ASC"
-        );
-        self.query_edge_rows(&query).await
-    }
-
     pub async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> {
         let node_id = sanitise(node_id);
         let query = format!(
@@ -761,26 +749,6 @@ impl GraphClient {
 
         Ok(all_edges)
     }
-
-    pub async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> {
-        if edge_ids.is_empty() {
-            return Ok(());
-        }
-        let ids_list = edge_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let now_iso = Utc::now().to_rfc3339();
-        let query = format!(
-            "MATCH ()-[r:RELATION]->() WHERE id(r) IN [{ids_list}] \
-             SET r.salience = r.salience + 1, r.last_accessed_at = '{now_iso}'"
-        );
-        let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await.context("increment salience failed")?;
-        Ok(())
-    }
-
     pub async fn decay_stale_edges(
         &self,
         stale_before: DateTime<Utc>,
@@ -915,33 +883,6 @@ impl GraphClient {
 
         Ok(())
     }
-
-    /// Return all ACTIVE facts for a specific entity (subject or object), ordered by confidence desc.
-    pub async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>> {
-        // Fulltext search for the entity, then walk one hop on found IDs
-        let ft_entities = self.fulltext_search_entities(entity_name).await?;
-        if ft_entities.is_empty() {
-            return Ok(vec![]);
-        }
-        let query_lower = entity_name.to_lowercase();
-        let ids: Vec<String> = ft_entities.into_iter()
-            .filter(|e| {
-                let name_lower = e.name.to_lowercase();
-                name_lower == query_lower
-                    || name_lower.starts_with(&query_lower)
-                    || name_lower.contains(&query_lower)
-            })
-            .map(|e| e.id)
-            .collect();
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-        let mut edges = self.walk_one_hop(&ids, 100).await?;
-        edges.retain(|e| e.invalid_at.is_none());
-        edges.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(edges)
-    }
-
     /// Return graph statistics: (entity_count, fact_count, oldest_valid_at, newest_valid_at, avg_confidence).
     pub async fn graph_stats(&self) -> Result<crate::models::GraphStats> {
         let mut graph = self.conn().lock().await;
@@ -977,68 +918,7 @@ impl GraphClient {
         } else {
             Ok(crate::models::GraphStats { entity_count, edge_count: 0, oldest_valid_at: None, newest_valid_at: None, avg_confidence: 0.0 })
         }
-    }
-
-    /// Return all distinct relation_types present in the graph (active edges only).
-    pub async fn all_relation_types(&self) -> Result<Vec<String>> {
-        let mut graph = self.conn().lock().await;
-        let result = graph.query(
-            "MATCH ()-[r:RELATION]-() WHERE r.invalid_at IS NULL \
-             RETURN DISTINCT r.relation_type ORDER BY r.relation_type"
-        ).execute().await.context("all_relation_types failed")?;
-        let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        Ok(rows.into_iter()
-            .filter_map(|r| r.into_iter().next().map(|v| extract_string(&v)))
-            .filter(|s| !s.is_empty())
-            .collect())
-    }
-
-    /// Return entities with fewer than `threshold` active edges.
-    pub async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<crate::models::UnderDocumentedEntity>> {
-        let mut graph = self.conn().lock().await;
-        let query = format!(
-            "MATCH (e:Entity) \
-             OPTIONAL MATCH (e)-[r:RELATION]-() WHERE r.invalid_at IS NULL \
-             WITH e, count(r) AS edge_count \
-             WHERE edge_count < {threshold} \
-             RETURN e.id, e.name, edge_count \
-             ORDER BY edge_count ASC \
-             LIMIT 20"
-        );
-        let result = graph.query(&query).execute().await
-            .context("under_documented_entities failed")?;
-        let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        Ok(rows.into_iter()
-            .filter_map(|row| {
-                let vals: Vec<FalkorValue> = row;
-                let id = vals.get(0).map(extract_string)?;
-                let name = vals.get(1).map(extract_string).unwrap_or_default();
-                let edge_count = vals.get(2).map(extract_int).unwrap_or(0) as usize;
-                Some(crate::models::UnderDocumentedEntity { id, name, edge_count })
-            })
-            .collect())
-    }
-
-    /// Return entity type counts for stats.
-    pub async fn entity_type_counts(&self) -> Result<std::collections::HashMap<String, usize>> {
-        let mut graph = self.conn().lock().await;
-        let result = graph.query(
-            "MATCH (e:Entity) RETURN e.entity_type, count(e) ORDER BY count(e) DESC"
-        ).execute().await.context("entity_type_counts failed")?;
-        let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        let mut map = std::collections::HashMap::new();
-        for row in rows {
-            let vals: Vec<FalkorValue> = row;
-            let etype = vals.get(0).map(extract_string).unwrap_or_default();
-            let count = vals.get(1).map(extract_int).unwrap_or(0) as usize;
-            if !etype.is_empty() {
-                map.insert(etype, count);
-            }
-        }
-        Ok(map)
-    }
-
-    pub async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> {
+    }    pub async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> {
         let query = "MATCH (e:Entity) RETURN e ORDER BY e.name".to_string();
         let mut graph = self.conn().lock().await;
         let result = graph.query(&query).execute().await.context("dump entities failed")?;
@@ -1137,117 +1017,7 @@ impl GraphClient {
             superseded_by,
             supersedes,
         })
-    }
-
-    /// Find entity pairs that are 2-hop connected but have no direct edge.
-    pub async fn find_two_hop_unlinked_pairs(&self, limit: usize) -> Result<Vec<(EntityRow, EntityRow)>> {
-        let query = format!(
-            "MATCH (a:Entity)-[:RELATION*2]-(b:Entity) \
-             WHERE NOT (a)-[:RELATION]-(b) AND a.id <> b.id \
-             RETURN DISTINCT a, b LIMIT {limit}"
-        );
-        let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
-            .context("find two hop unlinked pairs failed")?;
-        let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        let mut pairs = Vec::new();
-        for row in rows {
-            let Ok([a_val, b_val]) = take_n(row) else { continue };
-            if let (Some(Ok(a)), Some(Ok(b))) = (node_to_entity_row(a_val), node_to_entity_row(b_val)) {
-                pairs.push((a, b));
-            }
-        }
-        Ok(pairs)
-    }
-
-    /// Archive (not delete!) edges below confidence threshold.
-    /// Returns the edges that were (or would be) archived.
-    pub async fn archive_low_confidence_edges(&self, threshold: f32, dry_run: bool) -> Result<Vec<EdgeRow>> {
-        // First, find edges below threshold
-        let query = format!(
-            "MATCH (a)-[r:RELATION]->(b) \
-             WHERE r.invalid_at IS NULL \
-               AND (r.archived IS NULL OR r.archived = false) \
-               AND r.decayed_confidence < {threshold} \
-             RETURN r, a, b"
-        );
-        let edges = self.query_edge_rows(&query).await?;
-
-        if !dry_run && !edges.is_empty() {
-            let ids_list = edges.iter()
-                .map(|e| e.edge_id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let archive_query = format!(
-                "MATCH ()-[r:RELATION]->() WHERE id(r) IN [{ids_list}] \
-                 SET r.archived = true"
-            );
-            let mut graph = self.conn().lock().await;
-            graph.query(&archive_query).execute().await
-                .context("archive low confidence edges failed")?;
-        }
-
-        Ok(edges)
-    }
-
-    /// Find connected components / clusters using edges, returning clusters with >= min_size entities.
-    pub async fn find_entity_clusters(&self, min_size: usize) -> Result<Vec<Vec<String>>> {
-        // Get all active, non-archived edges
-        let query = "MATCH (a)-[r:RELATION]->(b) \
-                     WHERE r.invalid_at IS NULL \
-                       AND (r.archived IS NULL OR r.archived = false) \
-                     RETURN DISTINCT a.name, b.name";
-        let mut graph = self.conn().lock().await;
-        let result = graph.query(query).execute().await
-            .context("find entity clusters failed")?;
-        let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        drop(graph);
-
-        // Build adjacency list
-        let mut adj: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
-        for row in rows {
-            if row.len() < 2 { continue; }
-            let a = extract_string(&row[0]);
-            let b = extract_string(&row[1]);
-            if a.is_empty() || b.is_empty() { continue; }
-            adj.entry(a.clone()).or_default().insert(b.clone());
-            adj.entry(b).or_default().insert(a);
-        }
-
-        // BFS to find connected components
-        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut clusters = Vec::new();
-
-        for start in adj.keys() {
-            if visited.contains(start) { continue; }
-            let mut component = Vec::new();
-            let mut queue = std::collections::VecDeque::new();
-            queue.push_back(start.clone());
-            visited.insert(start.clone());
-
-            while let Some(node) = queue.pop_front() {
-                component.push(node.clone());
-                if let Some(neighbors) = adj.get(&node) {
-                    for neighbor in neighbors {
-                        if visited.insert(neighbor.clone()) {
-                            queue.push_back(neighbor.clone());
-                        }
-                    }
-                }
-            }
-
-            if component.len() >= min_size {
-                component.sort();
-                clusters.push(component);
-            }
-        }
-
-        clusters.sort_by(|a, b| b.len().cmp(&a.len()));
-        Ok(clusters)
-    }
-
-    pub async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> {
+    }    pub async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> {
         let entity_id = sanitise(entity_id);
         let query = format!(
             "MATCH (e:Entity {{id: '{entity_id}'}}) RETURN e"
@@ -1458,36 +1228,27 @@ impl GraphBackend for GraphClient {
             None => GraphClient::walk_n_hops(self, seed_entity_ids, max_hops, limit_per_hop).await,
         }
     }
-    async fn entity_timeline(&self, entity_name: &str) -> Result<Vec<EdgeRow>> { self.entity_timeline(entity_name).await }
     async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> { self.find_all_active_edges_from(node_id).await }
     async fn upsert_entity(&self, entity: &crate::models::Entity) -> Result<()> { self.upsert_entity(entity).await }
     async fn create_edge(&self, from_id: &str, to_id: &str, rel: &crate::models::Relation) -> Result<i64> { self.create_edge(from_id, to_id, rel).await }
     async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> { self.invalidate_edge(edge_id, at).await }
-    async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> { self.increment_salience(edge_ids).await }
     async fn delete_entity(&self, entity_id: &str) -> Result<usize> { self.delete_entity(entity_id).await }
     async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()> { self.merge_placeholder(placeholder_id, resolved_id).await }
     async fn promote_working_memory(&self) -> Result<usize> { self.promote_working_memory().await }
     async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> { self.expire_ttl_edges(now).await }
     async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> { self.memory_tier_stats().await }
     async fn decay_stale_edges(&self, stale_before: DateTime<Utc>, now: DateTime<Utc>) -> Result<usize> { self.decay_stale_edges(stale_before, now).await }
-    async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>> { self.entity_facts(entity_name).await }
     async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> { self.get_entity_facts(entity_id).await }
     async fn graph_stats(&self) -> Result<crate::models::GraphStats> { self.graph_stats().await }
-    async fn all_relation_types(&self) -> Result<Vec<String>> { self.all_relation_types().await }
-    async fn under_documented_entities(&self, threshold: usize) -> Result<Vec<crate::models::UnderDocumentedEntity>> { self.under_documented_entities(threshold).await }
-    async fn entity_type_counts(&self) -> Result<HashMap<String, usize>> { self.entity_type_counts().await }
     async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> { self.dump_all_entities().await }
     async fn dump_all_edges(&self) -> Result<Vec<EdgeRow>> { self.dump_all_edges().await }
     async fn list_entities_by_recency(&self, offset: usize, limit: usize) -> Result<Vec<EntityRow>> { self.list_entities_by_recency(offset, limit).await }
     async fn get_provenance(&self, edge_id: i64) -> Result<crate::models::ProvenanceResponse> { self.get_provenance(edge_id).await }
     async fn find_close_unlinked(&self, node_id: &str, embedding: &[f32], threshold: f32) -> Result<Vec<(EntityRow, f32)>> { self.find_close_unlinked(node_id, embedding, threshold).await }
     async fn find_placeholder_nodes(&self, cutoff: DateTime<Utc>) -> Result<Vec<EntityRow>> { self.find_placeholder_nodes(cutoff).await }
-    async fn find_two_hop_unlinked_pairs(&self, limit: usize) -> Result<Vec<(EntityRow, EntityRow)>> { self.find_two_hop_unlinked_pairs(limit).await }
-    async fn archive_low_confidence_edges(&self, threshold: f32, dry_run: bool) -> Result<Vec<EdgeRow>> { self.archive_low_confidence_edges(threshold, dry_run).await }
     async fn rename_entity(&self, entity_id: &str, new_name: &str) -> Result<()> { self.rename_entity(entity_id, new_name).await }
     async fn set_entity_property(&self, entity_id: &str, key: &str, value: &str) -> Result<()> { self.set_entity_property(entity_id, key, value).await }
     async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> { self.find_entity_by_property(key, value).await }
-    async fn find_entity_clusters(&self, min_size: usize) -> Result<Vec<Vec<String>>> { self.find_entity_clusters(min_size).await }
 }
 
 fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
