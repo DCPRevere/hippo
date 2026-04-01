@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Hippo.Sdk/Hippo.Sdk.csproj" />
+  <Project Path="tests/Hippo.Sdk.Tests/Hippo.Sdk.Tests.csproj" />
+</Solution>
