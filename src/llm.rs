@@ -73,6 +73,7 @@ pub struct LlmClient {
     openai_model: String,
     openai_embedding_model: Option<String>,
     pub max_tokens: u32,
+    extraction_prompt: String,
 }
 
 #[derive(Serialize)]
@@ -112,6 +113,16 @@ struct AnthropicToolChoice {
 #[derive(Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
+    #[serde(default)]
+    usage: Option<AnthropicUsage>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+struct AnthropicUsage {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default)]
+    output_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -181,6 +192,7 @@ impl LlmClient {
         fixture_path: PathBuf,
         mock_mode: bool,
         max_tokens: u32,
+        extraction_prompt: String,
     ) -> Self {
         let fixture_store = Arc::new(RwLock::new(FixtureStore::load(&fixture_path)));
         Self {
@@ -191,6 +203,7 @@ impl LlmClient {
             openai_model: "gpt-4o-mini".to_string(),
             openai_embedding_model: None,
             max_tokens,
+            extraction_prompt,
         }
     }
 
@@ -259,7 +272,7 @@ Example: "Bob is father of Charlie"
 
 For symmetric relations like MARRIED_TO or SIBLING_OF, only produce one fact (do NOT add an inverse).
 
-Include the principal/narrator as "Principal" in entities when they are implied.
+Include the narrator/speaker as "Me" in entities when first-person language is used.
 For unknown entities (e.g. "John's spouse"), set resolved=false and provide a hint.
 When a surname can be inferred from context (e.g. children of a named parent, maiden names), use the full name for the entity.
 Attributes (surname, date_of_birth, nationality, etc.) ALWAYS go in entity_attributes, NEVER as facts in implied_facts or explicit_facts.
@@ -355,7 +368,7 @@ For asymmetric relations: put the explicit fact in explicit_facts and its invers
 
 For symmetric relations like MARRIED_TO or SIBLING_OF, only produce one fact (do NOT add an inverse).
 
-Include the principal/narrator as "Principal" in entities when they are implied.
+Include the narrator/speaker as "Me" in entities when first-person language is used.
 For unknown entities (e.g. "John's spouse"), set resolved=false and provide a hint.
 When a surname can be inferred from context (e.g. children of a named parent, maiden names), use the full name for the entity.
 Attributes (surname, date_of_birth, nationality, etc.) ALWAYS go in entity_attributes, NEVER as facts in implied_facts or explicit_facts.
@@ -791,17 +804,21 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
         &self,
         question: &str,
         facts: &[crate::models::ContextFact],
+        user_display_name: Option<&str>,
     ) -> Result<String> {
         if self.mock_mode {
             let fact_lines: Vec<&str> = facts.iter().map(|f| f.fact.as_str()).collect();
             return Ok(format!("Based on what I know: {}", fact_lines.join(". ")));
         }
 
-        let system = "You are a helpful assistant answering questions from a knowledge graph. \
+        let user_ref = user_display_name.unwrap_or("Principal");
+        let system = format!(
+            "You are a helpful assistant answering questions from a knowledge graph. \
             Use only the provided facts to answer. If the facts don't contain enough information, \
             say so honestly. Be concise and direct. \
-            In the knowledge graph, 'Principal' refers to the user — the person asking the question. \
-            When answering, use 'you' instead of 'Principal' (e.g. 'Your sister is Alice' not 'Principal\\'s sister is Alice').";
+            In the knowledge graph, '{user_ref}' refers to the user — the person asking the question. \
+            When answering, use 'you' instead of '{user_ref}' (e.g. 'Your sister is Alice' not '{user_ref}\\'s sister is Alice')."
+        );
 
         let facts_block = if facts.is_empty() {
             "No relevant facts found.".to_string()
@@ -816,7 +833,7 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
             "Question: {question}\n\nKnown facts:\n{facts_block}\n\nAnswer the question based on these facts."
         );
 
-        self.call(system, &user, 1024).await
+        self.call(&system, &user, 1024).await
     }
 
     pub async fn extract_operations(
@@ -866,10 +883,16 @@ Rules:
 - Generate only ONE direction for symmetric relations: MARRIED_TO, SIBLING_OF, KNOWS.
 - Properties (surname, date_of_birth, nationality) go in create_node properties or update_node set, NOT as edges.
 - When you learn an entity's full name (e.g. "James" becomes "James Taylor"), use update_node with "name" in the set field to rename it. Do NOT create SURNAME edges — update the name directly.
-- The node with "is_principal": true is the person saying "I"/"me"/"my". Use its id for first-person references. If no principal exists, create one named "Principal" with the property "is_principal": "true".
+- The node with a "user_id" property is the person saying "I"/"me"/"my". Use its id for first-person references. If no such node exists in the subgraph, create one with the user's actual name (or "Me" if unknown) and set the property "user_id" to the value from the subgraph context.
 - Confidence: 0.9+ for explicitly stated facts, 0.7-0.9 for inferred facts.
 - Resolve pronouns ("they", "he", "she") to the correct entities from context.
 - "Widower" means spouse has died — model as MARRIED_TO edge (DECEASED on the spouse captures the temporal aspect)."#;
+
+        let system = if self.extraction_prompt.is_empty() {
+            system.to_string()
+        } else {
+            format!("{system}\n\nAdditional domain context:\n{}", self.extraction_prompt)
+        };
 
         let user = format!(
             "Subgraph:\n{subgraph_json}\n\nNew statement: \"{statement}\""
@@ -912,7 +935,7 @@ Rules:
             // Use tool use for guaranteed structured output
             tracing::debug!(system = %system, user = %user, "LLM tool request (extract_operations)");
             let result: crate::models::OperationsResult = self.call_anthropic_tool(
-                system, &user,
+                &system, &user,
                 "plan_graph_operations",
                 "Plan the graph mutations needed to incorporate the new statement into the knowledge graph.",
                 schema,
@@ -922,7 +945,7 @@ Rules:
         }
 
         // Fallback for OpenAI or OAuth: use regular call + parse
-        let text = self.call(system, &user, self.max_tokens).await?;
+        let text = self.call(&system, &user, self.max_tokens).await?;
         let text = clean_json(&text);
         serde_json::from_str(text)
             .with_context(|| format!("failed to parse operations result — LLM returned: {text}"))
@@ -1515,8 +1538,9 @@ impl LlmService for LlmClient {
         &self,
         question: &str,
         facts: &[crate::models::ContextFact],
+        user_display_name: Option<&str>,
     ) -> Result<String> {
-        LlmClient::synthesise_answer(self, question, facts).await
+        LlmClient::synthesise_answer(self, question, facts, user_display_name).await
     }
 
     async fn extract_entities_and_facts(

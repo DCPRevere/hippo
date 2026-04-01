@@ -252,6 +252,7 @@ impl LlmService for FakeLlm {
         &self,
         _question: &str,
         facts: &[ContextFact],
+        _user_display_name: Option<&str>,
     ) -> Result<String> {
         Ok(self
             .answers

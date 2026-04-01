@@ -40,11 +40,13 @@ pub async fn ask(
     state: &AppState,
     graph: &dyn GraphBackend,
     req: AskRequest,
+    user_id: Option<&str>,
+    user_display_name: Option<&str>,
 ) -> Result<AskResponse> {
-    let ctx = super::remember::gather_pre_extraction_context(state, graph, &req.question).await?;
+    let ctx = super::remember::gather_pre_extraction_context(state, graph, &req.question, user_id).await?;
     let facts = graph_context_to_facts(&ctx);
 
-    let answer = state.llm.synthesise_answer(&req.question, &facts).await?;
+    let answer = state.llm.synthesise_answer(&req.question, &facts, user_display_name).await?;
 
     Ok(AskResponse {
         answer,

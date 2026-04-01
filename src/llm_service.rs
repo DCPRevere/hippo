@@ -60,6 +60,7 @@ pub trait LlmService: Send + Sync {
         &self,
         question: &str,
         facts: &[ContextFact],
+        user_display_name: Option<&str>,
     ) -> Result<String>;
 
     async fn extract_entities_and_facts(
