@@ -1,1 +1,0 @@
-Pin<Box<dyn Future<Output = Result<std::option::Option<(std::string::String, std::string::String, f32)>, anyhow::Error>> + Send>>

@@ -3,7 +3,7 @@
 .claude
 .pytest_cache/
 .venv/
-/target
+target/
 __pycache__/
 dist/
 node_modules/
