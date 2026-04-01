@@ -992,6 +992,7 @@ footer {
   .sdk-grid { flex-direction: column; align-items: stretch; }
   .insight-grid { grid-template-columns: 1fr; gap: 2rem; }
   .api-grid { grid-template-columns: 1fr; }
+  .pricing-grid { grid-template-columns: repeat(2, 1fr); }
   .arch-grid { grid-template-columns: 1fr; gap: 2rem; }
   .pipeline-flow { flex-direction: column; }
   .pipeline-step:first-child { border-radius: 16px 16px 0 0; }
@@ -1007,6 +1008,7 @@ footer {
 }
 
 @media (max-width: 640px) {
+  .pricing-grid { grid-template-columns: 1fr; }
   .features-grid { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .hero { padding: 6rem 1.5rem 3rem; }
@@ -1015,6 +1017,150 @@ footer {
   .arch-stats { grid-template-columns: 1fr; }
   .hero-actions { flex-direction: column; align-items: center; }
   .pg-examples { flex-direction: column; }
+}
+
+/* ─── PRICING ─── */
+.pricing-section {
+  background: linear-gradient(180deg, transparent 0%, rgba(139, 92, 246, 0.02) 50%, transparent 100%);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  margin-top: 3rem;
+}
+
+.pricing-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2rem 1.5rem;
+  position: relative;
+  transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  display: flex;
+  flex-direction: column;
+}
+
+.pricing-card:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(139, 92, 246, 0.3);
+  transform: translateY(-4px);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.3), 0 0 32px var(--violet-glow);
+}
+
+.pricing-card.popular {
+  border-color: var(--violet-500);
+  box-shadow: 0 0 32px var(--violet-glow);
+}
+
+.pricing-badge {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--violet-600);
+  color: white;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.25rem 0.85rem;
+  border-radius: 999px;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.pricing-tier {
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.pricing-price {
+  font-family: var(--font-mono);
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--violet-400);
+  line-height: 1.1;
+}
+
+.pricing-price span {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.pricing-annual {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.pricing-features {
+  list-style: none;
+  margin-bottom: 2rem;
+  flex: 1;
+}
+
+.pricing-features li {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.pricing-features li:last-child {
+  border-bottom: none;
+}
+
+.pricing-cta {
+  display: block;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  background: transparent;
+}
+
+.pricing-cta:hover {
+  color: var(--text-primary);
+  border-color: var(--violet-500);
+  background: rgba(139, 92, 246, 0.05);
+}
+
+.pricing-card.popular .pricing-cta {
+  background: var(--violet-600);
+  color: white;
+  border-color: var(--violet-600);
+  box-shadow: 0 0 24px var(--violet-glow);
+}
+
+.pricing-card.popular .pricing-cta:hover {
+  background: var(--violet-500);
+  box-shadow: 0 0 32px var(--violet-glow-strong);
+}
+
+.pricing-byok {
+  text-align: center;
+  margin-top: 2.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.pricing-byok strong {
+  color: var(--violet-400);
+  font-weight: 600;
 }
 
 /* ─── PLAYGROUND ─── */
@@ -1579,6 +1725,73 @@ footer {
   </div>
 </section>
 
+<!-- PRICING -->
+<section class="pricing-section" id="pricing">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="reveal">Simple, transparent <span style="color: var(--violet-400)">pricing</span></h2>
+      <p class="reveal reveal-delay-1">Scale as your agents grow.</p>
+    </div>
+
+    <div class="pricing-grid">
+      <div class="pricing-card reveal reveal-delay-1">
+        <div class="pricing-tier">Pico</div>
+        <div class="pricing-price">$9<span>/mo</span></div>
+        <div class="pricing-annual">$90/yr — save 2 months</div>
+        <ul class="pricing-features">
+          <li>500 /remember calls/mo</li>
+          <li>5k /context calls/mo</li>
+          <li>10k facts</li>
+          <li>nano/haiku models</li>
+        </ul>
+        <a href="https://gethippo.dev" class="pricing-cta">Get started</a>
+      </div>
+
+      <div class="pricing-card popular reveal reveal-delay-2">
+        <span class="pricing-badge">Most popular</span>
+        <div class="pricing-tier">Nano</div>
+        <div class="pricing-price">$29<span>/mo</span></div>
+        <div class="pricing-annual">$290/yr — save 2 months</div>
+        <ul class="pricing-features">
+          <li>5k /remember calls/mo</li>
+          <li>50k /context calls/mo</li>
+          <li>100k facts</li>
+          <li>mini/sonnet models</li>
+        </ul>
+        <a href="https://gethippo.dev" class="pricing-cta">Get started</a>
+      </div>
+
+      <div class="pricing-card reveal reveal-delay-3">
+        <div class="pricing-tier">Micro</div>
+        <div class="pricing-price">$89<span>/mo</span></div>
+        <div class="pricing-annual">$890/yr — save 2 months</div>
+        <ul class="pricing-features">
+          <li>25k /remember calls/mo</li>
+          <li>250k /context calls/mo</li>
+          <li>500k facts</li>
+          <li>mini/sonnet models</li>
+        </ul>
+        <a href="https://gethippo.dev" class="pricing-cta">Get started</a>
+      </div>
+
+      <div class="pricing-card reveal reveal-delay-4">
+        <div class="pricing-tier">Milli</div>
+        <div class="pricing-price">$179<span>/mo</span></div>
+        <div class="pricing-annual">$1,790/yr — save 2 months</div>
+        <ul class="pricing-features">
+          <li>100k /remember calls/mo</li>
+          <li>1M /context calls/mo</li>
+          <li>Unlimited facts</li>
+          <li>All models</li>
+        </ul>
+        <a href="https://gethippo.dev" class="pricing-cta">Get started</a>
+      </div>
+    </div>
+
+    <p class="pricing-byok reveal reveal-delay-5">Have your own API key? <strong>Save 1/3</strong> — available on all plans.</p>
+  </div>
+</section>
+
 <!-- PLAYGROUND -->
 <section class="playground-section" id="playground">
   <div class="container">
@@ -1633,8 +1846,8 @@ footer {
     <h2 class="reveal">Give your agents <span style="color: var(--violet-400)">memory</span></h2>
     <p class="reveal reveal-delay-1">Open source. Self-hosted. Ready to run with Docker Compose.</p>
     <div class="hero-actions reveal reveal-delay-2">
-      <a href="https://github.com/dcprevere/hippo" class="btn btn-primary">
-        Get Started
+      <a href="https://gethippo.dev" class="btn btn-primary">
+        Start building &rarr;
       </a>
       <a href="#api" class="btn btn-secondary">Read the Docs</a>
     </div>
