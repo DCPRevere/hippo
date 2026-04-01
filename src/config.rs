@@ -45,6 +45,8 @@ pub struct Config {
     pub insecure: bool,
     /// Global default TTL in seconds. None means edges never expire.
     pub default_ttl_secs: Option<u64>,
+    /// Default scoring weights for context retrieval.
+    pub scoring: crate::models::ScoringParams,
     /// Additional domain-specific context appended to the LLM extraction prompt.
     pub extraction_prompt: String,
     /// Path to the SQLite database file (used when graph_backend == Sqlite).
@@ -76,9 +78,9 @@ impl Config {
         }
 
         let graph_backend = match std::env::var("GRAPH_BACKEND").as_deref() {
-            Ok("memory") => GraphBackendType::Memory,
+            Ok("falkordb") => GraphBackendType::FalkorDB,
             Ok("sqlite") => GraphBackendType::Sqlite,
-            _ => GraphBackendType::FalkorDB,
+            _ => GraphBackendType::Memory,
         };
 
         Ok(Config {
@@ -136,6 +138,25 @@ impl Config {
                 .unwrap_or_default(),
             sqlite_path: std::env::var("SQLITE_PATH")
                 .unwrap_or_else(|_| "hippo.db".to_string()),
+            scoring: {
+                let mut s = crate::models::ScoringParams::default();
+                if let Ok(v) = std::env::var("SCORING_W_RELEVANCE") {
+                    s.w_relevance = v.parse().context("invalid SCORING_W_RELEVANCE")?;
+                }
+                if let Ok(v) = std::env::var("SCORING_W_CONFIDENCE") {
+                    s.w_confidence = v.parse().context("invalid SCORING_W_CONFIDENCE")?;
+                }
+                if let Ok(v) = std::env::var("SCORING_W_RECENCY") {
+                    s.w_recency = v.parse().context("invalid SCORING_W_RECENCY")?;
+                }
+                if let Ok(v) = std::env::var("SCORING_W_SALIENCE") {
+                    s.w_salience = v.parse().context("invalid SCORING_W_SALIENCE")?;
+                }
+                if let Ok(v) = std::env::var("SCORING_MMR_LAMBDA") {
+                    s.mmr_lambda = v.parse().context("invalid SCORING_MMR_LAMBDA")?;
+                }
+                s
+            },
         })
     }
 
@@ -173,6 +194,7 @@ impl Config {
             default_ttl_secs: None,
             extraction_prompt: String::new(),
             sqlite_path: String::new(),
+            scoring: crate::models::ScoringParams::default(),
         }
     }
 }

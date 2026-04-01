@@ -19,6 +19,7 @@ pub async fn context(
 
     let limit = req.limit.unwrap_or(state.config.default_context_limit);
     let max_hops = req.max_hops.unwrap_or(2).min(3);
+    let scoring = req.scoring.as_ref().unwrap_or(&state.config.scoring);
 
     tracing::info!(query = %req.query, limit, max_hops, "context: query");
 
@@ -135,7 +136,10 @@ pub async fn context(
             let salience_norm = ((edge.salience as f32).ln_1p() / 5.0).min(1.0);
             let relevance = relevance_scores.get(&edge.edge_id).copied().unwrap_or(0.5);
             let confidence_factor = edge.decayed_confidence;
-            let score = relevance * 0.5 + confidence_factor * 0.1 + recency * 0.25 + salience_norm * 0.15;
+            let score = relevance * scoring.w_relevance
+                + confidence_factor * scoring.w_confidence
+                + recency * scoring.w_recency
+                + salience_norm * scoring.w_salience;
             (score, edge)
         })
         .collect();
@@ -153,7 +157,7 @@ pub async fn context(
     // Step 6b: MMR reranking for diversity
     // Build (score, index) pairs for mmr_select, using embeddings for similarity
     let items: Vec<(f32, usize)> = scored.iter().enumerate().map(|(i, (s, _))| (*s, i)).collect();
-    let selected = mmr_select(&items, limit, 0.7, |a, b| {
+    let selected = mmr_select(&items, limit, scoring.mmr_lambda, |a, b| {
         cosine_similarity(&scored[a].1.embedding, &scored[b].1.embedding)
     });
     scored = selected.into_iter().map(|i| scored[i].clone()).collect();

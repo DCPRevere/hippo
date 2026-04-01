@@ -181,6 +181,7 @@ pub async fn smart_query(state: &AppState, graph: &dyn GraphBackend, req: SmartQ
                 memory_tier_filter: None,
                 graph: req.graph,
                 at: None,
+                scoring: None,
             };
             let resp = context::context(state, graph, ctx_req, None).await?;
             Ok(SmartQueryResponse {

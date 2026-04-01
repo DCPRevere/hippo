@@ -4,6 +4,33 @@ use std::collections::HashMap;
 
 pub const EMBEDDING_DIM: usize = 768;
 
+/// Weights for the context retrieval scoring formula and MMR diversity.
+///
+/// The final score for each fact is:
+///   relevance × w_relevance + confidence × w_confidence + recency × w_recency + salience × w_salience
+///
+/// After scoring, MMR reranking uses `mmr_lambda` to balance relevance vs diversity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoringParams {
+    pub w_relevance: f32,
+    pub w_confidence: f32,
+    pub w_recency: f32,
+    pub w_salience: f32,
+    pub mmr_lambda: f32,
+}
+
+impl Default for ScoringParams {
+    fn default() -> Self {
+        Self {
+            w_relevance: 0.50,
+            w_confidence: 0.10,
+            w_recency: 0.25,
+            w_salience: 0.15,
+            mmr_lambda: 0.70,
+        }
+    }
+}
+
 /// Tracks token and call counts for LLM/embedding operations within a pipeline run.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LlmUsage {
@@ -233,6 +260,9 @@ pub struct ContextRequest {
     pub graph: Option<String>,
     #[serde(default)]
     pub at: Option<DateTime<Utc>>,
+    /// Override scoring weights and MMR lambda for this request.
+    #[serde(default)]
+    pub scoring: Option<ScoringParams>,
 }
 
 #[derive(Debug, Deserialize)]
