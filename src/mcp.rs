@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub fn tool_definitions() -> Vec<Value> {
     vec![
@@ -172,21 +172,78 @@ pub fn make_error(id: Value, code: i64, message: &str) -> Value {
     })
 }
 
+// -- Helpers ------------------------------------------------------------------
+
+/// Extract a required string argument, returning Err if missing.
+fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing required argument '{key}'"))
+}
+
+/// Build a JSON object from only the present (non-null) arguments.
+fn build_body(pairs: &[(&str, Option<&Value>)]) -> Value {
+    let mut map = Map::new();
+    for &(key, val) in pairs {
+        if let Some(v) = val {
+            if !v.is_null() {
+                map.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+    Value::Object(map)
+}
+
+/// Send a POST request and return the response body, checking for HTTP errors.
+fn post(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    body: &Value,
+) -> Result<String, String> {
+    let resp = client
+        .post(url)
+        .json(body)
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    let status = resp.status();
+    let text = resp.text().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("HTTP {status}: {text}"));
+    }
+    Ok(text)
+}
+
+/// Percent-encode a string for use as a URL path segment.
+fn encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            // Unreserved characters (RFC 3986 §2.3)
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    out
+}
+
+// -- Tool call handlers -------------------------------------------------------
+
 fn call_remember(
     client: &reqwest::blocking::Client,
     base_url: &str,
     args: &Value,
 ) -> Result<String, String> {
-    let body = serde_json::json!({
-        "statement": args["statement"],
-        "source_agent": args.get("source_agent")
-    });
-    let resp = client
-        .post(format!("{base_url}/remember"))
-        .json(&body)
-        .send()
-        .map_err(|e| e.to_string())?;
-    resp.text().map_err(|e| e.to_string())
+    require_str(args, "statement")?;
+    let body = build_body(&[
+        ("statement", args.get("statement")),
+        ("source_agent", args.get("source_agent")),
+    ]);
+    post(client, &format!("{base_url}/remember"), &body)
 }
 
 fn call_recall(
@@ -194,17 +251,13 @@ fn call_recall(
     base_url: &str,
     args: &Value,
 ) -> Result<String, String> {
-    let body = serde_json::json!({
-        "query": args["query"],
-        "limit": args.get("limit"),
-        "max_hops": args.get("max_hops")
-    });
-    let resp = client
-        .post(format!("{base_url}/context"))
-        .json(&body)
-        .send()
-        .map_err(|e| e.to_string())?;
-    resp.text().map_err(|e| e.to_string())
+    require_str(args, "query")?;
+    let body = build_body(&[
+        ("query", args.get("query")),
+        ("limit", args.get("limit")),
+        ("max_hops", args.get("max_hops")),
+    ]);
+    post(client, &format!("{base_url}/context"), &body)
 }
 
 fn call_reflect(
@@ -212,15 +265,10 @@ fn call_reflect(
     base_url: &str,
     args: &Value,
 ) -> Result<String, String> {
-    let body = serde_json::json!({
-        "about": args.get("about")
-    });
-    let resp = client
-        .post(format!("{base_url}/reflect"))
-        .json(&body)
-        .send()
-        .map_err(|e| e.to_string())?;
-    resp.text().map_err(|e| e.to_string())
+    let body = build_body(&[
+        ("about", args.get("about")),
+    ]);
+    post(client, &format!("{base_url}/reflect"), &body)
 }
 
 fn call_timeline(
@@ -228,15 +276,20 @@ fn call_timeline(
     base_url: &str,
     args: &Value,
 ) -> Result<String, String> {
-    let entity = args["entity"]
-        .as_str()
-        .ok_or_else(|| "missing 'entity' argument".to_string())?;
-    let encoded = entity.replace('%', "%25").replace('/', "%2F").replace(' ', "%20");
+    let entity = require_str(args, "entity")?;
+    let encoded = encode_path_segment(entity);
+
     let resp = client
         .get(format!("{base_url}/timeline/{encoded}"))
         .send()
         .map_err(|e| e.to_string())?;
-    resp.text().map_err(|e| e.to_string())
+
+    let status = resp.status();
+    let text = resp.text().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("HTTP {status}: {text}"));
+    }
+    Ok(text)
 }
 
 fn call_recall_at(
@@ -244,15 +297,12 @@ fn call_recall_at(
     base_url: &str,
     args: &Value,
 ) -> Result<String, String> {
-    let body = serde_json::json!({
-        "query": args["query"],
-        "at": args["at"],
-        "limit": args.get("limit")
-    });
-    let resp = client
-        .post(format!("{base_url}/context/temporal"))
-        .json(&body)
-        .send()
-        .map_err(|e| e.to_string())?;
-    resp.text().map_err(|e| e.to_string())
+    require_str(args, "query")?;
+    require_str(args, "at")?;
+    let body = build_body(&[
+        ("query", args.get("query")),
+        ("at", args.get("at")),
+        ("limit", args.get("limit")),
+    ]);
+    post(client, &format!("{base_url}/context/temporal"), &body)
 }
