@@ -32,11 +32,14 @@ public class HippoClientTests
 
     private static (HippoClient client, MockHttpHandler handler) CreateClient(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback,
-        string? apiKey = "test-key")
+        string? apiKey = "test-key",
+        int maxRetries = 0,
+        IHippoLogger? logger = null)
     {
         var handler = new MockHttpHandler(callback);
         var http = new HttpClient(handler);
-        var client = new HippoClient("http://localhost:21693", apiKey, http);
+        var client = new HippoClient("http://localhost:21693", apiKey, http,
+            maxRetries: maxRetries, logger: logger);
         return (client, handler);
     }
 
@@ -416,5 +419,360 @@ public class HippoClientTests
         Assert.DoesNotContain("source_agent", body);
         Assert.DoesNotContain("graph", body);
         Assert.DoesNotContain("ttl_secs", body);
+    }
+
+    // ── Retry with exponential backoff ──
+
+    [Fact]
+    public async Task Retry_RetriesOn502ThenSucceeds()
+    {
+        int attempts = 0;
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            attempts++;
+            if (attempts == 1)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway)
+                {
+                    Content = new StringContent("bad gateway"),
+                });
+            return Task.FromResult(JsonResponse(new { status = "ok" }));
+        }, maxRetries: 3);
+
+        var result = await client.HealthAsync();
+        Assert.Equal("ok", result.Status);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task Retry_RespectsRetryAfterHeaderInSeconds()
+    {
+        int attempts = 0;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            attempts++;
+            if (attempts == 1)
+            {
+                var resp = new HttpResponseMessage((HttpStatusCode)429)
+                {
+                    Content = new StringContent("rate limited"),
+                };
+                resp.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+                return Task.FromResult(resp);
+            }
+            return Task.FromResult(JsonResponse(new { status = "ok" }));
+        }, maxRetries: 3);
+
+        await client.HealthAsync();
+        sw.Stop();
+
+        Assert.Equal(2, attempts);
+        // Should have waited at least ~1 second from Retry-After
+        Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(900),
+            $"Expected at least 900ms delay, got {sw.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public async Task Retry_MaxRetriesZeroDisablesRetry()
+    {
+        int attempts = 0;
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            attempts++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway)
+            {
+                Content = new StringContent("bad gateway"),
+            });
+        }, maxRetries: 0);
+
+        var ex = await Assert.ThrowsAsync<HippoException>(() => client.HealthAsync());
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task Retry_ExhaustsMaxRetriesAndThrows()
+    {
+        int attempts = 0;
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            attempts++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("unavailable"),
+            });
+        }, maxRetries: 2);
+
+        var ex = await Assert.ThrowsAsync<HippoException>(() => client.HealthAsync());
+        Assert.Equal(503, ex.StatusCode);
+        // 1 initial + 2 retries = 3 attempts
+        Assert.Equal(3, attempts);
+    }
+
+    [Fact]
+    public async Task Retry_429SetsRetryAfterOnException_WhenRetriesExhausted()
+    {
+        var (client, _) = CreateClient((_, _) =>
+        {
+            var resp = new HttpResponseMessage((HttpStatusCode)429)
+            {
+                Content = new StringContent("rate limited"),
+            };
+            resp.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(60));
+            return Task.FromResult(resp);
+        }, maxRetries: 0);
+
+        var ex = await Assert.ThrowsAsync<RateLimitException>(() => client.HealthAsync());
+        Assert.NotNull(ex.RetryAfter);
+        Assert.True(ex.RetryAfter!.Value.TotalSeconds >= 59);
+    }
+
+    [Fact]
+    public async Task Retry_NonRetryableStatusNotRetried()
+    {
+        int attempts = 0;
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            attempts++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("bad request"),
+            });
+        }, maxRetries: 3);
+
+        var ex = await Assert.ThrowsAsync<HippoException>(() => client.HealthAsync());
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Equal(1, attempts);
+    }
+
+    // ── SSE streaming ──
+
+    [Fact]
+    public async Task EventsAsync_ParsesSseStream()
+    {
+        var sseContent = "event: entity_created\ndata: {\"name\":\"Alice\"}\n\nevent: edge_created\ndata: {\"source\":\"Alice\",\"target\":\"Bob\"}\n\n";
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            var resp = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(sseContent, Encoding.UTF8, "text/event-stream"),
+            };
+            return Task.FromResult(resp);
+        });
+
+        var events = new List<GraphEvent>();
+        await foreach (var evt in client.EventsAsync())
+        {
+            events.Add(evt);
+        }
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal("entity_created", events[0].Event);
+        Assert.Contains("Alice", events[0].Data!);
+        Assert.Equal("edge_created", events[1].Event);
+        Assert.Contains("Bob", events[1].Data!);
+    }
+
+    [Fact]
+    public async Task EventsAsync_HandlesTrailingEventWithoutBlankLine()
+    {
+        var sseContent = "event: update\ndata: {\"id\":1}";
+
+        var (client, _) = CreateClient((_, _) =>
+        {
+            var resp = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(sseContent, Encoding.UTF8, "text/event-stream"),
+            };
+            return Task.FromResult(resp);
+        });
+
+        var events = new List<GraphEvent>();
+        await foreach (var evt in client.EventsAsync())
+        {
+            events.Add(evt);
+        }
+
+        Assert.Single(events);
+        Assert.Equal("update", events[0].Event);
+    }
+
+    [Fact]
+    public async Task EventsAsync_PassesGraphQueryParam()
+    {
+        string? capturedUri = null;
+
+        var (client, _) = CreateClient((req, _) =>
+        {
+            capturedUri = req.RequestUri?.ToString();
+            var resp = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("", Encoding.UTF8, "text/event-stream"),
+            };
+            return Task.FromResult(resp);
+        });
+
+        await foreach (var _ in client.EventsAsync(graph: "myGraph")) { }
+
+        Assert.Contains("events?graph=myGraph", capturedUri!);
+    }
+
+    // ── Response extension methods ──
+
+    [Fact]
+    public void FindNode_ReturnsMatchingNode()
+    {
+        var response = new ContextResponse
+        {
+            Nodes = [
+                new ContextNode { Name = "Alice", EntityType = "person" },
+                new ContextNode { Name = "Bob", EntityType = "person" },
+            ],
+        };
+
+        var node = response.FindNode("alice"); // case-insensitive
+        Assert.NotNull(node);
+        Assert.Equal("Alice", node!.Name);
+    }
+
+    [Fact]
+    public void FindNode_ReturnsNullWhenNotFound()
+    {
+        var response = new ContextResponse
+        {
+            Nodes = [new ContextNode { Name = "Alice" }],
+        };
+
+        Assert.Null(response.FindNode("Charlie"));
+    }
+
+    [Fact]
+    public void FactsAbout_FiltersEdgesInvolvingEntity()
+    {
+        var response = new ContextResponse
+        {
+            Edges = [
+                new ContextEdge { Source = "Alice", Target = "Bob", Relation = "likes" },
+                new ContextEdge { Source = "Charlie", Target = "Diana", Relation = "knows" },
+                new ContextEdge { Source = "Bob", Target = "Alice", Relation = "trusts" },
+            ],
+        };
+
+        var facts = response.FactsAbout("Alice").ToList();
+        Assert.Equal(2, facts.Count);
+        Assert.All(facts, f =>
+            Assert.True(f.Source == "Alice" || f.Target == "Alice"));
+    }
+
+    [Fact]
+    public void IsDuplicate_TrueWhenFactsWrittenIsZero()
+    {
+        var response = new RememberResponse { FactsWritten = 0 };
+        Assert.True(response.IsDuplicate());
+    }
+
+    [Fact]
+    public void IsDuplicate_FalseWhenFactsWritten()
+    {
+        var response = new RememberResponse { FactsWritten = 1 };
+        Assert.False(response.IsDuplicate());
+    }
+
+    [Fact]
+    public void Failures_ReturnsEmptyWhenAllSucceeded()
+    {
+        var response = new RememberBatchResponse
+        {
+            Total = 2,
+            Succeeded = 2,
+            Failed = 0,
+            Results = [
+                new RememberResponse { EntitiesCreated = 1, FactsWritten = 1 },
+                new RememberResponse { EntitiesCreated = 1, FactsWritten = 1 },
+            ],
+        };
+
+        Assert.Empty(response.Failures());
+    }
+
+    [Fact]
+    public void Failures_ReturnsFailedResults()
+    {
+        var response = new RememberBatchResponse
+        {
+            Total = 2,
+            Succeeded = 1,
+            Failed = 1,
+            Results = [
+                new RememberResponse { EntitiesCreated = 1, FactsWritten = 1 },
+                new RememberResponse { EntitiesCreated = 0, EntitiesResolved = 0, FactsWritten = 0 },
+            ],
+        };
+
+        var failures = response.Failures().ToList();
+        Assert.Single(failures);
+        Assert.Equal(0, failures[0].FactsWritten);
+    }
+
+    // ── Logger ──
+
+    [Fact]
+    public async Task Logger_ReceivesDebugAndWarnMessages()
+    {
+        var debugMessages = new List<string>();
+        var warnMessages = new List<string>();
+        var logger = new TestLogger(debugMessages, warnMessages);
+
+        int attempts = 0;
+        var (client, _) = CreateClient((_, _) =>
+        {
+            attempts++;
+            if (attempts == 1)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway)
+                {
+                    Content = new StringContent("bad gateway"),
+                });
+            return Task.FromResult(JsonResponse(new { status = "ok" }));
+        }, maxRetries: 3, logger: logger);
+
+        await client.HealthAsync();
+
+        // Should have debug messages for requests and responses
+        Assert.True(debugMessages.Count >= 2, $"Expected at least 2 debug messages, got {debugMessages.Count}");
+        // Should have a warn message for the retry
+        Assert.Single(warnMessages);
+        Assert.Contains("Retry", warnMessages[0]);
+    }
+
+    [Fact]
+    public async Task Logger_NullLoggerDoesNotThrow()
+    {
+        var (client, _) = CreateClient((_, _) =>
+            Task.FromResult(JsonResponse(new { status = "ok" })),
+            logger: null);
+
+        var result = await client.HealthAsync();
+        Assert.Equal("ok", result.Status);
+    }
+
+    private sealed class TestLogger : IHippoLogger
+    {
+        private readonly List<string> _debug;
+        private readonly List<string> _warn;
+
+        public TestLogger(List<string> debug, List<string> warn)
+        {
+            _debug = debug;
+            _warn = warn;
+        }
+
+        public void Debug(string message) => _debug.Add(message);
+        public void Warn(string message) => _warn.Add(message);
     }
 }

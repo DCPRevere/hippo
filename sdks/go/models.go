@@ -1,5 +1,7 @@
 package hippo
 
+import "strings"
+
 // RememberRequest is the body for POST /remember.
 type RememberRequest struct {
 	Statement   string  `json:"statement"`
@@ -147,4 +149,51 @@ type ListKeysResponse struct {
 type HealthResponse struct {
 	Status string `json:"status"`
 	Graph  string `json:"graph"`
+}
+
+// GraphEvent represents a server-sent event from the /events endpoint.
+type GraphEvent struct {
+	Event string `json:"event"`
+	Data  string `json:"data"`
+}
+
+// FindNode returns the first node whose Label matches name (case-insensitive),
+// or nil if no match is found.
+func (r *ContextResponse) FindNode(name string) *Node {
+	lower := strings.ToLower(name)
+	for i := range r.Nodes {
+		if strings.ToLower(r.Nodes[i].Label) == lower {
+			return &r.Nodes[i]
+		}
+	}
+	return nil
+}
+
+// FactsAbout returns all edges where Source or Target matches entityName (case-insensitive).
+func (r *ContextResponse) FactsAbout(entityName string) []Edge {
+	lower := strings.ToLower(entityName)
+	var result []Edge
+	for _, e := range r.Edges {
+		if strings.ToLower(e.Source) == lower || strings.ToLower(e.Target) == lower {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// IsDuplicate reports whether the remember operation wrote zero facts,
+// indicating the statement was already known.
+func (r *RememberResponse) IsDuplicate() bool {
+	return r.FactsWritten == 0
+}
+
+// Failures returns the results that had zero facts written from a batch operation.
+func (r *BatchRememberResponse) Failures() []RememberResponse {
+	var out []RememberResponse
+	for _, res := range r.Results {
+		if res.FactsWritten == 0 {
+			out = append(out, res)
+		}
+	}
+	return out
 }

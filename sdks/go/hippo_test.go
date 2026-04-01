@@ -3,11 +3,14 @@ package hippo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // helper: start a test server that records requests and replies with a canned response.
@@ -42,9 +45,9 @@ func testServer(t *testing.T, statusCode int, response interface{}, rec *recorde
 
 func TestRemember(t *testing.T) {
 	want := RememberResponse{
-		EntitiesCreated:          2,
-		EntitiesResolved:         1,
-		FactsWritten:             3,
+		EntitiesCreated:           2,
+		EntitiesResolved:          1,
+		FactsWritten:              3,
 		ContradictionsInvalidated: 0,
 	}
 	var rec recorded
@@ -329,7 +332,7 @@ func TestErrorParsing(t *testing.T) {
 			srv := testServer(t, tt.status, tt.body, nil)
 			defer srv.Close()
 
-			c := NewClient(srv.URL, WithAPIKey("k"))
+			c := NewClient(srv.URL, WithAPIKey("k"), WithMaxRetries(0))
 			_, err := c.Health(context.Background())
 			if err == nil {
 				t.Fatal("expected error, got nil")
@@ -450,5 +453,525 @@ func TestContextCancellation(t *testing.T) {
 	_, err := c.Health(ctx)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+}
+
+// --- Retry tests ---
+
+func TestRetryOn502ThenSuccess(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n <= 2 {
+			w.WriteHeader(502)
+			w.Write([]byte(`{"message":"bad gateway"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(3))
+	got, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != "ok" {
+		t.Errorf("status = %q, want ok", got.Status)
+	}
+	if n := atomic.LoadInt32(&calls); n != 3 {
+		t.Errorf("calls = %d, want 3", n)
+	}
+}
+
+func TestRetryAfterHeaderSeconds(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(429)
+			w.Write([]byte(`{"message":"rate limited"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	c := NewClient(srv.URL, WithMaxRetries(3))
+	_, err := c.Health(context.Background())
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should have waited at least ~1 second for the Retry-After.
+	if elapsed < 900*time.Millisecond {
+		t.Errorf("expected at least ~1s delay for Retry-After, got %v", elapsed)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("calls = %d, want 2", n)
+	}
+}
+
+func TestRetryAfterHeaderHTTPDate(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			// Add 2 seconds to avoid sub-second rounding issues with RFC1123 (second granularity).
+			retryAt := time.Now().Add(2 * time.Second).UTC().Format(time.RFC1123)
+			w.Header().Set("Retry-After", retryAt)
+			w.WriteHeader(503)
+			w.Write([]byte(`{"message":"unavailable"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	c := NewClient(srv.URL, WithMaxRetries(3))
+	_, err := c.Health(context.Background())
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// RFC1123 has second granularity, so with 2s offset we expect at least 1s of actual delay.
+	if elapsed < 1*time.Second {
+		t.Errorf("expected at least ~1s delay for Retry-After HTTP date, got %v", elapsed)
+	}
+}
+
+func TestMaxRetriesZeroDisablesRetry(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(502)
+		w.Write([]byte(`{"message":"bad gateway"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(0))
+	_, err := c.Health(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	he, ok := err.(*HippoError)
+	if !ok {
+		t.Fatalf("expected *HippoError, got %T", err)
+	}
+	if he.StatusCode != 502 {
+		t.Errorf("StatusCode = %d, want 502", he.StatusCode)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("calls = %d, want 1 (no retries)", n)
+	}
+}
+
+func TestRetryCancelledDuringWait(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(503)
+		w.Write([]byte(`{"message":"unavailable"}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	c := NewClient(srv.URL, WithMaxRetries(5), WithTimeout(10*time.Second))
+	_, err := c.Health(ctx)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+}
+
+// --- Timeout tests ---
+
+func TestWithTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithTimeout(200*time.Millisecond), WithMaxRetries(0))
+	_, err := c.Health(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+func TestWithTimeoutNotAppliedWhenDeadlineSet(t *testing.T) {
+	srv := testServer(t, 200, HealthResponse{Status: "ok"}, nil)
+	defer srv.Close()
+
+	// Set a very short client timeout, but use a context with a generous deadline.
+	c := NewClient(srv.URL, WithTimeout(1*time.Millisecond))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := c.Health(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != "ok" {
+		t.Errorf("status = %q, want ok", got.Status)
+	}
+}
+
+// --- Env var config tests ---
+
+func TestNewClientEnvURL(t *testing.T) {
+	t.Setenv("HIPPO_URL", "http://env-host:9999")
+	c := NewClient("")
+	if c.baseURL != "http://env-host:9999" {
+		t.Errorf("baseURL = %q, want http://env-host:9999", c.baseURL)
+	}
+}
+
+func TestNewClientDefaultURL(t *testing.T) {
+	t.Setenv("HIPPO_URL", "")
+	c := NewClient("")
+	if c.baseURL != defaultBaseURL {
+		t.Errorf("baseURL = %q, want %q", c.baseURL, defaultBaseURL)
+	}
+}
+
+func TestWithAPIKeyFromEnv(t *testing.T) {
+	t.Setenv("HIPPO_API_KEY", "env-secret")
+	c := NewClient("http://localhost", WithAPIKeyFromEnv())
+	if c.apiKey != "env-secret" {
+		t.Errorf("apiKey = %q, want env-secret", c.apiKey)
+	}
+}
+
+func TestWithAPIKeyFromEnvEmpty(t *testing.T) {
+	t.Setenv("HIPPO_API_KEY", "")
+	c := NewClient("http://localhost", WithAPIKeyFromEnv())
+	if c.apiKey != "" {
+		t.Errorf("apiKey = %q, want empty", c.apiKey)
+	}
+}
+
+func TestExplicitAPIKeyOverridesEnv(t *testing.T) {
+	t.Setenv("HIPPO_API_KEY", "env-secret")
+	c := NewClient("http://localhost", WithAPIKeyFromEnv(), WithAPIKey("explicit"))
+	if c.apiKey != "explicit" {
+		t.Errorf("apiKey = %q, want explicit", c.apiKey)
+	}
+}
+
+// --- Response helper tests ---
+
+func TestFindNode(t *testing.T) {
+	resp := &ContextResponse{
+		Nodes: []Node{
+			{ID: "1", Label: "Alice"},
+			{ID: "2", Label: "Bob"},
+		},
+	}
+
+	if n := resp.FindNode("alice"); n == nil || n.ID != "1" {
+		t.Errorf("FindNode(alice) = %v, want node with ID 1", n)
+	}
+	if n := resp.FindNode("Bob"); n == nil || n.ID != "2" {
+		t.Errorf("FindNode(Bob) = %v, want node with ID 2", n)
+	}
+	if n := resp.FindNode("Charlie"); n != nil {
+		t.Errorf("FindNode(Charlie) = %v, want nil", n)
+	}
+}
+
+func TestFactsAbout(t *testing.T) {
+	resp := &ContextResponse{
+		Edges: []Edge{
+			{Source: "Alice", Target: "Bob", Label: "knows"},
+			{Source: "Bob", Target: "Charlie", Label: "likes"},
+			{Source: "Dave", Target: "Eve", Label: "married"},
+		},
+	}
+
+	facts := resp.FactsAbout("bob")
+	if len(facts) != 2 {
+		t.Errorf("FactsAbout(bob) returned %d edges, want 2", len(facts))
+	}
+
+	facts = resp.FactsAbout("Dave")
+	if len(facts) != 1 {
+		t.Errorf("FactsAbout(Dave) returned %d edges, want 1", len(facts))
+	}
+
+	facts = resp.FactsAbout("nobody")
+	if len(facts) != 0 {
+		t.Errorf("FactsAbout(nobody) returned %d edges, want 0", len(facts))
+	}
+}
+
+func TestIsDuplicate(t *testing.T) {
+	dup := &RememberResponse{FactsWritten: 0}
+	if !dup.IsDuplicate() {
+		t.Error("IsDuplicate() = false, want true when FactsWritten == 0")
+	}
+
+	notDup := &RememberResponse{FactsWritten: 2}
+	if notDup.IsDuplicate() {
+		t.Error("IsDuplicate() = true, want false when FactsWritten > 0")
+	}
+}
+
+func TestBatchFailures(t *testing.T) {
+	resp := &BatchRememberResponse{
+		Total:     3,
+		Succeeded: 2,
+		Failed:    1,
+		Results: []RememberResponse{
+			{FactsWritten: 2},
+			{FactsWritten: 0},
+			{FactsWritten: 1},
+		},
+	}
+
+	failures := resp.Failures()
+	if len(failures) != 1 {
+		t.Errorf("Failures() returned %d, want 1", len(failures))
+	}
+	if failures[0].FactsWritten != 0 {
+		t.Errorf("failure FactsWritten = %d, want 0", failures[0].FactsWritten)
+	}
+}
+
+func TestBatchNoFailures(t *testing.T) {
+	resp := &BatchRememberResponse{
+		Results: []RememberResponse{
+			{FactsWritten: 1},
+			{FactsWritten: 2},
+		},
+	}
+	if f := resp.Failures(); len(f) != 0 {
+		t.Errorf("Failures() returned %d, want 0", len(f))
+	}
+}
+
+// --- SSE Events tests ---
+
+func TestEventsStream(t *testing.T) {
+	sseBody := "event: fact_created\ndata: {\"id\":1}\n\nevent: entity_resolved\ndata: {\"id\":2}\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Errorf("path = %s, want /events", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte(sseBody))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(0))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := c.Events(ctx)
+	if err != nil {
+		t.Fatalf("Events() error: %v", err)
+	}
+
+	var events []GraphEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("received %d events, want 2", len(events))
+	}
+	if events[0].Event != "fact_created" {
+		t.Errorf("events[0].Event = %q, want fact_created", events[0].Event)
+	}
+	if events[0].Data != `{"id":1}` {
+		t.Errorf("events[0].Data = %q, want {\"id\":1}", events[0].Data)
+	}
+	if events[1].Event != "entity_resolved" {
+		t.Errorf("events[1].Event = %q, want entity_resolved", events[1].Event)
+	}
+}
+
+func TestEventsWithGraph(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if g := r.URL.Query().Get("graph"); g != "mygraph" {
+			t.Errorf("graph param = %q, want mygraph", g)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fmt.Fprint(w, "event: ping\ndata: ok\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(0))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := c.Events(ctx, WithGraph("mygraph"))
+	if err != nil {
+		t.Fatalf("Events() error: %v", err)
+	}
+
+	ev := <-ch
+	if ev.Event != "ping" {
+		t.Errorf("event = %q, want ping", ev.Event)
+	}
+}
+
+func TestEventsContextCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher, ok := w.(http.Flusher)
+		if ok {
+			flusher.Flush()
+		}
+		// Keep connection open until client disconnects.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(0))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := c.Events(ctx)
+	if err != nil {
+		t.Fatalf("Events() error: %v", err)
+	}
+
+	cancel()
+
+	// Channel should close after context cancellation.
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("expected channel to be closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("timed out waiting for channel to close")
+	}
+}
+
+func TestEventsMultilineData(t *testing.T) {
+	sseBody := "event: multi\ndata: line1\ndata: line2\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.Write([]byte(sseBody))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(0))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := c.Events(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ev := <-ch
+	if ev.Data != "line1\nline2" {
+		t.Errorf("data = %q, want \"line1\\nline2\"", ev.Data)
+	}
+}
+
+func TestEventsHTTPError(t *testing.T) {
+	srv := testServer(t, 401, map[string]string{"message": "unauthorized"}, nil)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithMaxRetries(0))
+	_, err := c.Events(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	he, ok := err.(*HippoError)
+	if !ok {
+		t.Fatalf("expected *HippoError, got %T", err)
+	}
+	if he.StatusCode != 401 {
+		t.Errorf("StatusCode = %d, want 401", he.StatusCode)
+	}
+}
+
+// --- Logger tests ---
+
+type testLogger struct {
+	debugMsgs []string
+	warnMsgs  []string
+}
+
+func (l *testLogger) Debug(msg string, args ...any) {
+	l.debugMsgs = append(l.debugMsgs, fmt.Sprintf(msg, args...))
+}
+
+func (l *testLogger) Warn(msg string, args ...any) {
+	l.warnMsgs = append(l.warnMsgs, fmt.Sprintf(msg, args...))
+}
+
+func TestLoggerDebugOnSuccess(t *testing.T) {
+	srv := testServer(t, 200, HealthResponse{Status: "ok"}, nil)
+	defer srv.Close()
+
+	lg := &testLogger{}
+	c := NewClient(srv.URL, WithLogger(lg))
+	_, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(lg.debugMsgs) < 2 {
+		t.Errorf("expected at least 2 debug messages (request + response), got %d: %v", len(lg.debugMsgs), lg.debugMsgs)
+	}
+}
+
+func TestLoggerWarnOnRetry(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(503)
+			w.Write([]byte(`{"message":"unavailable"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	}))
+	defer srv.Close()
+
+	lg := &testLogger{}
+	c := NewClient(srv.URL, WithLogger(lg), WithMaxRetries(3))
+	_, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(lg.warnMsgs) < 1 {
+		t.Errorf("expected at least 1 warn message for retry, got %d", len(lg.warnMsgs))
+	}
+}
+
+func TestLoggerNilByDefault(t *testing.T) {
+	srv := testServer(t, 200, HealthResponse{Status: "ok"}, nil)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if c.logger != nil {
+		t.Error("expected nil logger by default")
+	}
+	// Should not panic with nil logger.
+	_, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
 }

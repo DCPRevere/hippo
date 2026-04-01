@@ -223,6 +223,18 @@ public sealed record KeyInfo
     public string? CreatedAt { get; init; }
 }
 
+// ── SSE events ──
+
+/// <summary>A server-sent event from the /events endpoint.</summary>
+public sealed record GraphEvent
+{
+    /// <summary>The SSE event type (the <c>event:</c> field).</summary>
+    public string? Event { get; init; }
+
+    /// <summary>The JSON payload (the <c>data:</c> field).</summary>
+    public string? Data { get; init; }
+}
+
 // ── Observability ──
 
 public sealed record HealthResponse

@@ -1,5 +1,8 @@
+using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,11 +15,21 @@ public sealed class HippoClient : IDisposable
 {
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
+    private readonly int _maxRetries;
+    private readonly IHippoLogger? _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         PropertyNameCaseInsensitive = true,
+    };
+
+    private static readonly HashSet<HttpStatusCode> RetryableStatusCodes = new()
+    {
+        (HttpStatusCode)429,
+        HttpStatusCode.BadGateway,
+        HttpStatusCode.ServiceUnavailable,
+        HttpStatusCode.GatewayTimeout,
     };
 
     /// <summary>
@@ -33,15 +46,37 @@ public sealed class HippoClient : IDisposable
     /// Optional pre-configured <see cref="HttpClient"/>. When provided the caller is
     /// responsible for its lifetime; <see cref="Dispose"/> will not dispose it.
     /// </param>
-    public HippoClient(string? baseUrl = null, string? apiKey = null, HttpClient? httpClient = null)
+    /// <param name="timeout">
+    /// Request timeout. Defaults to 30 seconds. Only applied when the client owns the
+    /// <see cref="HttpClient"/> (i.e. <paramref name="httpClient"/> is null).
+    /// </param>
+    /// <param name="maxRetries">
+    /// Maximum number of retries for transient failures (429, 502, 503, 504).
+    /// Set to 0 to disable retries. Defaults to 3.
+    /// </param>
+    /// <param name="logger">Optional logger for request/retry diagnostics.</param>
+    public HippoClient(
+        string? baseUrl = null,
+        string? apiKey = null,
+        HttpClient? httpClient = null,
+        TimeSpan? timeout = null,
+        int maxRetries = 3,
+        IHippoLogger? logger = null)
     {
         baseUrl ??= Environment.GetEnvironmentVariable("HIPPO_URL") ?? "http://localhost:21693";
         apiKey ??= Environment.GetEnvironmentVariable("HIPPO_API_KEY");
 
         _ownsHttp = httpClient is null;
         _http = httpClient ?? new HttpClient();
+        _maxRetries = maxRetries;
+        _logger = logger;
 
         _http.BaseAddress ??= new Uri(baseUrl.TrimEnd('/') + "/");
+
+        if (_ownsHttp)
+        {
+            _http.Timeout = timeout ?? TimeSpan.FromSeconds(30);
+        }
 
         if (apiKey is not null)
         {
@@ -97,30 +132,183 @@ public sealed class HippoClient : IDisposable
     public Task<HealthResponse> HealthAsync(CancellationToken ct = default)
         => GetAsync<HealthResponse>("health", ct);
 
+    // ── SSE streaming ──
+
+    /// <summary>
+    /// Opens a streaming connection to the /events endpoint and yields
+    /// <see cref="GraphEvent"/> records as they arrive.
+    /// </summary>
+    public async IAsyncEnumerable<GraphEvent> EventsAsync(
+        string? graph = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var path = graph is null ? "events" : $"events?graph={Uri.EscapeDataString(graph)}";
+
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+        _logger?.Debug($"SSE GET {path}");
+
+        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+
+        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+
+        using (response)
+        {
+            await using var stream = await response.Content.ReadAsStreamAsync(ct)
+                .ConfigureAwait(false);
+            using var reader = new StreamReader(stream);
+
+            string? eventType = null;
+            string? data = null;
+
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+                if (line is null) break; // end of stream
+
+                if (line.StartsWith("event:", StringComparison.Ordinal))
+                {
+                    eventType = line["event:".Length..].Trim();
+                }
+                else if (line.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    data = line["data:".Length..].Trim();
+                }
+                else if (line.Length == 0)
+                {
+                    // Empty line signals end of an SSE event.
+                    if (eventType is not null || data is not null)
+                    {
+                        yield return new GraphEvent { Event = eventType, Data = data };
+                        eventType = null;
+                        data = null;
+                    }
+                }
+            }
+
+            // Yield any trailing event without a final blank line.
+            if (eventType is not null || data is not null)
+            {
+                yield return new GraphEvent { Event = eventType, Data = data };
+            }
+        }
+    }
+
     // ── HTTP helpers ──
 
     private async Task<TResponse> PostAsync<TRequest, TResponse>(
         string path, TRequest body, CancellationToken ct)
     {
-        using var response = await _http.PostAsJsonAsync(path, body, JsonOptions, ct)
-            .ConfigureAwait(false);
-        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+        using var response = await SendAsync(
+            () =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, path)
+                {
+                    Content = JsonContent.Create(body, options: JsonOptions),
+                };
+                return req;
+            },
+            ct).ConfigureAwait(false);
+
         return (await response.Content.ReadFromJsonAsync<TResponse>(JsonOptions, ct)
             .ConfigureAwait(false))!;
     }
 
     private async Task<TResponse> GetAsync<TResponse>(string path, CancellationToken ct)
     {
-        using var response = await _http.GetAsync(path, ct).ConfigureAwait(false);
-        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, path),
+            ct).ConfigureAwait(false);
+
         return (await response.Content.ReadFromJsonAsync<TResponse>(JsonOptions, ct)
             .ConfigureAwait(false))!;
     }
 
     private async Task DeleteAsync(string path, CancellationToken ct)
     {
-        using var response = await _http.DeleteAsync(path, ct).ConfigureAwait(false);
-        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Delete, path),
+            ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends a request with retry and exponential backoff for transient failures.
+    /// The <paramref name="requestFactory"/> is called on each attempt because
+    /// <see cref="HttpRequestMessage"/> cannot be reused after it has been sent.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendAsync(
+        Func<HttpRequestMessage> requestFactory,
+        CancellationToken ct)
+    {
+        const double baseDelaySecs = 0.5;
+
+        for (int attempt = 0; ; attempt++)
+        {
+            using var request = requestFactory();
+
+            _logger?.Debug($"{request.Method} {request.RequestUri}");
+
+            var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+
+            _logger?.Debug($"Status {(int)response.StatusCode} for {request.Method} {request.RequestUri}");
+
+            if (response.IsSuccessStatusCode)
+                return response;
+
+            // Check if retryable
+            bool retryable = RetryableStatusCodes.Contains(response.StatusCode) && attempt < _maxRetries;
+
+            if (!retryable)
+            {
+                await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+                // EnsureSuccessAsync always throws for non-success; this is unreachable.
+                return response;
+            }
+
+            // Determine delay
+            TimeSpan delay = GetRetryDelay(response, attempt, baseDelaySecs);
+
+            _logger?.Warn($"Retry {attempt + 1}/{_maxRetries} after {delay.TotalMilliseconds:F0}ms " +
+                          $"(status {(int)response.StatusCode})");
+
+            response.Dispose();
+
+            await Task.Delay(delay, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt, double baseDelaySecs)
+    {
+        // Try Retry-After header first
+        TimeSpan? retryAfter = ParseRetryAfter(response);
+        if (retryAfter.HasValue)
+            return retryAfter.Value;
+
+        // Exponential backoff with jitter
+        double delaySecs = baseDelaySecs * Math.Pow(2, attempt);
+        double jitter = Random.Shared.NextDouble() * delaySecs * 0.5;
+        return TimeSpan.FromSeconds(delaySecs + jitter);
+    }
+
+    internal static TimeSpan? ParseRetryAfter(HttpResponseMessage response)
+    {
+        if (response.Headers.RetryAfter is null)
+            return null;
+
+        // Seconds form
+        if (response.Headers.RetryAfter.Delta.HasValue)
+            return response.Headers.RetryAfter.Delta.Value;
+
+        // HTTP-date form
+        if (response.Headers.RetryAfter.Date.HasValue)
+        {
+            var delay = response.Headers.RetryAfter.Date.Value - DateTimeOffset.UtcNow;
+            return delay > TimeSpan.Zero ? delay : TimeSpan.Zero;
+        }
+
+        return null;
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
@@ -134,7 +322,7 @@ public sealed class HippoClient : IDisposable
         {
             401 => new AuthenticationException(body),
             403 => new ForbiddenException(body),
-            429 => new RateLimitException(body),
+            429 => new RateLimitException(body, ParseRetryAfter(response)),
             _ => new HippoException(body, status),
         };
     }

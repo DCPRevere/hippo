@@ -5,6 +5,7 @@ export {
   ForbiddenError,
   RateLimitError,
 } from "./errors.js";
+export { findNode, factsAbout, isDuplicate, failures } from "./helpers.js";
 export type {
   AskRequest,
   AskResponse,
@@ -15,14 +16,18 @@ export type {
   CreateKeyResponse,
   CreateUserRequest,
   CreateUserResponse,
+  EventsOptions,
   Fact,
   GraphEdge,
+  GraphEvent,
   GraphNode,
   HealthResponse,
   HippoClientOptions,
   KeySummary,
   ListKeysResponse,
   ListUsersResponse,
+  OnRequestHook,
+  OnResponseHook,
   RememberBatchRequest,
   RememberBatchResponse,
   RememberRequest,

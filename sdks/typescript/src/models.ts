@@ -134,10 +134,31 @@ export interface HealthResponse {
 }
 
 // ---------------------------------------------------------------------------
+// SSE event type
+// ---------------------------------------------------------------------------
+
+export interface GraphEvent {
+  event: string;
+  data: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // Client options
 // ---------------------------------------------------------------------------
+
+export type OnRequestHook = (method: string, url: string, body?: unknown) => void;
+export type OnResponseHook = (method: string, url: string, status: number, durationMs: number) => void;
 
 export interface HippoClientOptions {
   baseUrl?: string;
   apiKey?: string;
+  maxRetries?: number;
+  timeout?: number;
+  onRequest?: OnRequestHook;
+  onResponse?: OnResponseHook;
+}
+
+export interface EventsOptions {
+  graph?: string;
+  signal?: AbortSignal;
 }

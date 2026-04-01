@@ -35,6 +35,12 @@ public class ForbiddenException : HippoException
 /// <summary>Thrown when the server returns 429 Too Many Requests.</summary>
 public class RateLimitException : HippoException
 {
-    public RateLimitException(string message)
-        : base(message, 429) { }
+    /// <summary>Parsed value of the Retry-After header, if present.</summary>
+    public TimeSpan? RetryAfter { get; }
+
+    public RateLimitException(string message, TimeSpan? retryAfter = null)
+        : base(message, 429)
+    {
+        RetryAfter = retryAfter;
+    }
 }
