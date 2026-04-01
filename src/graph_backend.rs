@@ -38,12 +38,13 @@ pub trait GraphBackend: Send + Sync {
     async fn compound_edge_confidence(&self, edge_id: i64, new_agent: &str, new_confidence: f32) -> Result<f32>;
     async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()>;
     async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()>;
+    async fn delete_entity(&self, entity_id: &str) -> Result<usize>;
 
     // --- Memory tier management ---
     async fn promote_working_memory(&self) -> Result<usize>;
-    async fn purge_stale_working_memory(&self, older_than: DateTime<Utc>) -> Result<usize>;
     async fn memory_tier_stats(&self) -> Result<(usize, usize)>;
     async fn decay_stale_edges(&self, stale_before: DateTime<Utc>, now: DateTime<Utc>) -> Result<usize>;
+    async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize>;
 
     // --- Facts / reflection ---
     async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>>;

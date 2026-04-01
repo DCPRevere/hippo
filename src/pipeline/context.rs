@@ -5,6 +5,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 
 use crate::graph_backend::GraphBackend;
+use crate::math::{cosine_similarity, mmr_select};
 use crate::models::{ContextFact, ContextProgress, ContextRequest, ContextResponse};
 use crate::state::AppState;
 
@@ -149,7 +150,13 @@ pub async fn context(
         scored.retain(|(_, edge)| edge.memory_tier == *tier_filter);
     }
 
-    scored.truncate(limit);
+    // Step 6b: MMR reranking for diversity
+    // Build (score, index) pairs for mmr_select, using embeddings for similarity
+    let items: Vec<(f32, usize)> = scored.iter().enumerate().map(|(i, (s, _))| (*s, i)).collect();
+    let selected = mmr_select(&items, limit, 0.7, |a, b| {
+        cosine_similarity(&scored[a].1.embedding, &scored[b].1.embedding)
+    });
+    scored = selected.into_iter().map(|i| scored[i].clone()).collect();
     send_progress!(ContextProgress::Ranked { total: scored.len() });
 
     // Step 7: Increment salience on returned edges (unique edge_ids only)

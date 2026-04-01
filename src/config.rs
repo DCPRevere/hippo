@@ -15,6 +15,7 @@ pub enum LlmProvider {
 pub enum GraphBackendType {
     FalkorDB,
     Memory,
+    Sqlite,
 }
 
 pub struct Config {
@@ -40,6 +41,14 @@ pub struct Config {
     pub infer_maintenance: bool,
     pub llm_max_tokens: u32,
     pub default_context_limit: usize,
+    pub auth_enabled: bool,
+    pub insecure: bool,
+    /// Global default TTL in seconds. None means edges never expire.
+    pub default_ttl_secs: Option<u64>,
+    /// Additional domain-specific context appended to the LLM extraction prompt.
+    pub extraction_prompt: String,
+    /// Path to the SQLite database file (used when graph_backend == Sqlite).
+    pub sqlite_path: String,
 }
 
 impl Config {
@@ -68,6 +77,7 @@ impl Config {
 
         let graph_backend = match std::env::var("GRAPH_BACKEND").as_deref() {
             Ok("memory") => GraphBackendType::Memory,
+            Ok("sqlite") => GraphBackendType::Sqlite,
             _ => GraphBackendType::FalkorDB,
         };
 
@@ -116,6 +126,16 @@ impl Config {
                 .unwrap_or_else(|_| "50".to_string())
                 .parse()
                 .context("invalid DEFAULT_CONTEXT_LIMIT")?,
+            auth_enabled: std::env::var("HIPPO_AUTH").map_or(false, |v| v == "1"),
+            insecure: std::env::var("HIPPO_INSECURE").map_or(false, |v| v == "1"),
+            default_ttl_secs: std::env::var("DEFAULT_TTL_SECS")
+                .ok()
+                .map(|v| v.parse().context("invalid DEFAULT_TTL_SECS"))
+                .transpose()?,
+            extraction_prompt: std::env::var("EXTRACTION_PROMPT")
+                .unwrap_or_default(),
+            sqlite_path: std::env::var("SQLITE_PATH")
+                .unwrap_or_else(|_| "hippo.db".to_string()),
         })
     }
 
@@ -148,6 +168,11 @@ impl Config {
             infer_maintenance: false,
             llm_max_tokens: 4096,
             default_context_limit: 50,
+            auth_enabled: false,
+            insecure: false,
+            default_ttl_secs: None,
+            extraction_prompt: String::new(),
+            sqlite_path: String::new(),
         }
     }
 }

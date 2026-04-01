@@ -20,6 +20,7 @@ fn make_remember_req(statement: &str) -> RememberRequest {
         source_agent: Some("test-agent".to_string()),
         source_credibility_hint: None,
         graph: None,
+        ttl_secs: None,
     }
 }
 
@@ -54,12 +55,16 @@ async fn remember_creates_entities_and_edges() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Alice works at Acme"), None)
+    let resp = remember(&state, &graph, make_remember_req("Alice works at Acme"), None, None)
         .await
         .unwrap();
 
     assert_eq!(resp.entities_created, 2, "should create Alice and Acme");
     assert_eq!(resp.facts_written, 1, "should write one edge");
+
+    // Verify usage tracking: 1 LLM call (extract_operations) + 3 embeds (2 nodes + 1 edge)
+    assert_eq!(resp.usage.llm_calls, 1, "one extract_operations call");
+    assert_eq!(resp.usage.embed_calls, 3, "2 entity embeds + 1 edge embed");
 
     // Verify graph state
     let entities = graph.dump_all_entities().await.unwrap();
@@ -115,7 +120,7 @@ async fn remember_reuses_existing_entities() {
     };
     graph.upsert_entity(&alice).await.unwrap();
 
-    let resp = remember(&state, &graph, make_remember_req("Alice is a person"), None)
+    let resp = remember(&state, &graph, make_remember_req("Alice is a person"), None, None)
         .await
         .unwrap();
 
@@ -166,6 +171,7 @@ async fn remember_invalidates_edge_by_id() {
         salience: 1,
         created_at: chrono::Utc::now(),
         memory_tier: MemoryTier::LongTerm,
+        expires_at: None,
     };
     let edge_id = graph.create_edge("alice", "london", &rel).await.unwrap();
 
@@ -207,6 +213,7 @@ async fn remember_invalidates_edge_by_id() {
         &state,
         &graph,
         make_remember_req("Alice lives in Edinburgh"),
+        None,
         None,
     )
     .await
@@ -266,7 +273,7 @@ async fn remember_new_edges_are_working_tier() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    remember(&state, &graph, make_remember_req("Bob works at Beta"), None)
+    remember(&state, &graph, make_remember_req("Bob works at Beta"), None, None)
         .await
         .unwrap();
 
@@ -308,7 +315,7 @@ async fn remember_tracks_source_agent() {
 
     let mut req = make_remember_req("Carol works at Gamma");
     req.source_agent = Some("finance-agent".into());
-    remember(&state, &graph, req, None).await.unwrap();
+    remember(&state, &graph, req, None, None).await.unwrap();
 
     let edges = graph.dump_all_edges().await.unwrap();
     assert_eq!(edges.len(), 1);
@@ -361,6 +368,7 @@ async fn remember_skips_duplicate_edges_by_embedding() {
         salience: 1,
         created_at: chrono::Utc::now(),
         memory_tier: MemoryTier::LongTerm,
+        expires_at: None,
     };
     graph.create_edge("alice", "bob", &rel).await.unwrap();
 
@@ -380,6 +388,7 @@ async fn remember_skips_duplicate_edges_by_embedding() {
         &state,
         &graph,
         make_remember_req("Alice knows Bob"),
+        None,
         None,
     )
     .await
@@ -434,7 +443,7 @@ async fn remember_applies_credibility_to_confidence() {
 
     let mut req = make_remember_req("Dave works at Delta");
     req.source_agent = Some("low-trust-agent".into());
-    remember(&state, &graph, req, None).await.unwrap();
+    remember(&state, &graph, req, None, None).await.unwrap();
 
     let edges = graph.dump_all_edges().await.unwrap();
     assert_eq!(edges.len(), 1);
@@ -473,7 +482,7 @@ async fn remember_update_node_sets_properties() {
     });
     let state = test_state(fake);
 
-    let resp = remember(&state, &graph, make_remember_req("Alice is British"), None)
+    let resp = remember(&state, &graph, make_remember_req("Alice is British"), None, None)
         .await
         .unwrap();
 
@@ -496,7 +505,7 @@ async fn remember_skips_edge_with_unresolved_refs() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Ghost knows Phantom"), None)
+    let resp = remember(&state, &graph, make_remember_req("Ghost knows Phantom"), None, None)
         .await
         .unwrap();
 
@@ -519,7 +528,7 @@ async fn remember_creates_entity_with_properties() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Eve is an engineer"), None)
+    let resp = remember(&state, &graph, make_remember_req("Eve is an engineer"), None, None)
         .await
         .unwrap();
 
@@ -559,7 +568,7 @@ async fn remember_trace_includes_operations() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Frank works at Omega"), None)
+    let resp = remember(&state, &graph, make_remember_req("Frank works at Omega"), None, None)
         .await
         .unwrap();
 

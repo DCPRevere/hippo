@@ -4,6 +4,25 @@ use std::collections::HashMap;
 
 pub const EMBEDDING_DIM: usize = 768;
 
+/// Tracks token and call counts for LLM/embedding operations within a pipeline run.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LlmUsage {
+    pub llm_calls: u32,
+    pub embed_calls: u32,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+impl LlmUsage {
+    /// Accumulate counts from another usage record into this one.
+    pub fn merge(&mut self, other: &LlmUsage) {
+        self.llm_calls += other.llm_calls;
+        self.embed_calls += other.embed_calls;
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MemoryTier {
     Working,   // recent, unverified, decays in ~24h if not promoted
@@ -49,6 +68,7 @@ pub struct Relation {
     pub salience: i64,
     pub created_at: DateTime<Utc>,
     pub memory_tier: MemoryTier,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +192,8 @@ pub struct RememberRequest {
     pub source_agent: Option<String>,
     pub source_credibility_hint: Option<f32>,
     pub graph: Option<String>,
+    /// Optional TTL in seconds. Overrides the global DEFAULT_TTL_SECS if set.
+    pub ttl_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -180,6 +202,7 @@ pub struct RememberResponse {
     pub entities_resolved: usize,
     pub facts_written: usize,
     pub contradictions_invalidated: usize,
+    pub usage: LlmUsage,
     pub trace: RememberTrace,
 }
 
@@ -409,6 +432,7 @@ pub struct BatchRememberRequest {
     #[serde(default)]
     pub parallel: bool,
     pub graph: Option<String>,
+    pub ttl_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -597,6 +621,8 @@ pub struct EdgeRow {
     pub decayed_confidence: f32,
     pub source_agents: String,
     pub memory_tier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
 }
 
 // ---- Subgraph context types (shared between LLM and pipeline) ----
@@ -610,8 +636,8 @@ pub struct SubgraphNode {
     pub node_type: String,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub properties: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub is_principal: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
 }
 
 /// An edge in the subgraph sent to the LLM.

@@ -113,61 +113,10 @@ async fn maintenance_promote_working_to_long_term() {
     assert!(long_term_after > 0, "should have promoted to long_term: {stats_after:?}");
 }
 
-#[tokio::test]
-async fn maintenance_purge_stale_working_memory() {
-    let agent = start_agent_mock_admin().await;
-
-    let alice_id = Uuid::new_v4().to_string();
-    let bob_id = Uuid::new_v4().to_string();
-
-    // Seed a working-tier edge with valid_at = 25 hours ago, salience = 0
-    // This should be purged (archived) by maintenance
-    seed_raw(&agent.client, &agent.base_url, &json!({
-        "entities": [
-            { "id": &alice_id, "name": "Alice", "entity_type": "person" },
-            { "id": &bob_id, "name": "Bob", "entity_type": "person" }
-        ],
-        "edges": [{
-            "subject_id": &alice_id,
-            "object_id": &bob_id,
-            "fact": "Alice saw Bob yesterday",
-            "relation_type": "SAW",
-            "confidence": 0.5,
-            "salience": 0,
-            "valid_at": (Utc::now() - Duration::hours(25)).to_rfc3339(),
-            "source_agents": "test",
-            "memory_tier": "working"
-        }]
-    })).await;
-
-    // Verify edge exists before maintenance
-    let graph_before: serde_json::Value = agent.client
-        .get(format!("{}/graph", agent.base_url))
-        .send()
-        .await.unwrap()
-        .json().await.unwrap();
-    let edges_before = graph_before["active_edges"].as_array().unwrap().len();
-    assert!(edges_before > 0, "should have active edges before maintenance");
-
-    // Run maintenance
-    let resp = agent.client
-        .post(format!("{}/maintain", agent.base_url))
-        .send()
-        .await
-        .expect("maintain failed");
-    assert!(resp.status().is_success());
-
-    // After maintenance, the stale working edge should be archived.
-    // The /graph endpoint splits on invalid_at, not archived — check via /memory/stats instead.
-    let stats: serde_json::Value = agent.client
-        .get(format!("{}/memory/stats", agent.base_url))
-        .send()
-        .await.unwrap()
-        .json().await.unwrap();
-    let working_after = stats["working_count"].as_u64().unwrap_or(u64::MAX);
-    assert!(working_after == 0,
-        "stale working edge should be purged (archived), working_count={working_after}. edges_before={edges_before}");
-}
+// The old purge_stale_working_memory test was removed — working memory is no
+// longer automatically purged.  TTL-based expiry is covered by unit tests in
+// unit_maintain.rs (maintain_expires_ttl_edges, maintain_does_not_expire_future_ttl,
+// maintain_no_ttl_means_no_expiry).
 
 #[tokio::test]
 async fn maintenance_consolidate_link_discovery() {

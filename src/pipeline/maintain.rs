@@ -48,11 +48,10 @@ pub async fn run_housekeeping(state: &AppState, graph: &dyn GraphBackend) -> Res
         tracing::info!("maintenance: promoted {} facts to long-term memory", promoted);
     }
 
-    // Purge stale working memory (older than 24h, low salience)
-    let cutoff = Utc::now() - chrono::Duration::hours(24);
-    let purged = graph.purge_stale_working_memory(cutoff).await?;
-    if purged > 0 {
-        tracing::info!("maintenance: purged {} stale working memory edges", purged);
+    // Expire edges that have passed their TTL
+    let expired = graph.expire_ttl_edges(Utc::now()).await?;
+    if expired > 0 {
+        tracing::info!("maintenance: expired {expired} edges past TTL");
     }
 
     Ok(())
@@ -237,6 +236,7 @@ async fn link_discovery(state: &AppState, graph: &dyn GraphBackend, node_ids: &[
                     salience: 0,
                     created_at: now,
                     memory_tier: crate::models::MemoryTier::Working,
+                    expires_at: None,
                 };
                 graph.create_edge(node_id, &candidate.id, &relation).await?;
             }
@@ -376,6 +376,7 @@ async fn inference_scan(state: &AppState, graph: &dyn GraphBackend, node_ids: &[
                 salience: 0,
                 created_at: now,
                 memory_tier: crate::models::MemoryTier::Working,
+                expires_at: None,
             };
             graph.create_edge(node_id, &object_id, &relation).await?;
             tracing::info!(

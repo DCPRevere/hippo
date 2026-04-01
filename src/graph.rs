@@ -90,6 +90,25 @@ impl GraphRegistry {
         registry
     }
 
+    /// Create a registry backed by SQLite databases on disk.
+    /// Each graph gets its own file: `{base_dir}/{graph_name}.db`.
+    pub fn sqlite(default_graph: &str, base_path: String) -> Self {
+        Self {
+            factory: Box::new(move |name: &str| {
+                let path = if base_path.is_empty() {
+                    std::path::PathBuf::from(format!("{name}.db"))
+                } else {
+                    std::path::PathBuf::from(&base_path)
+                };
+                let graph = crate::sqlite_graph::SqliteGraph::open(name, &path)
+                    .expect("failed to open SQLite graph");
+                Arc::new(graph) as Arc<dyn GraphBackend>
+            }),
+            default_graph: default_graph.to_string(),
+            graphs: Mutex::new(HashMap::new()),
+        }
+    }
+
     pub fn default_graph_name(&self) -> &str {
         &self.default_graph
     }
@@ -525,6 +544,10 @@ impl GraphClient {
             Some(t) => format!("'{}'", t.to_rfc3339()),
             None => "null".to_string(),
         };
+        let expires_at = match &rel.expires_at {
+            Some(t) => format!("'{}'", t.to_rfc3339()),
+            None => "null".to_string(),
+        };
         let query = format!(
             "MATCH (a:Entity {{id: '{from_id}'}}) \
              MATCH (b:Entity {{id: '{to_id}'}}) \
@@ -534,7 +557,7 @@ impl GraphClient {
                  valid_at: '{}', invalid_at: {invalid_at}, \
                  confidence: {}, salience: 0, created_at: '{}', \
                  last_accessed_at: '{}', decayed_confidence: {}, \
-                 memory_tier: '{}' \
+                 memory_tier: '{}', expires_at: {expires_at} \
              }}]->(b) \
              RETURN id(r)",
             rel.fact.replace('\'', "\\'"),
@@ -588,23 +611,21 @@ impl GraphClient {
         Ok(0)
     }
 
-    pub async fn purge_stale_working_memory(&self, older_than: DateTime<Utc>) -> Result<usize> {
-        let older_than_iso = older_than.to_rfc3339();
-        // FalkorDB: ISO string comparison (lexicographic ordering works for ISO 8601)
-        let older_than_no_tz = &older_than_iso[..19];
+    pub async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> {
+        let now_iso = &now.to_rfc3339()[..19];
         let query = format!(
             "MATCH ()-[r:RELATION]-() \
              WHERE r.invalid_at IS NULL \
                AND (r.archived IS NULL OR r.archived = false) \
-               AND r.memory_tier = 'working' \
-               AND r.salience = 0 \
-               AND substring(r.created_at, 0, 19) < '{older_than_no_tz}' \
-             SET r.archived = true \
-             RETURN count(r) AS purged"
+               AND r.expires_at IS NOT NULL \
+               AND substring(r.expires_at, 0, 19) <= '{now_iso}' \
+             SET r.invalid_at = '{}' \
+             RETURN count(r) AS expired",
+            now.to_rfc3339()
         );
         let mut graph = self.conn().lock().await;
         let result = graph.query(&query).execute().await
-            .context("purge stale working memory failed")?;
+            .context("expire TTL edges failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
             if let Some(v) = row.into_iter().next() {
@@ -1283,6 +1304,35 @@ impl GraphClient {
         Ok(out)
     }
 
+    pub async fn delete_entity(&self, entity_id: &str) -> Result<usize> {
+        let entity_id = sanitise(entity_id);
+        let now = Utc::now();
+
+        // Invalidate all edges connected to this entity (both directions)
+        let invalidate_query = format!(
+            "MATCH (e:Entity {{id: '{entity_id}'}})-[r:RELATION]-() SET r.invalid_at = '{}' RETURN count(r)",
+            now.to_rfc3339()
+        );
+        let mut graph = self.conn().lock().await;
+        let result = graph.query(&invalidate_query).execute().await
+            .context("delete_entity: invalidate edges failed")?;
+        let rows: Vec<Vec<FalkorValue>> = result.data.collect();
+        let count = rows.into_iter()
+            .next()
+            .and_then(|row| row.into_iter().next())
+            .map(|v| extract_int(&v) as usize)
+            .unwrap_or(0);
+
+        // Delete the entity node
+        let delete_query = format!(
+            "MATCH (e:Entity {{id: '{entity_id}'}}) DELETE e"
+        );
+        graph.query(&delete_query).execute().await
+            .context("delete_entity: delete node failed")?;
+
+        Ok(count)
+    }
+
     pub async fn rename_entity(&self, entity_id: &str, new_name: &str) -> Result<()> {
         let entity_id = sanitise(entity_id);
         let new_name = sanitise(new_name);
@@ -1372,9 +1422,10 @@ impl GraphBackend for GraphClient {
     async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> { self.invalidate_edge(edge_id, at).await }
     async fn compound_edge_confidence(&self, edge_id: i64, new_agent: &str, new_confidence: f32) -> Result<f32> { self.compound_edge_confidence(edge_id, new_agent, new_confidence).await }
     async fn increment_salience(&self, edge_ids: &[i64]) -> Result<()> { self.increment_salience(edge_ids).await }
+    async fn delete_entity(&self, entity_id: &str) -> Result<usize> { self.delete_entity(entity_id).await }
     async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()> { self.merge_placeholder(placeholder_id, resolved_id).await }
     async fn promote_working_memory(&self) -> Result<usize> { self.promote_working_memory().await }
-    async fn purge_stale_working_memory(&self, older_than: DateTime<Utc>) -> Result<usize> { self.purge_stale_working_memory(older_than).await }
+    async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> { self.expire_ttl_edges(now).await }
     async fn memory_tier_stats(&self) -> Result<(usize, usize)> { self.memory_tier_stats().await }
     async fn decay_stale_edges(&self, stale_before: DateTime<Utc>, now: DateTime<Utc>) -> Result<usize> { self.decay_stale_edges(stale_before, now).await }
     async fn entity_facts(&self, entity_name: &str) -> Result<Vec<EdgeRow>> { self.entity_facts(entity_name).await }
@@ -1427,7 +1478,7 @@ fn node_to_entity_row(v: FalkorValue) -> Option<Result<EntityRow>> {
 }
 
 fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) -> Result<EdgeRow> {
-    let (edge_id, fact, relation_type, confidence, salience, valid_at, invalid_at, embedding, decayed_confidence, source_agents, memory_tier) =
+    let (edge_id, fact, relation_type, confidence, salience, valid_at, invalid_at, embedding, decayed_confidence, source_agents, memory_tier, expires_at) =
         match &rel {
             FalkorValue::Edge(edge) => {
                 let p = &edge.properties;
@@ -1439,6 +1490,7 @@ fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) ->
                 };
                 let source_agents = prop_opt_string(p, "source_agents").unwrap_or_default();
                 let memory_tier = prop_opt_string(p, "memory_tier").unwrap_or_else(|| "long_term".to_string());
+                let expires_at = prop_opt_string(p, "expires_at");
                 (
                     edge.entity_id,
                     prop_string(p, "fact"),
@@ -1451,6 +1503,7 @@ fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) ->
                     decayed_confidence,
                     source_agents,
                     memory_tier,
+                    expires_at,
                 )
             }
             _ => anyhow::bail!("expected Edge value"),
@@ -1488,6 +1541,7 @@ fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) ->
         decayed_confidence,
         source_agents,
         memory_tier,
+        expires_at,
     })
 }
 

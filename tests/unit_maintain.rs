@@ -46,6 +46,7 @@ fn make_rel(fact: &str, tier: MemoryTier, salience: i64, age: Duration) -> Relat
         salience,
         created_at: Utc::now() - age,
         memory_tier: tier,
+        expires_at: None,
     }
 }
 
@@ -96,49 +97,71 @@ async fn maintain_does_not_promote_low_salience() {
     assert_eq!(promoted, 0, "low salience should not be promoted");
 }
 
-// ---- Purge stale working memory ----
+// ---- TTL expiry ----
 
 #[tokio::test]
-async fn maintain_purges_stale_working() {
+async fn maintain_expires_ttl_edges() {
     let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
-    // Old working edge with zero salience → should be purged
-    let rel = make_rel(
+    // Edge with expires_at in the past → should be expired
+    let mut rel = make_rel(
         "Alice met Bob yesterday",
         MemoryTier::Working,
         0,
-        Duration::hours(25),
+        Duration::hours(2),
     );
+    rel.expires_at = Some(Utc::now() - Duration::hours(1));
     graph.create_edge("a", "b", &rel).await.unwrap();
 
-    let cutoff = Utc::now() - Duration::hours(24);
-    let purged = graph.purge_stale_working_memory(cutoff).await.unwrap();
-    assert_eq!(purged, 1, "should purge 1 stale edge");
+    let expired = graph.expire_ttl_edges(Utc::now()).await.unwrap();
+    assert_eq!(expired, 1, "should expire 1 edge past TTL");
 
     let (working, _) = graph.memory_tier_stats().await.unwrap();
-    assert_eq!(working, 0, "no working edges should remain");
+    assert_eq!(working, 0, "expired edge should no longer be active");
 }
 
 #[tokio::test]
-async fn maintain_does_not_purge_high_salience() {
+async fn maintain_does_not_expire_future_ttl() {
     let graph = InMemoryGraph::new("test");
     seed_entity(&graph, "a", "Alice").await;
     seed_entity(&graph, "b", "Bob").await;
 
-    // Old working edge but salience > 0 → should NOT be purged
-    let rel = make_rel(
+    // Edge with expires_at in the future → should NOT be expired
+    let mut rel = make_rel(
         "Alice and Bob are friends",
         MemoryTier::Working,
-        3,
-        Duration::hours(25),
+        0,
+        Duration::hours(1),
+    );
+    rel.expires_at = Some(Utc::now() + Duration::hours(24));
+    graph.create_edge("a", "b", &rel).await.unwrap();
+
+    let expired = graph.expire_ttl_edges(Utc::now()).await.unwrap();
+    assert_eq!(expired, 0, "future TTL should not be expired");
+
+    let (working, _) = graph.memory_tier_stats().await.unwrap();
+    assert_eq!(working, 1, "edge should still be active");
+}
+
+#[tokio::test]
+async fn maintain_no_ttl_means_no_expiry() {
+    let graph = InMemoryGraph::new("test");
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    // Edge with no expires_at → should never be expired
+    let rel = make_rel(
+        "Alice knows Bob",
+        MemoryTier::Working,
+        0,
+        Duration::hours(100),
     );
     graph.create_edge("a", "b", &rel).await.unwrap();
 
-    let cutoff = Utc::now() - Duration::hours(24);
-    let purged = graph.purge_stale_working_memory(cutoff).await.unwrap();
-    assert_eq!(purged, 0, "high salience should not be purged");
+    let expired = graph.expire_ttl_edges(Utc::now()).await.unwrap();
+    assert_eq!(expired, 0, "edge without TTL should not be expired");
 }
 
 // ---- Decay stale edges ----

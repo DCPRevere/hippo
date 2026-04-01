@@ -55,6 +55,7 @@ struct StoredEdge {
     memory_tier: MemoryTier,
     created_at: DateTime<Utc>,
     decayed_confidence: f32,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 impl StoredEdge {
@@ -85,6 +86,7 @@ impl StoredEdge {
             decayed_confidence: self.decayed_confidence,
             source_agents: self.source_agents.join(","),
             memory_tier: tier_string(&self.memory_tier),
+            expires_at: self.expires_at.map(|t| t.to_rfc3339()),
         }
     }
 }
@@ -381,6 +383,7 @@ impl GraphBackend for InMemoryGraph {
             memory_tier: rel.memory_tier.clone(),
             created_at: rel.created_at,
             decayed_confidence: rel.confidence,
+            expires_at: rel.expires_at,
         };
         self.edges.write().await.push(edge);
         Ok(edge_id)
@@ -425,6 +428,21 @@ impl GraphBackend for InMemoryGraph {
         Ok(())
     }
 
+    async fn delete_entity(&self, entity_id: &str) -> Result<usize> {
+        let now = Utc::now();
+        let mut edges = self.edges.write().await;
+        let mut count = 0;
+        for e in edges.iter_mut() {
+            if e.is_active() && (e.from_id == entity_id || e.to_id == entity_id) {
+                e.invalid_at = Some(now);
+                count += 1;
+            }
+        }
+        drop(edges);
+        self.entities.write().await.remove(entity_id);
+        Ok(count)
+    }
+
     async fn merge_placeholder(
         &self,
         placeholder_id: &str,
@@ -462,17 +480,17 @@ impl GraphBackend for InMemoryGraph {
         Ok(count)
     }
 
-    async fn purge_stale_working_memory(&self, older_than: DateTime<Utc>) -> Result<usize> {
+    async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> {
         let mut edges = self.edges.write().await;
         let mut count = 0;
         for e in edges.iter_mut() {
-            if matches!(e.memory_tier, MemoryTier::Working)
-                && e.is_active()
-                && e.valid_at < older_than
-                && e.salience <= 0
-            {
-                e.invalid_at = Some(Utc::now());
-                count += 1;
+            if e.is_active() {
+                if let Some(exp) = e.expires_at {
+                    if exp <= now {
+                        e.invalid_at = Some(now);
+                        count += 1;
+                    }
+                }
             }
         }
         Ok(count)

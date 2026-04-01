@@ -10,7 +10,7 @@ use crate::events::GraphEvent;
 use crate::graph_backend::GraphBackend;
 use crate::math::cosine_similarity;
 use crate::models::{
-    Entity, GraphOp, MemoryTier, OpExecutionTrace, Relation,
+    Entity, GraphOp, LlmUsage, MemoryTier, OpExecutionTrace, Relation,
     RememberProgress, RememberRequest, RememberResponse, RememberTrace,
 };
 use crate::state::AppState;
@@ -29,11 +29,15 @@ pub async fn remember(
     graph: &dyn GraphBackend,
     req: RememberRequest,
     progress_tx: Option<tokio::sync::mpsc::Sender<RememberProgress>>,
+    user_id: Option<&str>,
 ) -> Result<RememberResponse> {
     state.metrics.remember_calls_total.fetch_add(1, Ordering::Relaxed);
 
     let source_agent = req.source_agent.as_deref().unwrap_or("unknown").to_string();
     let now = Utc::now();
+
+    let ttl_secs = req.ttl_secs.or(state.config.default_ttl_secs);
+    let expires_at = ttl_secs.map(|s| now + chrono::Duration::seconds(s as i64));
 
     // Look up source credibility
     let recorded_cred = state.credibility.read().await.get(&source_agent);
@@ -42,10 +46,13 @@ pub async fn remember(
         None => recorded_cred,
     };
 
+    let mut usage = LlmUsage::default();
+
     // Step 1: Search graph for context
     tracing::info!(graph = %graph.graph_name(), statement = %req.statement, "remember: starting");
     let context = if state.config.infer_pre_context {
-        let ctx = gather_pre_extraction_context(state, graph, &req.statement).await?;
+        let ctx = gather_pre_extraction_context(state, graph, &req.statement, user_id).await?;
+        usage.embed_calls += 1; // embed in gather_pre_extraction_context
         tracing::info!(
             graph = %graph.graph_name(),
             nodes = ctx.node_count(),
@@ -66,6 +73,7 @@ pub async fn remember(
     send_progress(&progress_tx, RememberProgress::Planning).await;
 
     let mut ops_result = state.llm.extract_operations(&req.statement, &context).await?;
+    usage.llm_calls += 1;
     tracing::info!(operations = ops_result.operations.len(), "remember: planned");
     send_progress(&progress_tx, RememberProgress::Planned {
         operations: ops_result.operations.len(),
@@ -114,6 +122,7 @@ pub async fn remember(
                 merged.edges.extend(additional.edges);
 
                 ops_result = state.llm.revise_operations(&ops_result, &merged).await?;
+                usage.llm_calls += 1;
                 was_revised = true;
                 tracing::info!(operations = ops_result.operations.len(), "remember: revised");
             }
@@ -163,6 +172,7 @@ pub async fn remember(
                 }
 
                 let embedding = state.llm.embed(name).await?;
+                usage.embed_calls += 1;
                 let id = Uuid::new_v4().to_string();
                 let entity = Entity {
                     id: id.clone(),
@@ -176,13 +186,20 @@ pub async fn remember(
                 };
                 graph.upsert_entity(&entity).await?;
 
-                // Mark as principal so it can be found even after renames
-                let is_principal = name.to_lowercase() == "principal"
+                // If the LLM created a "Principal" node or set user_id/is_principal,
+                // tag the entity with the authenticated user's ID.
+                let is_user_entity = name.to_lowercase() == "principal"
                     || properties.iter().any(|(k, v)| {
-                        k == "is_principal" && v == "true"
+                        (k == "is_principal" && v == "true")
+                            || k == "user_id"
                     });
-                if is_principal {
-                    graph.set_entity_property(&id, "is_principal", "true").await?;
+                if is_user_entity {
+                    if let Some(uid) = user_id {
+                        graph.set_entity_property(&id, "user_id", uid).await?;
+                    } else {
+                        // Legacy fallback: no user_id available, use is_principal
+                        graph.set_entity_property(&id, "is_principal", "true").await?;
+                    }
                 }
 
                 for (key, value) in properties {
@@ -245,6 +262,7 @@ pub async fn remember(
 
                 // Embed and check for duplicate by cosine similarity
                 let embedding = state.llm.embed(fact).await?;
+                usage.embed_calls += 1;
                 let existing = graph.find_all_active_edges_from(&from_id).await?;
                 let is_dup = existing.iter().any(|e| {
                     cosine_similarity(&embedding, &e.embedding) > 0.9
@@ -272,6 +290,7 @@ pub async fn remember(
                     salience: 0,
                     created_at: now,
                     memory_tier: MemoryTier::Working,
+                    expires_at,
                 };
 
                 let edge_id = graph.create_edge(&from_id, &to_id, &rel).await?;
@@ -310,6 +329,7 @@ pub async fn remember(
                 } else if let Some(fact_text) = fact {
                     // Fallback: find by fact text similarity
                     let embedding = state.llm.embed(fact_text).await?;
+                    usage.embed_calls += 1;
                     let candidates = graph.vector_search_edges_scored(&embedding, 5).await?;
                     for (edge, score) in &candidates {
                         if *score > 0.85 && edge.invalid_at.is_none() {
@@ -344,6 +364,7 @@ pub async fn remember(
         entities_resolved: entities_updated,
         facts_written,
         contradictions_invalidated: facts_invalidated,
+        usage,
         trace: RememberTrace {
             operations: original_operations,
             revised_operations: if was_revised { Some(ops_result.operations.clone()) } else { None },
@@ -389,8 +410,9 @@ pub async fn gather_pre_extraction_context(
     state: &AppState,
     graph: &dyn GraphBackend,
     statement: &str,
+    user_id: Option<&str>,
 ) -> Result<GraphContext> {
-    gather_pre_extraction_context_at(state, graph, statement, None).await
+    gather_pre_extraction_context_at(state, graph, statement, None, user_id).await
 }
 
 pub async fn gather_pre_extraction_context_at(
@@ -398,6 +420,7 @@ pub async fn gather_pre_extraction_context_at(
     graph: &dyn GraphBackend,
     statement: &str,
     at: Option<DateTime<Utc>>,
+    user_id: Option<&str>,
 ) -> Result<GraphContext> {
     let mut seen_node_ids: HashSet<String> = HashSet::new();
     let mut nodes: Vec<SubgraphNode> = Vec::new();
@@ -405,7 +428,7 @@ pub async fn gather_pre_extraction_context_at(
     let mut seen_edge_ids: HashSet<i64> = HashSet::new();
 
     // Helper: add a node if not already seen
-    let mut add_node = |id: &str, name: &str, etype: &str, is_principal: bool,
+    let mut add_node = |id: &str, name: &str, etype: &str, node_user_id: Option<&str>,
                         seen: &mut HashSet<String>, nodes: &mut Vec<SubgraphNode>| {
         if seen.insert(id.to_string()) {
             nodes.push(SubgraphNode {
@@ -413,7 +436,7 @@ pub async fn gather_pre_extraction_context_at(
                 name: name.to_string(),
                 node_type: etype.to_string(),
                 properties: HashMap::new(),
-                is_principal,
+                user_id: node_user_id.map(|s| s.to_string()),
             });
         }
     };
@@ -427,8 +450,8 @@ pub async fn gather_pre_extraction_context_at(
         if !seen_edges.insert(edge.edge_id) {
             return;
         }
-        add_node(&edge.subject_id, &edge.subject_name, "", false, seen_nodes, nodes);
-        add_node(&edge.object_id, &edge.object_name, "", false, seen_nodes, nodes);
+        add_node(&edge.subject_id, &edge.subject_name, "", None, seen_nodes, nodes);
+        add_node(&edge.object_id, &edge.object_name, "", None, seen_nodes, nodes);
         edges.push(SubgraphEdge {
             id: edge.edge_id,
             from: edge.subject_id.clone(),
@@ -439,32 +462,50 @@ pub async fn gather_pre_extraction_context_at(
         });
     };
 
-    // 0. Always include the principal entity if it exists (survives renames)
+    // 0. Always include the user's entity if it exists (survives renames).
+    //    Prefer user_id property; fall back to is_principal for legacy data.
     let mut principal_id: Option<String> = None;
-    match graph.find_entity_by_property("is_principal", "true").await {
+
+    // Try user_id-based lookup first
+    let user_entity = if let Some(uid) = user_id {
+        graph.find_entity_by_property("user_id", uid).await
+    } else {
+        Ok(None)
+    };
+
+    match user_entity {
         Ok(Some(p)) => {
-            tracing::debug!(name = %p.name, id = %p.id, "context: found principal");
-            add_node(&p.id, &p.name, &p.entity_type, true, &mut seen_node_ids, &mut nodes);
+            tracing::debug!(name = %p.name, id = %p.id, "context: found user entity by user_id");
+            add_node(&p.id, &p.name, &p.entity_type, user_id, &mut seen_node_ids, &mut nodes);
             principal_id = Some(p.id.clone());
         }
-        Ok(None) => {
-            tracing::debug!("context: no principal by property, falling back to name search");
-            let principal_candidates = graph.fulltext_search_entities("Principal").await?;
-            tracing::debug!(count = principal_candidates.len(), "context: principal name search results");
-            for e in &principal_candidates {
-                if e.name.to_lowercase() == "principal" {
-                    add_node(&e.id, &e.name, &e.entity_type, true, &mut seen_node_ids, &mut nodes);
-                    principal_id = Some(e.id.clone());
-                    break;
+        _ => {
+            // Fallback: legacy is_principal property
+            match graph.find_entity_by_property("is_principal", "true").await {
+                Ok(Some(p)) => {
+                    tracing::debug!(name = %p.name, id = %p.id, "context: found principal (legacy)");
+                    add_node(&p.id, &p.name, &p.entity_type, user_id, &mut seen_node_ids, &mut nodes);
+                    principal_id = Some(p.id.clone());
+                }
+                Ok(None) => {
+                    tracing::debug!("context: no principal by property, falling back to name search");
+                    let principal_candidates = graph.fulltext_search_entities("Principal").await?;
+                    for e in &principal_candidates {
+                        if e.name.to_lowercase() == "principal" {
+                            add_node(&e.id, &e.name, &e.entity_type, user_id, &mut seen_node_ids, &mut nodes);
+                            principal_id = Some(e.id.clone());
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("context: find_entity_by_property failed: {e}");
                 }
             }
         }
-        Err(e) => {
-            tracing::warn!("context: find_entity_by_property failed: {e}");
-        }
     }
     if principal_id.is_none() {
-        tracing::warn!("context: no principal found — first-person references will not resolve to an existing entity");
+        tracing::warn!("context: no user entity found — first-person references will not resolve to an existing entity");
     }
 
     // 1. Fulltext search for entities mentioned in the statement
@@ -472,13 +513,13 @@ pub async fn gather_pre_extraction_context_at(
     tracing::debug!(count = ft_entities.len(), "context: fulltext search results");
     let mut matched_ids: Vec<String> = Vec::new();
     for e in &ft_entities {
-        add_node(&e.id, &e.name, &e.entity_type, false, &mut seen_node_ids, &mut nodes);
+        add_node(&e.id, &e.name, &e.entity_type, None, &mut seen_node_ids, &mut nodes);
         matched_ids.push(e.id.clone());
     }
-    // Also walk from principal
-    for n in &nodes {
-        if n.is_principal && !matched_ids.contains(&n.id) {
-            matched_ids.push(n.id.clone());
+    // Also walk from the user's entity
+    if let Some(ref pid) = principal_id {
+        if !matched_ids.contains(pid) {
+            matched_ids.push(pid.clone());
         }
     }
 
@@ -542,7 +583,7 @@ async fn gather_context_by_names(
                     name: e.name.clone(),
                     node_type: e.entity_type.clone(),
                     properties: HashMap::new(),
-                    is_principal: false,
+                    user_id: None,
                 });
                 let hop_edges = graph.walk_one_hop(&[e.id.clone()], 20).await?;
                 for edge in &hop_edges {
@@ -553,7 +594,7 @@ async fn gather_context_by_names(
                                 name: edge.subject_name.clone(),
                                 node_type: String::new(),
                                 properties: HashMap::new(),
-                                is_principal: false,
+                                user_id: None,
                             });
                         }
                         if seen_node_ids.insert(edge.object_id.clone()) {
@@ -562,7 +603,7 @@ async fn gather_context_by_names(
                                 name: edge.object_name.clone(),
                                 node_type: String::new(),
                                 properties: HashMap::new(),
-                                is_principal: false,
+                                user_id: None,
                             });
                         }
                         edges.push(SubgraphEdge {

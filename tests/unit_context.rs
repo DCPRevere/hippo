@@ -55,6 +55,7 @@ async fn seed_alice_acme_london(graph: &InMemoryGraph) {
         salience: 2,
         created_at: now,
         memory_tier: MemoryTier::LongTerm,
+        expires_at: None,
     };
 
     graph
@@ -173,6 +174,7 @@ async fn context_filters_by_memory_tier() {
         salience: 2,
         created_at: now,
         memory_tier: tier,
+        expires_at: None,
     };
 
     graph
@@ -304,6 +306,7 @@ async fn context_orders_by_relevance() {
         salience: 2,
         created_at: now,
         memory_tier: MemoryTier::LongTerm,
+        expires_at: None,
     };
 
     graph

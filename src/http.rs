@@ -14,11 +14,12 @@ use std::sync::Arc;
 use tokio_stream::StreamExt as _;
 use tower_http::trace::TraceLayer;
 
+use crate::auth::Auth;
 use crate::error::AppError;
 use crate::models::{
     AdminSeedRequest, AdminSeedResponse, AskRequest,
     BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
-    ContextRequest, ErrorResponse, HealthResponse, RememberRequest,
+    ContextRequest, HealthResponse, RememberRequest,
 };
 use crate::pipeline::{ask, maintain, remember};
 use crate::state::AppState;
@@ -147,7 +148,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/context", post(context_handler))
         .route("/ask", post(ask_handler))
         // REST resources
-        .route("/entities/{id}", get(entity_handler))
+        .route("/entities/{id}", get(entity_handler).delete(entity_delete_handler))
         .route("/entities/{id}/edges", get(entity_edges_handler))
         .route("/edges/{id}", get(edge_handler))
         .route("/edges/{id}/provenance", get(edge_provenance_handler))
@@ -163,7 +164,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/graphs", get(graphs_list_handler))
         .route("/graphs/drop/{name}", delete(graphs_drop_handler))
         // Seed
-        .route("/seed", post(seed_handler));
+        .route("/seed", post(seed_handler))
+        // Admin user management
+        .route("/admin/users", post(admin_create_user_handler))
+        .route("/admin/users", get(admin_list_users_handler))
+        .route("/admin/users/{user_id}", delete(admin_delete_user_handler))
+        // API key management
+        .route("/admin/users/{user_id}/keys", post(admin_create_key_handler))
+        .route("/admin/users/{user_id}/keys", get(admin_list_keys_handler))
+        .route("/admin/users/{user_id}/keys/{label}", delete(admin_revoke_key_handler));
 
     app.layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -173,21 +182,24 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 async fn remember_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     ValidJson(req): ValidJson<RememberRequest>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = remember::remember(&state, &*graph, req, None).await?;
+    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let resp = remember::remember(&state, &*graph, req, None, Some(&user.user_id)).await?;
     Ok(json_ok(resp))
 }
 
 async fn remember_batch_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     ValidJson(req): ValidJson<BatchRememberRequest>,
 ) -> Result<JsonOk, AppError> {
     let total = req.statements.len();
     let source_agent = req.source_agent.clone();
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
 
+    let user_id = user.user_id.clone();
     let results = if req.parallel {
         let futs: Vec<_> = req
             .statements
@@ -196,14 +208,16 @@ async fn remember_batch_handler(
                 let state = Arc::clone(&state);
                 let source_agent = source_agent.clone();
                 let graph = graph.clone();
+                let uid = user_id.clone();
                 async move {
                     let remember_req = RememberRequest {
                         statement: statement.clone(),
                         source_agent,
                         source_credibility_hint: None,
                         graph: None,
+                        ttl_secs: req.ttl_secs,
                     };
-                    match remember::remember(&state, &*graph, remember_req, None).await {
+                    match remember::remember(&state, &*graph, remember_req, None, Some(&uid)).await {
                         Ok(resp) => BatchRememberResult {
                             statement,
                             ok: true,
@@ -231,8 +245,9 @@ async fn remember_batch_handler(
                 source_agent: source_agent.clone(),
                 source_credibility_hint: None,
                 graph: None,
+                ttl_secs: req.ttl_secs,
             };
-            let result = match remember::remember(&state, &*graph, remember_req, None).await {
+            let result = match remember::remember(&state, &*graph, remember_req, None, Some(&user_id)).await {
                 Ok(resp) => BatchRememberResult {
                     statement,
                     ok: true,
@@ -266,19 +281,21 @@ async fn remember_batch_handler(
 
 async fn context_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     ValidJson(req): ValidJson<ContextRequest>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let ctx = remember::gather_pre_extraction_context_at(&state, &*graph, &req.query, req.at).await?;
+    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let ctx = remember::gather_pre_extraction_context_at(&state, &*graph, &req.query, req.at, Some(&user.user_id)).await?;
     Ok(json_ok(ctx))
 }
 
 async fn ask_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     ValidJson(req): ValidJson<AskRequest>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
-    let resp = ask::ask(&state, &*graph, req).await?;
+    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let resp = ask::ask(&state, &*graph, req, Some(&user.user_id), Some(&user.display_name)).await?;
     Ok(json_ok(resp))
 }
 
@@ -286,10 +303,11 @@ async fn ask_handler(
 
 async fn entity_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Path(id): Path<String>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
     match graph.get_entity_by_id(&id).await? {
         Some(entity) => Ok(json_ok(entity)),
         None => Err(AppError::not_found(format!("entity '{id}' not found"))),
@@ -298,10 +316,11 @@ async fn entity_handler(
 
 async fn entity_edges_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Path(id): Path<String>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
     // Verify entity exists
     if graph.get_entity_by_id(&id).await?.is_none() {
         return Err(AppError::not_found(format!("entity '{id}' not found")));
@@ -310,12 +329,39 @@ async fn entity_edges_handler(
     Ok(json_ok(edges))
 }
 
+async fn entity_delete_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Path(id): Path<String>,
+    Query(params): Query<GraphQuery>,
+) -> Result<JsonOk, AppError> {
+    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
+    let entity = graph.get_entity_by_id(&id).await?
+        .ok_or_else(|| AppError::not_found(format!("entity '{id}' not found")))?;
+    let edges_invalidated = graph.delete_entity(&id).await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    let _ = state.event_tx.send(crate::events::GraphEvent::EntityDeleted {
+        id: entity.id.clone(),
+        name: entity.name.clone(),
+        edges_invalidated,
+        graph: graph.graph_name().to_string(),
+    });
+
+    Ok(json_ok(serde_json::json!({
+        "id": entity.id,
+        "name": entity.name,
+        "edges_invalidated": edges_invalidated,
+    })))
+}
+
 async fn edge_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Path(id): Path<i64>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
     // Walk all edges from both endpoints to find this edge by ID
     let all_edges = graph.dump_all_edges().await?;
     match all_edges.into_iter().find(|e| e.edge_id == id) {
@@ -326,10 +372,11 @@ async fn edge_handler(
 
 async fn edge_provenance_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Path(id): Path<i64>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
     let resp = graph.get_provenance(id).await?;
     Ok(json_ok(resp))
 }
@@ -338,6 +385,7 @@ async fn edge_provenance_handler(
 
 async fn maintain_handler(
     State(state): State<Arc<AppState>>,
+    Auth(_user): Auth,
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
     maintain::run_once(&state, &*graph).await?;
@@ -346,9 +394,10 @@ async fn maintain_handler(
 
 async fn graph_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.graph_registry().resolve(params.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
     let entities = graph.dump_all_entities().await?;
     let all_edges = graph.dump_all_edges().await?;
     let (active, invalidated): (Vec<_>, Vec<_>) = all_edges
@@ -421,13 +470,18 @@ async fn events_handler(
 
 async fn seed_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Json(req): Json<AdminSeedRequest>,
 ) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
     use chrono::Utc;
     use crate::llm::pseudo_embed;
     use crate::models::{Entity, MemoryTier, Relation};
 
-    let graph = state.graph_registry().resolve(req.graph.as_deref()).await;
+    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
 
     let mut entities_created = 0usize;
     let mut edges_created = 0usize;
@@ -475,6 +529,7 @@ async fn seed_handler(
             salience: edge.salience,
             created_at: valid_at,
             memory_tier: tier,
+            expires_at: None,
         };
         graph.create_edge(&edge.subject_id, &edge.object_id, &relation).await.map_err(|err| {
             AppError::internal(format!("edge '{}': {err}", edge.fact))
@@ -490,6 +545,7 @@ async fn seed_handler(
 
 async fn graphs_list_handler(
     State(state): State<Arc<AppState>>,
+    Auth(_user): Auth,
 ) -> JsonOk {
     let graphs = state.graph_registry().list().await;
     json_ok(serde_json::json!({
@@ -500,8 +556,12 @@ async fn graphs_list_handler(
 
 async fn graphs_drop_handler(
     State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
     Path(name): Path<String>,
 ) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
     state.graph_registry().drop_graph(&name).await?;
 
     // Clear in-memory state when dropping the default graph
@@ -513,4 +573,156 @@ async fn graphs_drop_handler(
     }
 
     Ok(json_ok(serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") })))
+}
+
+// -- Admin user management ----------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateUserRequest {
+    user_id: String,
+    display_name: String,
+    #[serde(default = "default_user_role")]
+    role: String,
+    #[serde(default)]
+    graphs: Vec<String>,
+}
+
+fn default_user_role() -> String {
+    "user".to_string()
+}
+
+async fn admin_create_user_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Json(req): Json<CreateUserRequest>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph_store = get_graph_store(&state)?;
+
+    let raw_key = graph_store
+        .create_user(&req.user_id, &req.display_name, &req.role, &req.graphs)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({
+        "user_id": req.user_id,
+        "api_key": raw_key,
+    })))
+}
+
+async fn admin_list_users_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph_store = get_graph_store(&state)?;
+
+    let users = graph_store
+        .list_users()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({ "users": users })))
+}
+
+async fn admin_delete_user_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Path(user_id): Path<String>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph_store = get_graph_store(&state)?;
+
+    graph_store
+        .delete_user(&user_id)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({ "ok": true })))
+}
+
+// -- Admin API key management -------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateKeyRequest {
+    label: String,
+}
+
+fn get_graph_store(state: &AppState) -> Result<&crate::auth::GraphUserStore, AppError> {
+    let store = state
+        .user_store
+        .as_ref()
+        .ok_or_else(|| AppError::bad_request("auth is not enabled"))?;
+    store
+        .as_any()
+        .downcast_ref::<crate::auth::GraphUserStore>()
+        .ok_or_else(|| AppError::internal("user store does not support management"))
+}
+
+async fn admin_create_key_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Path(user_id): Path<String>,
+    Json(req): Json<CreateKeyRequest>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph_store = get_graph_store(&state)?;
+    let raw_key = graph_store
+        .create_api_key(&user_id, &req.label)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({
+        "user_id": user_id,
+        "label": req.label,
+        "api_key": raw_key,
+    })))
+}
+
+async fn admin_list_keys_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Path(user_id): Path<String>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph_store = get_graph_store(&state)?;
+    let keys = graph_store
+        .list_api_keys(&user_id)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({ "keys": keys })))
+}
+
+async fn admin_revoke_key_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Path((user_id, label)): Path<(String, String)>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let graph_store = get_graph_store(&state)?;
+    graph_store
+        .revoke_api_key(&user_id, &label)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({ "ok": true })))
 }

@@ -180,6 +180,7 @@ async fn try_discover_link(
                     salience: 0,
                     created_at: now,
                     memory_tier: crate::models::MemoryTier::Working,
+                    expires_at: None,
                 };
                 graph.create_edge(&a.id, &b.id, &relation).await?;
             }
