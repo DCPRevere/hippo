@@ -1338,7 +1338,7 @@ footer {
           <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/go/go-original-wordmark.svg" alt="Go" width="36" height="36">
         </div>
         <h3>Go</h3>
-        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> go get github.com/dcprevere/hippo-go <button class="copy-btn" data-copy="go get github.com/dcprevere/hippo-go" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
+        <div class="sdk-install"><span style="color: var(--violet-400)">$</span> go get github.com/dcprevere/hippo-sdk <button class="copy-btn" data-copy="go get github.com/dcprevere/hippo-sdk" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
       </div>
 
       <div class="sdk-card reveal reveal-delay-4">
@@ -1515,20 +1515,24 @@ footer {
 
   // Nodes with absolute positions (set on init)
   const nodes = [
-    { label: 'James',        color: '#8B5CF6', r: 10, fx: 0.50, fy: 0.22, vx: 0, vy: 0, primary: true },
-    { label: 'Shoreditch',   color: '#22D3EE', r: 7,  fx: 0.18, fy: 0.45, vx: 0, vy: 0 },
-    { label: 'ACME',      color: '#22D3EE', r: 7,  fx: 0.82, fy: 0.38, vx: 0, vy: 0 },
-    { label: 'Canary Wharf', color: '#FBBF24', r: 7,  fx: 0.72, fy: 0.72, vx: 0, vy: 0 },
-    { label: 'The Prospect', color: '#22D3EE', r: 7,  fx: 0.22, fy: 0.78, vx: 0, vy: 0 },
-    { label: 'Sr. Engineer', color: '#4ADE80', r: 7,  fx: 0.55, fy: 0.62, vx: 0, vy: 0 },
+    { label: 'James',        color: '#8B5CF6', r: 10, fx: 0.38, fy: 0.18, vx: 0, vy: 0, primary: true },
+    { label: 'Shoreditch',   color: '#22D3EE', r: 8,  fx: 0.18, fy: 0.45, vx: 0, vy: 0 },
+    { label: 'ACME',         color: '#22D3EE', r: 8,  fx: 0.82, fy: 0.35, vx: 0, vy: 0 },
+    { label: 'Canary Wharf', color: '#FBBF24', r: 7,  fx: 0.78, fy: 0.68, vx: 0, vy: 0 },
+    { label: 'Sr. Engineer', color: '#4ADE80', r: 7,  fx: 0.50, fy: 0.50, vx: 0, vy: 0 },
+    { label: 'Peter',        color: '#FB7185', r: 9,  fx: 0.62, fy: 0.18, vx: 0, vy: 0 },
+    { label: 'Designer',     color: '#4ADE80', r: 7,  fx: 0.75, fy: 0.12, vx: 0, vy: 0 },
   ];
 
   const edges = [
     { a: 0, b: 1, label: 'lives_in' },
     { a: 0, b: 2, label: 'works_at' },
     { a: 2, b: 3, label: 'located_in' },
-    { a: 0, b: 4, label: 'frequents' },
-    { a: 0, b: 5, label: 'role' },
+    { a: 0, b: 4, label: 'role' },
+    { a: 0, b: 5, label: 'friend_of' },
+    { a: 5, b: 1, label: 'lives_in' },
+    { a: 5, b: 2, label: 'works_at' },
+    { a: 5, b: 6, label: 'role' },
   ];
 
   // Spring lengths per edge (desired distance)
