@@ -428,7 +428,7 @@ pub async fn gather_pre_extraction_context_at(
     let mut seen_edge_ids: HashSet<i64> = HashSet::new();
 
     // Helper: add a node if not already seen
-    let mut add_node = |id: &str, name: &str, etype: &str, node_user_id: Option<&str>,
+    let add_node = |id: &str, name: &str, etype: &str, node_user_id: Option<&str>,
                         seen: &mut HashSet<String>, nodes: &mut Vec<SubgraphNode>| {
         if seen.insert(id.to_string()) {
             nodes.push(SubgraphNode {
@@ -442,7 +442,7 @@ pub async fn gather_pre_extraction_context_at(
     };
 
     // Helper: add an edge and its endpoint nodes
-    let mut collect_edge = |edge: &crate::models::EdgeRow,
+    let collect_edge = |edge: &crate::models::EdgeRow,
                             seen_nodes: &mut HashSet<String>,
                             nodes: &mut Vec<SubgraphNode>,
                             seen_edges: &mut HashSet<i64>,

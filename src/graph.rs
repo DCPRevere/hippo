@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use falkordb::{AsyncGraph, FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo, FalkorValue};
+use falkordb::{AsyncGraph, FalkorClientBuilder, FalkorConnectionInfo, FalkorValue};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
