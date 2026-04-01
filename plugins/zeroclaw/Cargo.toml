@@ -1,0 +1,15 @@
+[package]
+name = "zeroclaw-hippo"
+version = "0.1.0"
+edition = "2021"
+description = "ZeroClaw memory backend and tools backed by Hippo natural-language knowledge graph"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt"] }

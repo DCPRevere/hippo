@@ -1,0 +1,42 @@
+{
+  "id": "openclaw-hippo",
+  "name": "Hippo Memory",
+  "description": "Knowledge graph memory via Hippo -- remember, recall, and ask questions against a persistent knowledge graph",
+  "version": "0.1.0",
+  "kind": "memory",
+  "configSchema": {
+    "baseUrl": {
+      "type": "string",
+      "default": "http://localhost:21693",
+      "description": "Hippo API base URL"
+    },
+    "apiKey": {
+      "type": "string",
+      "description": "Hippo API key (Bearer token)"
+    },
+    "graphName": {
+      "type": "string",
+      "description": "Graph namespace to use (optional)"
+    },
+    "autoCapture": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically store conversation turns in hippo"
+    },
+    "autoRecall": {
+      "type": "boolean",
+      "default": true,
+      "description": "Automatically inject relevant context before agent runs"
+    },
+    "maxRecallFacts": {
+      "type": "number",
+      "default": 10,
+      "description": "Max facts to inject in auto-recall"
+    }
+  },
+  "tools": [
+    { "name": "hippo_remember", "description": "Store a fact or statement in the knowledge graph" },
+    { "name": "hippo_recall", "description": "Search the knowledge graph for relevant facts" },
+    { "name": "hippo_ask", "description": "Ask a question answered by the knowledge graph" }
+  ]
+}
