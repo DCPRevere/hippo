@@ -1014,6 +1014,233 @@ footer {
   .footer-inner { flex-direction: column; gap: 1.5rem; }
   .arch-stats { grid-template-columns: 1fr; }
   .hero-actions { flex-direction: column; align-items: center; }
+  .pg-examples { flex-direction: column; }
+}
+
+/* ─── PLAYGROUND ─── */
+.playground-section {
+  background: linear-gradient(180deg, transparent 0%, rgba(139, 92, 246, 0.02) 50%, transparent 100%);
+}
+
+.pg-container {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.pg-setup {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.pg-setup input {
+  flex: 1;
+  padding: 0.65rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pg-setup input:focus {
+  border-color: var(--violet-500);
+}
+
+.pg-setup input::placeholder {
+  color: var(--text-muted);
+}
+
+.pg-btn {
+  padding: 0.65rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.pg-btn:hover:not(:disabled) {
+  border-color: var(--violet-500);
+  background: var(--bg-card-hover);
+}
+
+.pg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pg-btn-primary {
+  background: var(--violet-600);
+  border-color: var(--violet-500);
+  color: #fff;
+}
+
+.pg-btn-primary:hover:not(:disabled) {
+  background: var(--violet-700);
+}
+
+.pg-btn-ask {
+  border-color: var(--cyan-500);
+  color: var(--cyan-400);
+}
+
+.pg-btn-ask:hover:not(:disabled) {
+  background: rgba(6, 182, 212, 0.1);
+}
+
+.pg-terminal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.pg-terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.pg-terminal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.pg-terminal-title {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+}
+
+.pg-log {
+  height: 260px;
+  overflow-y: auto;
+  padding: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.pg-log::-webkit-scrollbar { width: 4px; }
+.pg-log::-webkit-scrollbar-track { background: transparent; }
+.pg-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.pg-log .pg-entry-cmd { color: var(--violet-400); }
+.pg-log .pg-entry-ask { color: var(--cyan-400); }
+.pg-log .pg-entry-result { color: var(--text-secondary); }
+.pg-log .pg-entry-error { color: var(--rose-400); }
+.pg-log .pg-entry-system { color: var(--text-muted); font-style: italic; }
+
+.pg-input-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.pg-input-row input {
+  flex: 1;
+  padding: 0.65rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pg-input-row input:focus {
+  border-color: var(--violet-500);
+}
+
+.pg-input-row input::placeholder {
+  color: var(--text-muted);
+}
+
+.pg-examples {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.pg-example-btn {
+  padding: 0.4rem 0.75rem;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.pg-example-btn:hover {
+  border-color: var(--violet-500);
+  color: var(--text-secondary);
+}
+
+.pg-stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.6rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.pg-stats-bar .pg-stat-val {
+  color: var(--violet-400);
+}
+
+.pg-note {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.pg-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 1rem 0;
+}
+
+.pg-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--violet-400);
+  border-radius: 50%;
+  animation: pg-spin 0.6s linear infinite;
+}
+
+@keyframes pg-spin {
+  to { transform: rotate(360deg); }
 }
 </style>
 </head>
@@ -1348,6 +1575,54 @@ footer {
         <h3>.NET</h3>
         <div class="sdk-install"><span style="color: var(--violet-400)">$</span> dotnet add package Hippo.Sdk <button class="copy-btn" data-copy="dotnet add package Hippo.Sdk" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- PLAYGROUND -->
+<section class="playground-section" id="playground">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="reveal">Try it in your <span style="color: var(--violet-400)">browser</span></h2>
+      <p class="reveal reveal-delay-1">No sign-up. No server. Powered by WebAssembly.</p>
+    </div>
+
+    <div class="pg-container reveal reveal-delay-2">
+      <div class="pg-setup" id="pg-setup">
+        <input type="password" id="pg-api-key" placeholder="Paste your OpenAI API key" autocomplete="off">
+        <button class="pg-btn pg-btn-primary" id="pg-init-btn" disabled>Initialise</button>
+      </div>
+
+      <div class="pg-terminal">
+        <div class="pg-terminal-bar">
+          <span class="pg-terminal-dot"></span>
+          <span class="pg-terminal-dot"></span>
+          <span class="pg-terminal-dot"></span>
+          <span class="pg-terminal-title">hippo playground</span>
+        </div>
+        <div class="pg-log" id="pg-log">
+          <div class="pg-entry-system">Loading WASM module...</div>
+        </div>
+      </div>
+
+      <div class="pg-input-row">
+        <input type="text" id="pg-input" placeholder="Type a statement or question..." disabled>
+        <button class="pg-btn" id="pg-remember-btn" disabled>Remember</button>
+        <button class="pg-btn pg-btn-ask" id="pg-ask-btn" disabled>Ask</button>
+      </div>
+
+      <div class="pg-examples">
+        <button class="pg-example-btn" data-action="remember" data-text="Alice is a software engineer at Anthropic and lives in San Francisco">Alice is a software engineer at Anthropic...</button>
+        <button class="pg-example-btn" data-action="remember" data-text="Alice recently moved to New York for a new role at OpenAI">Alice recently moved to New York...</button>
+        <button class="pg-example-btn" data-action="ask" data-text="What do I know about Alice?">What do I know about Alice?</button>
+      </div>
+
+      <div class="pg-stats-bar">
+        <span><span class="pg-stat-val" id="pg-entities">0</span> entities</span>
+        <span><span class="pg-stat-val" id="pg-facts">0</span> facts</span>
+      </div>
+
+      <p class="pg-note">Runs entirely in your browser. No data leaves your machine.</p>
     </div>
   </div>
 </section>
@@ -1871,6 +2146,138 @@ footer {
           self.classList.remove('copied');
         }, 1500);
       });
+    });
+  });
+})();
+
+// ─── PLAYGROUND ───
+(function() {
+  var wasmModule = null;
+  var hippo = null;
+  var log = document.getElementById('pg-log');
+  var apiKeyInput = document.getElementById('pg-api-key');
+  var initBtn = document.getElementById('pg-init-btn');
+  var pgInput = document.getElementById('pg-input');
+  var rememberBtn = document.getElementById('pg-remember-btn');
+  var askBtn = document.getElementById('pg-ask-btn');
+  var entitiesEl = document.getElementById('pg-entities');
+  var factsEl = document.getElementById('pg-facts');
+
+  function pgLog(text, cls) {
+    var div = document.createElement('div');
+    div.className = cls || 'pg-entry-result';
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function setControls(enabled) {
+    pgInput.disabled = !enabled;
+    rememberBtn.disabled = !enabled;
+    askBtn.disabled = !enabled;
+  }
+
+  async function updateStats() {
+    if (!hippo) return;
+    try {
+      var s = await hippo.stats();
+      entitiesEl.textContent = s.entity_count || 0;
+      factsEl.textContent = s.edge_count || 0;
+    } catch (e) { /* ignore */ }
+  }
+
+  // Load WASM module
+  import('./wasm/hippo_wasm.js').then(function(mod) {
+    wasmModule = mod;
+    return mod.default();
+  }).then(function() {
+    log.innerHTML = '';
+    pgLog('WASM loaded. Enter your OpenAI API key to begin.', 'pg-entry-system');
+    initBtn.disabled = false;
+    apiKeyInput.addEventListener('input', function() {
+      initBtn.disabled = !apiKeyInput.value.trim();
+    });
+  }).catch(function(err) {
+    log.innerHTML = '';
+    pgLog('Failed to load WASM: ' + err.message, 'pg-entry-error');
+  });
+
+  // Initialise
+  initBtn.addEventListener('click', function() {
+    var key = apiKeyInput.value.trim();
+    if (!key) return;
+    try {
+      hippo = new wasmModule.Hippo(JSON.stringify({
+        api_key: key,
+        model: 'gpt-4o-mini',
+        embedding_model: 'text-embedding-3-small'
+      }));
+      pgLog('Hippo initialised.', 'pg-entry-system');
+      setControls(true);
+      initBtn.textContent = 'Reinitialise';
+    } catch (e) {
+      pgLog('Init error: ' + e, 'pg-entry-error');
+    }
+  });
+
+  // Remember
+  rememberBtn.addEventListener('click', async function() {
+    var text = pgInput.value.trim();
+    if (!text || !hippo) return;
+    pgLog('> remember: ' + text, 'pg-entry-cmd');
+    pgInput.value = '';
+    setControls(false);
+    try {
+      var result = await hippo.remember(text, 'playground');
+      pgLog(JSON.stringify(result, null, 2), 'pg-entry-result');
+      await updateStats();
+    } catch (e) {
+      pgLog('Error: ' + e, 'pg-entry-error');
+    }
+    setControls(true);
+    pgInput.focus();
+  });
+
+  // Ask
+  askBtn.addEventListener('click', async function() {
+    var text = pgInput.value.trim();
+    if (!text || !hippo) return;
+    pgLog('> ask: ' + text, 'pg-entry-ask');
+    pgInput.value = '';
+    setControls(false);
+    try {
+      var result = await hippo.ask(text);
+      if (result && result.answer) {
+        pgLog(result.answer, 'pg-entry-result');
+      } else {
+        pgLog(JSON.stringify(result, null, 2), 'pg-entry-result');
+      }
+    } catch (e) {
+      pgLog('Error: ' + e, 'pg-entry-error');
+    }
+    setControls(true);
+    pgInput.focus();
+  });
+
+  // Enter key submits as remember
+  pgInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      rememberBtn.click();
+    }
+  });
+
+  // Example buttons
+  document.querySelectorAll('.pg-example-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var text = this.getAttribute('data-text');
+      var action = this.getAttribute('data-action');
+      pgInput.value = text;
+      if (action === 'ask') {
+        askBtn.click();
+      } else {
+        rememberBtn.click();
+      }
     });
   });
 })();
