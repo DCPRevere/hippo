@@ -10,7 +10,7 @@ use crate::models::{
 use crate::state::AppState;
 
 pub async fn diagnose(state: &AppState, graph: &dyn GraphBackend, req: ContextRequest) -> Result<DiagnoseResponse> {
-    let limit = req.limit.unwrap_or(state.config.default_context_limit);
+    let limit = req.limit.unwrap_or(state.config.pipeline.default_context_limit);
     let mut steps = Vec::new();
 
     // Step 1: Fulltext search on fact text

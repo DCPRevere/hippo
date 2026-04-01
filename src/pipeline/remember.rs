@@ -36,7 +36,7 @@ pub async fn remember(
     let source_agent = req.source_agent.as_deref().unwrap_or("unknown").to_string();
     let now = Utc::now();
 
-    let ttl_secs = req.ttl_secs.or(state.config.default_ttl_secs);
+    let ttl_secs = req.ttl_secs.or(state.config.pipeline.default_ttl_secs);
     let expires_at = ttl_secs.map(|s| now + chrono::Duration::seconds(s as i64));
 
     // Look up source credibility
@@ -50,7 +50,7 @@ pub async fn remember(
 
     // Step 1: Search graph for context
     tracing::info!(graph = %graph.graph_name(), statement = %req.statement, "remember: starting");
-    let context = if state.config.infer_pre_context {
+    let context = if state.config.pipeline.infer_pre_context {
         let ctx = gather_pre_extraction_context(state, graph, &req.statement, user_id).await?;
         usage.embed_calls += 1; // embed in gather_pre_extraction_context
         tracing::info!(
@@ -90,7 +90,7 @@ pub async fn remember(
 
     // Step 3: If enrichment enabled, search graph by extracted entity names for missed context
     let mut was_revised = false;
-    if state.config.infer_enrichment {
+    if state.config.pipeline.infer_enrichment {
         let entity_names: Vec<String> = ops_result.operations.iter().filter_map(|op| {
             match op {
                 GraphOp::CreateNode { name, .. } => Some(name.clone()),

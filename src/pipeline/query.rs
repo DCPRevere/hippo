@@ -170,7 +170,7 @@ use chrono::Datelike;
 
 pub async fn smart_query(state: &AppState, graph: &dyn GraphBackend, req: SmartQueryRequest) -> Result<SmartQueryResponse> {
     let intent = classify(&req.query);
-    let limit = req.limit.unwrap_or(state.config.default_context_limit);
+    let limit = req.limit.unwrap_or(state.config.pipeline.default_context_limit);
 
     match intent {
         QueryIntent::CurrentContext => {

@@ -17,9 +17,9 @@ pub async fn context(
 ) -> Result<ContextResponse> {
     state.metrics.context_calls_total.fetch_add(1, Ordering::Relaxed);
 
-    let limit = req.limit.unwrap_or(state.config.default_context_limit);
+    let limit = req.limit.unwrap_or(state.config.pipeline.default_context_limit);
     let max_hops = req.max_hops.unwrap_or(2).min(3);
-    let scoring = req.scoring.as_ref().unwrap_or(&state.config.scoring);
+    let scoring = req.scoring.as_ref().unwrap_or(&state.config.pipeline.scoring);
 
     tracing::info!(query = %req.query, limit, max_hops, "context: query");
 

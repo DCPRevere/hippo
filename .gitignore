@@ -3,4 +3,5 @@ fixtures/*.json
 !fixtures/llm-responses.json
 
 .env
+hippo.toml
 *.http

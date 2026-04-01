@@ -1,0 +1,55 @@
+port = 21693
+
+[graph]
+backend = "memory"                    # memory | sqlite | falkordb
+name = "hippo"
+sqlite_path = "hippo.db"
+falkordb_url = "redis://localhost:6379"
+
+[llm]
+provider = "anthropic"                # anthropic | openai
+mock = false
+max_tokens = 32768
+extraction_prompt = ""
+
+[llm.anthropic]
+model = "claude-haiku-4-5-20251001"
+
+[llm.openai]
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+# embedding_model = "text-embedding-3-small"
+
+[llm.ollama]
+url = "http://localhost:11434"
+
+[pipeline]
+default_context_limit = 50
+maintenance_interval_secs = 10
+infer_pre_context = false
+infer_enrichment = false
+infer_maintenance = false
+# default_ttl_secs = 86400            # optional, omit for no expiry
+
+[pipeline.scoring]
+w_relevance = 0.50
+w_confidence = 0.10
+w_recency = 0.25
+w_salience = 0.15
+mmr_lambda = 0.70
+
+[auth]
+enabled = false
+insecure = false
+allow_admin = false
+
+[eval]
+fixture_mode = "none"                 # none | record | replay
+fixture_path = "./fixtures/llm-responses.json"
+
+# Secrets are always read from env vars, never from this file:
+#   ANTHROPIC_API_KEY / ANTHROPIC_OAUTH_TOKEN
+#   OPENAI_API_KEY
+#
+# All TOML fields can be overridden by env vars for CI/testing.
+# See Config::load() in src/config.rs for the full mapping.

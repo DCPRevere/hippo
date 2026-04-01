@@ -12,7 +12,7 @@ pub async fn run_maintenance_loop(
     state: std::sync::Arc<AppState>,
     mut shutdown: tokio::sync::watch::Receiver<()>,
 ) {
-    let secs = state.config.maintenance_interval_secs;
+    let secs = state.config.pipeline.maintenance_interval_secs;
     if secs == 0 {
         tracing::info!("Maintenance loop disabled (MAINTENANCE_INTERVAL_SECS=0), use POST /maintain to trigger");
         let _ = shutdown.changed().await;
@@ -154,7 +154,7 @@ pub async fn run_once(
     let node_ids: Vec<String> = entities.iter().map(|e| e.id.clone()).collect();
     link_discovery(state, graph, &node_ids).await?;
     contradiction_scan(state, graph, &node_ids).await?;
-    if state.config.infer_maintenance {
+    if state.config.pipeline.infer_maintenance {
         inference_scan(state, graph, &node_ids).await?;
     }
     placeholder_resolution(state, graph).await?;

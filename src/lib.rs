@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod config;
 pub mod credibility;
 pub mod error;
@@ -6,6 +7,7 @@ pub mod fixtures;
 pub mod graph;
 pub mod graph_backend;
 pub mod in_memory_graph;
+pub mod sqlite_graph;
 pub mod http;
 pub mod llm;
 pub mod llm_service;

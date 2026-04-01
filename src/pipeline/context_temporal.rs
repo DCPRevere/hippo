@@ -7,7 +7,7 @@ use crate::models::{ContextFact, ContextResponse, TemporalContextRequest};
 use crate::state::AppState;
 
 pub async fn context_temporal(state: &AppState, graph: &dyn GraphBackend, req: TemporalContextRequest) -> Result<ContextResponse> {
-    let limit = req.limit.unwrap_or(state.config.default_context_limit);
+    let limit = req.limit.unwrap_or(state.config.pipeline.default_context_limit);
     let at = req.at;
 
     tracing::info!(query = %req.query, %at, limit, "context_temporal: query");
