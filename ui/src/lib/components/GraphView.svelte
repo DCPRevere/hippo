@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import cytoscape from 'cytoscape';
 	import type { Core, LayoutOptions } from 'cytoscape';
 	import type { GraphDump, Entity, Edge } from '$lib/types';
@@ -155,7 +156,7 @@
 
 	$effect(() => {
 		if (container && data) {
-			initCytoscape(data);
+			untrack(() => initCytoscape(data));
 		}
 		return () => {
 			cy?.destroy();

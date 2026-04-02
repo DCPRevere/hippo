@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { ask, listGraphs } from '$lib/api';
 	import type { AskResponse } from '$lib/types';
 
@@ -10,7 +11,7 @@
 	let error = $state('');
 	let response = $state<AskResponse | null>(null);
 
-	$effect(() => {
+	onMount(() => {
 		loadGraphs();
 	});
 
@@ -33,7 +34,8 @@
 			response = await ask({
 				question: question.trim(),
 				limit,
-				graph: selectedGraph || undefined
+				graph: selectedGraph || undefined,
+				verbose: true
 			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -92,10 +94,10 @@
 			<h2>Answer</h2>
 			<div class="answer-block">{response.answer}</div>
 
-			{#if response.facts_used && response.facts_used.length > 0}
-				<h2>Facts Used ({response.facts_used.length})</h2>
+			{#if response.facts && response.facts.length > 0}
+				<h2>Facts Used ({response.facts.length})</h2>
 				<div class="facts-list">
-					{#each response.facts_used as fact}
+					{#each response.facts as fact}
 						<div class="fact-item">
 							<span class="fact-text">{fact.fact}</span>
 							<span class="fact-meta">
@@ -104,12 +106,6 @@
 							</span>
 						</div>
 					{/each}
-				</div>
-			{/if}
-
-			{#if response.usage}
-				<div class="usage">
-					Tokens: {response.usage.input_tokens} in / {response.usage.output_tokens} out
 				</div>
 			{/if}
 		</div>
@@ -228,10 +224,5 @@
 		font-size: 0.75rem;
 		color: #555;
 		margin-top: 4px;
-	}
-	.usage {
-		font-size: 0.75rem;
-		color: #555;
-		margin-top: 8px;
 	}
 </style>

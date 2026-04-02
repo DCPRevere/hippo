@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { listUsers, createUser, deleteUser, listKeys, createKey, deleteKey } from '$lib/api';
 	import type { User, ApiKey } from '$lib/types';
 
@@ -13,13 +14,13 @@
 	let createLoading = $state(false);
 	let createResult = $state('');
 
-	// Keys
+	// Keys — per-user state
 	let expandedUser = $state<string | null>(null);
 	let userKeys = $state<Record<string, ApiKey[]>>({});
-	let newKeyLabel = $state('');
-	let keyResult = $state('');
+	let keyLabels = $state<Record<string, string>>({});
+	let keyResults = $state<Record<string, { label: string; api_key: string } | null>>({});
 
-	$effect(() => {
+	onMount(() => {
 		loadUsers();
 	});
 
@@ -79,16 +80,18 @@
 	}
 
 	async function handleCreateKey(userId: string) {
-		if (!newKeyLabel.trim()) return;
-		keyResult = '';
+		const label = (keyLabels[userId] || '').trim();
+		if (!label) return;
+		keyResults[userId] = null;
 		try {
-			const resp = await createKey(userId, newKeyLabel.trim());
-			keyResult = `New key: ${resp.api_key}`;
-			newKeyLabel = '';
+			const resp = await createKey(userId, label);
+			keyResults[userId] = { label: resp.label, api_key: resp.api_key };
+			keyLabels[userId] = '';
 			const keysResp = await listKeys(userId);
 			userKeys[userId] = keysResp.keys;
 		} catch (e) {
-			keyResult = `Error: ${e instanceof Error ? e.message : String(e)}`;
+			keyResults[userId] = null;
+			error = e instanceof Error ? e.message : String(e);
 		}
 	}
 
@@ -101,6 +104,10 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
+	}
+
+	function copyToClipboard(text: string) {
+		navigator.clipboard.writeText(text);
 	}
 </script>
 
@@ -164,11 +171,14 @@
 									{/each}
 								</div>
 								<div class="create-key-form">
-									<input type="text" bind:value={newKeyLabel} placeholder="Key label" />
+									<input type="text" bind:value={keyLabels[user.user_id]} placeholder="Key label" />
 									<button class="sm-btn" onclick={() => handleCreateKey(user.user_id)}>Create Key</button>
 								</div>
-								{#if keyResult}
-									<p class="result key-result">{keyResult}</p>
+								{#if keyResults[user.user_id]}
+									<div class="key-result-block">
+										<p class="result key-result">New key: {keyResults[user.user_id]?.api_key}</p>
+										<button class="sm-btn copy-btn" onclick={() => copyToClipboard(keyResults[user.user_id]?.api_key ?? '')}>Copy</button>
+									</div>
 								{/if}
 							</div>
 						{/if}
@@ -251,7 +261,11 @@
 		padding: 6px 10px; border-radius: 4px; font-size: 0.8rem;
 		flex: 1;
 	}
-	.key-result { margin-top: 6px; }
+	.key-result-block {
+		display: flex; align-items: center; gap: 8px; margin-top: 6px;
+	}
+	.key-result { margin-top: 0; }
+	.copy-btn { flex-shrink: 0; }
 	.muted { color: #555; font-size: 0.85rem; }
 	.error { color: #e55; font-size: 0.85rem; }
 </style>

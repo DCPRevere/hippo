@@ -145,7 +145,7 @@ struct GraphQuery {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let app = Router::new()
+    let api = Router::new()
         // Core endpoints
         .route("/remember", post(remember_handler))
         .route("/remember/batch", post(remember_batch_handler))
@@ -187,7 +187,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     let ui_service = ServeDir::new(&ui_dir)
         .not_found_service(ServeFile::new(format!("{}/index.html", ui_dir)));
 
-    app.layer(TraceLayer::new_for_http())
+    Router::new()
+        // Root health endpoint for container health checks / backward compat
+        .route("/health", get(health_handler))
+        .nest("/api", api)
+        .layer(TraceLayer::new_for_http())
         .fallback_service(ui_service)
         .with_state(state)
 }

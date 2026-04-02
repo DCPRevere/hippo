@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { features } from '$lib/features';
 	import { getMetrics, getUsage } from '$lib/api';
 	import StatCard from '$lib/components/StatCard.svelte';
@@ -10,7 +11,7 @@
 	let loading = $state(true);
 	let error = $state('');
 
-	$effect(() => {
+	onMount(() => {
 		loadData();
 	});
 

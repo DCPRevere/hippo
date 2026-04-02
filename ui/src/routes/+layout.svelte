@@ -2,10 +2,21 @@
 	import { features } from '$lib/features';
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
+	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
 
 	let { children }: { children: Snippet } = $props();
 
 	let sidebarOpen = $state(true);
+
+	$effect(() => {
+		if (browser && page.url.pathname !== '/login') {
+			const key = localStorage.getItem('hippo_api_key');
+			if (!key) {
+				goto('/login');
+			}
+		}
+	});
 
 	const navItems = $derived([
 		{ href: '/', label: 'Overview', show: true },

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { getGraph, listGraphs } from '$lib/api';
 	import GraphView from '$lib/components/GraphView.svelte';
 	import EntityDetail from '$lib/components/EntityDetail.svelte';
@@ -16,7 +17,7 @@
 	let loading = $state(true);
 	let error = $state('');
 
-	$effect(() => {
+	onMount(() => {
 		loadGraphList();
 	});
 
@@ -111,7 +112,7 @@
 	<div class="page-header">
 		<h1>Graph Explorer</h1>
 		{#if graphs.length > 1}
-			<select class="graph-select" value={selectedGraph} onchange={handleGraphChange}>
+			<select class="graph-select" bind:value={selectedGraph} onchange={handleGraphChange}>
 				{#each graphs as g}
 					<option value={g}>{g}</option>
 				{/each}

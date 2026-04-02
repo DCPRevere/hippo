@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { features } from '$lib/features';
 	import { health } from '$lib/api';
 	import type { HealthResponse } from '$lib/types';
@@ -7,7 +8,7 @@
 	let loading = $state(true);
 	let error = $state('');
 
-	$effect(() => {
+	onMount(() => {
 		loadSettings();
 	});
 

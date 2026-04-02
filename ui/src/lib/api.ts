@@ -3,10 +3,11 @@ import type {
 	RememberRequest,
 	RememberResponse,
 	ContextRequest,
-	ContextFact,
+	GraphContext,
 	AskRequest,
 	AskResponse,
 	GraphDump,
+	GraphDumpBackup,
 	Entity,
 	Edge,
 	HealthResponse,
@@ -14,7 +15,10 @@ import type {
 	User,
 	ApiKey,
 	Tenant,
-	UsagePeriod
+	UsagePeriod,
+	BatchRememberRequest,
+	BatchRememberResponse,
+	SeedRequest
 } from './types';
 
 function getToken(): string | null {
@@ -52,56 +56,77 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 // Core endpoints
 export function remember(req: RememberRequest): Promise<RememberResponse> {
-	return request('POST', '/remember', req);
+	return request('POST', '/api/remember', req);
 }
 
-export function context(req: ContextRequest): Promise<ContextFact[]> {
-	return request('POST', '/context', req);
+export function rememberBatch(req: BatchRememberRequest): Promise<BatchRememberResponse> {
+	return request('POST', '/api/remember/batch', req);
+}
+
+export function context(req: ContextRequest): Promise<GraphContext> {
+	return request('POST', '/api/context', req);
 }
 
 export function ask(req: AskRequest): Promise<AskResponse> {
-	return request('POST', '/ask', req);
+	return request('POST', '/api/ask', req);
 }
 
 // Graph
 export function getGraph(graphName?: string): Promise<GraphDump> {
 	const qs = graphName ? `?graph=${encodeURIComponent(graphName)}` : '';
-	return request('GET', `/graph${qs}`);
+	return request('GET', `/api/graph${qs}`);
 }
 
 export function listGraphs(): Promise<GraphListResponse> {
-	return request('GET', '/graphs');
+	return request('GET', '/api/graphs');
+}
+
+export function dropGraph(name: string): Promise<void> {
+	return request('DELETE', `/api/graphs/drop/${encodeURIComponent(name)}`);
 }
 
 // REST resources
 export function getEntity(id: string): Promise<Entity> {
-	return request('GET', `/entities/${encodeURIComponent(id)}`);
+	return request('GET', `/api/entities/${encodeURIComponent(id)}`);
 }
 
 export function deleteEntity(id: string): Promise<{ id: string; name: string; edges_invalidated: number }> {
-	return request('DELETE', `/entities/${encodeURIComponent(id)}`);
+	return request('DELETE', `/api/entities/${encodeURIComponent(id)}`);
 }
 
 export function getEntityEdges(id: string): Promise<Edge[]> {
-	return request('GET', `/entities/${encodeURIComponent(id)}/edges`);
+	return request('GET', `/api/entities/${encodeURIComponent(id)}/edges`);
 }
 
 export function getEdge(id: number): Promise<Edge> {
-	return request('GET', `/edges/${id}`);
+	return request('GET', `/api/edges/${id}`);
+}
+
+export function getEdgeProvenance(id: number): Promise<Edge[]> {
+	return request('GET', `/api/edges/${id}/provenance`);
+}
+
+// Operations
+export function maintain(): Promise<void> {
+	return request('POST', '/api/maintain');
+}
+
+export function seed(req: SeedRequest): Promise<{ entities_created: number; edges_created: number }> {
+	return request('POST', '/api/seed', req);
 }
 
 // Observability
 export function health(): Promise<HealthResponse> {
-	return request('GET', '/health');
+	return request('GET', '/api/health');
 }
 
 export function getMetrics(): Promise<string> {
-	return request('GET', '/metrics');
+	return request('GET', '/api/metrics');
 }
 
 // Admin user management
 export function listUsers(): Promise<{ users: User[] }> {
-	return request('GET', '/admin/users');
+	return request('GET', '/api/admin/users');
 }
 
 export function createUser(
@@ -109,7 +134,7 @@ export function createUser(
 	displayName: string,
 	role: string
 ): Promise<{ user_id: string; api_key: string }> {
-	return request('POST', '/admin/users', {
+	return request('POST', '/api/admin/users', {
 		user_id: userId,
 		display_name: displayName,
 		role
@@ -117,22 +142,31 @@ export function createUser(
 }
 
 export function deleteUser(userId: string): Promise<{ ok: boolean }> {
-	return request('DELETE', `/admin/users/${encodeURIComponent(userId)}`);
+	return request('DELETE', `/api/admin/users/${encodeURIComponent(userId)}`);
 }
 
 export function listKeys(userId: string): Promise<{ keys: ApiKey[] }> {
-	return request('GET', `/admin/users/${encodeURIComponent(userId)}/keys`);
+	return request('GET', `/api/admin/users/${encodeURIComponent(userId)}/keys`);
 }
 
 export function createKey(
 	userId: string,
 	label: string
 ): Promise<{ user_id: string; label: string; api_key: string }> {
-	return request('POST', `/admin/users/${encodeURIComponent(userId)}/keys`, { label });
+	return request('POST', `/api/admin/users/${encodeURIComponent(userId)}/keys`, { label });
 }
 
 export function deleteKey(userId: string, label: string): Promise<{ ok: boolean }> {
-	return request('DELETE', `/admin/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(label)}`);
+	return request('DELETE', `/api/admin/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(label)}`);
+}
+
+// Admin backup/restore
+export function backup(graph?: string): Promise<GraphDumpBackup> {
+	return request('POST', '/api/admin/backup', { graph });
+}
+
+export function restore(data: GraphDumpBackup): Promise<{ entities_created: number; edges_created: number }> {
+	return request('POST', '/api/admin/restore', data);
 }
 
 // Cloud-only endpoints

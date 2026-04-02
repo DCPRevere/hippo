@@ -34,22 +34,18 @@
 			<span class="meta-label">Confidence</span>
 			<span class="meta-value">{(edge.confidence * 100).toFixed(0)}%</span>
 		</div>
-		{#if edge.salience != null}
-			<div class="meta-item">
-				<span class="meta-label">Salience</span>
-				<span class="meta-value">{edge.salience.toFixed(2)}</span>
-			</div>
-		{/if}
+		<div class="meta-item">
+			<span class="meta-label">Salience</span>
+			<span class="meta-value">{edge.salience}</span>
+		</div>
 		<div class="meta-item">
 			<span class="meta-label">Tier</span>
 			<span class="meta-value">{edge.memory_tier}</span>
 		</div>
-		{#if edge.valid_at}
-			<div class="meta-item">
-				<span class="meta-label">Valid at</span>
-				<span class="meta-value">{new Date(edge.valid_at).toLocaleString()}</span>
-			</div>
-		{/if}
+		<div class="meta-item">
+			<span class="meta-label">Valid at</span>
+			<span class="meta-value">{new Date(edge.valid_at).toLocaleString()}</span>
+		</div>
 		{#if edge.invalid_at}
 			<div class="meta-item">
 				<span class="meta-label">Invalid at</span>
@@ -63,8 +59,12 @@
 			</div>
 		{/if}
 		<div class="meta-item">
+			<span class="meta-label">Decayed</span>
+			<span class="meta-value">{(edge.decayed_confidence * 100).toFixed(0)}%</span>
+		</div>
+		<div class="meta-item">
 			<span class="meta-label">Sources</span>
-			<span class="meta-value">{edge.source_agents.join(', ') || 'none'}</span>
+			<span class="meta-value">{edge.source_agents.split('|').filter(Boolean).join(', ') || 'none'}</span>
 		</div>
 	</div>
 </div>

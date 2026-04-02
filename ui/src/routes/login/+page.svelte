@@ -1,10 +1,20 @@
 <script lang="ts">
-	import { features } from '$lib/features';
+	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
 	import { health } from '$lib/api';
 
 	let apiKey = $state('');
 	let error = $state('');
 	let loading = $state(false);
+
+	$effect(() => {
+		if (browser) {
+			const key = localStorage.getItem('hippo_api_key');
+			if (key) {
+				goto('/');
+			}
+		}
+	});
 
 	async function handleLogin() {
 		if (!apiKey.trim()) {
@@ -35,29 +45,25 @@
 		<h1 class="logo">hippo</h1>
 		<p class="subtitle">Knowledge graph engine</p>
 
-		{#if features.mode === 'standalone'}
-			<div class="form-group">
-				<label for="api-key">API Key</label>
-				<input
-					id="api-key"
-					type="password"
-					bind:value={apiKey}
-					onkeydown={handleKeydown}
-					placeholder="Enter your API key"
-					disabled={loading}
-				/>
-			</div>
+		<div class="form-group">
+			<label for="api-key">API Key</label>
+			<input
+				id="api-key"
+				type="password"
+				bind:value={apiKey}
+				onkeydown={handleKeydown}
+				placeholder="Enter your API key"
+				disabled={loading}
+			/>
+		</div>
 
-			{#if error}
-				<p class="error">{error}</p>
-			{/if}
-
-			<button class="login-btn" onclick={handleLogin} disabled={loading}>
-				{loading ? 'Connecting...' : 'Connect'}
-			</button>
-		{:else}
-			<p class="cloud-info">Redirecting to login...</p>
+		{#if error}
+			<p class="error">{error}</p>
 		{/if}
+
+		<button class="login-btn" onclick={handleLogin} disabled={loading}>
+			{loading ? 'Connecting...' : 'Connect'}
+		</button>
 	</div>
 </div>
 
@@ -133,9 +139,5 @@
 	.login-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
-	}
-	.cloud-info {
-		color: #666;
-		font-size: 0.85rem;
 	}
 </style>

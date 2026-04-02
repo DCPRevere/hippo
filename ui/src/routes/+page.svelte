@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { health, getGraph } from '$lib/api';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import type { HealthResponse, GraphDump } from '$lib/types';
@@ -9,7 +10,7 @@
 	let error = $state('');
 	let loading = $state(true);
 
-	$effect(() => {
+	onMount(() => {
 		loadData();
 	});
 
