@@ -77,22 +77,7 @@ impl AuthenticatedUser {
     }
 }
 
-/// Summary info for listing users (no sensitive data).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct UserInfo {
-    pub user_id: String,
-    pub display_name: String,
-    pub role: String,
-    pub graphs: Vec<String>,
-    pub key_count: usize,
-}
-
-/// Info about a single API key (no hash).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ApiKeyInfo {
-    pub label: String,
-    pub created_at: String,
-}
+pub use hippo_api::{UserInfo, ApiKeyInfo};
 
 // -- UserStore trait -----------------------------------------------------------
 

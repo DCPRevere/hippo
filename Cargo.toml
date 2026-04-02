@@ -56,6 +56,7 @@ path = "src/bin/cli.rs"
 required-features = ["server"]
 
 [dependencies]
+hippo-api = { path = "hippo-api" }
 axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["trace", "fs", "cors"], optional = true }
 tokio = { version = "1", features = ["sync"] }
