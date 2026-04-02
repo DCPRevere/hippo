@@ -7,9 +7,8 @@ use chrono::{DateTime, Duration, Utc};
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, Distance, Filter, PointId, PointStruct,
     ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder, UpsertPointsBuilder,
-    VectorParamsBuilder, WithPayloadSelector, WithVectorsSelector,
-    DeleteCollectionBuilder, PointsIdsList, DeletePointsBuilder,
-    value::Kind,
+    VectorParamsBuilder, DeleteCollectionBuilder, PointsIdsList, DeletePointsBuilder,
+    value::Kind, with_payload_selector, with_vectors_selector,
 };
 use qdrant_client::Qdrant;
 
@@ -205,8 +204,8 @@ impl QdrantGraph {
         loop {
             let mut builder = ScrollPointsBuilder::new(&collection)
                 .limit(100)
-                .with_payload(WithPayloadSelector::from(true))
-                .with_vectors(WithVectorsSelector::from(false));
+                .with_payload(with_payload_selector::SelectorOptions::from(true))
+                .with_vectors(with_vectors_selector::SelectorOptions::from(false));
             if let Some(ref o) = offset {
                 builder = builder.offset(o.clone());
             }
@@ -263,8 +262,8 @@ impl QdrantGraph {
         loop {
             let mut builder = ScrollPointsBuilder::new(collection)
                 .limit(100)
-                .with_payload(WithPayloadSelector::from(true))
-                .with_vectors(WithVectorsSelector::from(with_vectors));
+                .with_payload(with_payload_selector::SelectorOptions::from(true))
+                .with_vectors(with_vectors_selector::SelectorOptions::from(with_vectors));
             if let Some(ref f) = filter {
                 builder = builder.filter(f.clone());
             }
@@ -282,15 +281,14 @@ impl QdrantGraph {
     }
 
     fn extract_vectors(point: &qdrant_client::qdrant::RetrievedPoint) -> Vec<f32> {
+        use qdrant_client::qdrant::vector_output::Vector;
         point
             .vectors
             .as_ref()
-            .and_then(|vs| {
-                use qdrant_client::qdrant::vectors::VectorsOptions;
-                match &vs.vectors_options {
-                    Some(VectorsOptions::Vector(v)) => Some(v.data.clone()),
-                    _ => None,
-                }
+            .and_then(|vs| vs.get_vector())
+            .and_then(|v| match v {
+                Vector::Dense(dv) => Some(dv.data),
+                _ => None,
             })
             .unwrap_or_default()
     }
@@ -426,10 +424,11 @@ impl GraphBackend for QdrantGraph {
                 let emb = r
                     .vectors
                     .as_ref()
-                    .and_then(|vs| {
-                        use qdrant_client::qdrant::vectors::VectorsOptions;
-                        match &vs.vectors_options {
-                            Some(VectorsOptions::Vector(v)) => Some(v.data.clone()),
+                    .and_then(|vs| vs.get_vector())
+                    .and_then(|v| {
+                        use qdrant_client::qdrant::vector_output::Vector;
+                        match v {
+                            Vector::Dense(dv) => Some(dv.data),
                             _ => None,
                         }
                     })
@@ -532,10 +531,11 @@ impl GraphBackend for QdrantGraph {
             let emb = r
                 .vectors
                 .as_ref()
-                .and_then(|vs| {
-                    use qdrant_client::qdrant::vectors::VectorsOptions;
-                    match &vs.vectors_options {
-                        Some(VectorsOptions::Vector(v)) => Some(v.data.clone()),
+                .and_then(|vs| vs.get_vector())
+                .and_then(|v| {
+                    use qdrant_client::qdrant::vector_output::Vector;
+                    match v {
+                        Vector::Dense(dv) => Some(dv.data),
                         _ => None,
                     }
                 })
@@ -666,13 +666,7 @@ impl GraphBackend for QdrantGraph {
             return Ok(vec![]);
         }
 
-        let filter = Filter::must(vec![Condition::is_null("invalid_at")]).should(vec![
-            Condition::matches("from_id", node_id.to_string()),
-            Condition::matches("to_id", node_id.to_string()),
-        ]);
-
-        // Actually we need (invalid_at IS NULL) AND (from_id = node_id OR to_id = node_id)
-        // Qdrant filter: must = [is_null(invalid_at), should([from_id match, to_id match])]
+        // (invalid_at IS NULL) AND (from_id = node_id OR to_id = node_id)
         let filter = Filter::must(vec![
             Condition::is_null("invalid_at"),
             Condition::from(Filter::should(vec![
@@ -803,7 +797,7 @@ impl GraphBackend for QdrantGraph {
         self.client
             .set_payload(
                 SetPayloadPointsBuilder::new(&collection, payload)
-                    .points_selector(vec![point_id.into()])
+                    .points_selector(PointsIdsList::from(vec![PointId::from(point_id)]))
                     .wait(true),
             )
             .await?;
@@ -1264,10 +1258,11 @@ impl GraphBackend for QdrantGraph {
                 let emb = r
                     .vectors
                     .as_ref()
-                    .and_then(|vs| {
-                        use qdrant_client::qdrant::vectors::VectorsOptions;
-                        match &vs.vectors_options {
-                            Some(VectorsOptions::Vector(v)) => Some(v.data.clone()),
+                    .and_then(|vs| vs.get_vector())
+                    .and_then(|v| {
+                        use qdrant_client::qdrant::vector_output::Vector;
+                        match v {
+                            Vector::Dense(dv) => Some(dv.data),
                             _ => None,
                         }
                     })
@@ -1311,7 +1306,7 @@ impl GraphBackend for QdrantGraph {
         self.client
             .set_payload(
                 SetPayloadPointsBuilder::new(&collection, payload)
-                    .points_selector(vec![point_id.into()])
+                    .points_selector(PointsIdsList::from(vec![PointId::from(point_id)]))
                     .wait(true),
             )
             .await?;
@@ -1332,7 +1327,7 @@ impl GraphBackend for QdrantGraph {
         self.client
             .set_payload(
                 SetPayloadPointsBuilder::new(&collection, payload)
-                    .points_selector(vec![point_id.into()])
+                    .points_selector(PointsIdsList::from(vec![PointId::from(point_id)]))
                     .wait(true),
             )
             .await?;
