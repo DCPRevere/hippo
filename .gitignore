@@ -4,6 +4,8 @@
 .pytest_cache/
 .venv/
 target/
+site/wasm/
+hippo-wasm/pkg/
 __pycache__/
 dist/
 node_modules/

@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hippo — Graph-Native Memory for AI Agents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <style>
 @font-face {
   font-family: 'Mono';
@@ -36,7 +39,7 @@
   --rose-400: #FB7185;
   --green-400: #4ADE80;
   --font-mono: 'Mono', 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
-  --font-body: 'Georgia', 'Palatino Linotype', 'Book Antiqua', 'Palatino', serif;
+  --font-body: 'EB Garamond', 'Georgia', 'Palatino Linotype', 'Book Antiqua', 'Palatino', serif;
 }
 
 html { scroll-behavior: smooth; }
@@ -356,7 +359,7 @@ section {
 
 .section-desc {
   color: var(--text-secondary);
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   max-width: 600px;
   margin-bottom: 3.5rem;
 }
@@ -1165,11 +1168,11 @@ footer {
 
 /* ─── PLAYGROUND ─── */
 .playground-section {
+  padding: 0 2rem;
   background: linear-gradient(180deg, transparent 0%, rgba(139, 92, 246, 0.02) 50%, transparent 100%);
 }
 
 .pg-container {
-  max-width: 720px;
   margin: 0 auto;
 }
 
@@ -1728,10 +1731,9 @@ footer {
 <!-- PRICING -->
 <section class="pricing-section" id="pricing">
   <div class="container">
-    <div class="section-header">
-      <h2 class="reveal">Simple, transparent <span style="color: var(--violet-400)">pricing</span></h2>
-      <p class="reveal reveal-delay-1">Scale as your agents grow.</p>
-    </div>
+    <div class="section-label reveal">Pricing</div>
+    <h2 class="section-title reveal reveal-delay-1">Simple, transparent <span style="color: var(--violet-400)">pricing</span></h2>
+    <p class="section-desc reveal reveal-delay-2">Scale as your agents grow.</p>
 
     <div class="pricing-grid">
       <div class="pricing-card reveal reveal-delay-1">
@@ -1795,10 +1797,9 @@ footer {
 <!-- PLAYGROUND -->
 <section class="playground-section" id="playground">
   <div class="container">
-    <div class="section-header">
-      <h2 class="reveal">Try it in your <span style="color: var(--violet-400)">browser</span></h2>
-      <p class="reveal reveal-delay-1">No sign-up. No server. Powered by WebAssembly.</p>
-    </div>
+    <div class="section-label reveal">Playground</div>
+    <h2 class="section-title reveal reveal-delay-1">Try it in your <span style="color: var(--violet-400)">browser</span></h2>
+    <p class="section-desc reveal reveal-delay-2">No sign-up. No server. Powered by WebAssembly.</p>
 
     <div class="pg-container reveal reveal-delay-2">
       <div class="pg-setup" id="pg-setup">
@@ -1835,7 +1836,7 @@ footer {
         <span><span class="pg-stat-val" id="pg-facts">0</span> facts</span>
       </div>
 
-      <p class="pg-note">Runs entirely in your browser. No data leaves your machine.</p>
+      <p class="pg-note">Runs entirely in your browser. Your API key is sent to OpenAI for LLM calls but never to Hippo or any other service.</p>
     </div>
   </div>
 </section>
