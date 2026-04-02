@@ -535,6 +535,43 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
         self.call(&system, &user, 1024).await
     }
 
+    pub async fn identify_missing_context(
+        &self,
+        question: &str,
+        facts: &[crate::models::ContextFact],
+    ) -> Result<Vec<String>> {
+        if self.mock_mode || facts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let system = "You are a knowledge graph assistant. Given a question and a set of known facts, \
+            determine if additional context about specific entities is needed to answer the question. \
+            If the facts are sufficient, return an empty array. \
+            If not, return the names of entities you need more facts about — specifically entities \
+            that appear in the facts but whose relationships to each other are unclear. \
+            Return ONLY valid JSON with no markdown.";
+
+        let facts_block = facts.iter()
+            .map(|f| format!("- {} ({}→{})", f.fact, f.subject, f.object))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let user = format!(
+            "Question: {question}\n\nKnown facts:\n{facts_block}\n\n\
+            Return JSON: {{\"entities\": [\"EntityName\", ...]}}\n\
+            Return {{\"entities\": []}} if the facts are sufficient to answer."
+        );
+
+        let text = self.call(system, &user, 256).await?;
+        let text = clean_json(&text);
+        let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        let entities = v["entities"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        Ok(entities)
+    }
+
     pub async fn extract_operations(
         &self,
         statement: &str,
@@ -1082,6 +1119,14 @@ impl LlmService for LlmClient {
         user_display_name: Option<&str>,
     ) -> Result<String> {
         LlmClient::synthesise_answer(self, question, facts, user_display_name).await
+    }
+
+    async fn identify_missing_context(
+        &self,
+        question: &str,
+        facts: &[crate::models::ContextFact],
+    ) -> Result<Vec<String>> {
+        LlmClient::identify_missing_context(self, question, facts).await
     }
 
     async fn find_missing_inferences(

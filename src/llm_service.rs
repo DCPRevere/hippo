@@ -57,6 +57,15 @@ pub trait LlmService: Send + Sync {
         user_display_name: Option<&str>,
     ) -> Result<String>;
 
+    /// Given a question and known facts, identify entity names that need
+    /// additional context to answer the question fully.  Returns an empty
+    /// vec when the facts are sufficient.
+    async fn identify_missing_context(
+        &self,
+        question: &str,
+        facts: &[ContextFact],
+    ) -> Result<Vec<String>>;
+
     async fn find_missing_inferences(
         &self,
         entity_name: &str,

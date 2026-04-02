@@ -418,13 +418,21 @@ pub struct AskRequest {
     pub graph: Option<String>,
     #[serde(default)]
     pub verbose: bool,
+    /// Maximum LLM refinement iterations for context gathering (default 1).
+    /// Each iteration lets the LLM request additional entities, expanding the
+    /// subgraph before synthesizing the final answer.
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: usize,
 }
+
+fn default_max_iterations() -> usize { 1 }
 
 #[derive(Debug, Serialize)]
 pub struct AskResponse {
     pub answer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub facts: Option<Vec<ContextFact>>,
+    pub iterations: usize,
 }
 
 // Admin seed types (for direct graph seeding in tests)

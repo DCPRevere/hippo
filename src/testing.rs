@@ -222,6 +222,14 @@ impl LlmService for FakeLlm {
             }))
     }
 
+    async fn identify_missing_context(
+        &self,
+        _question: &str,
+        _facts: &[ContextFact],
+    ) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+
     async fn find_missing_inferences(
         &self,
         _entity_name: &str,

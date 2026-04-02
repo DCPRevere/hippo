@@ -552,7 +552,7 @@ pub async fn gather_pre_extraction_context_at(
 }
 
 /// Search graph by entity names to find context that wasn't in the initial search.
-async fn gather_context_by_names(
+pub async fn gather_context_by_names(
     graph: &dyn GraphBackend,
     names: &[String],
     existing: &GraphContext,
