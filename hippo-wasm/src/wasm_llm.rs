@@ -171,10 +171,23 @@ Rules:
 - Generate BOTH directions for asymmetric relations: PARENT_OF needs a matching CHILD_OF.
 - Generate only ONE direction for symmetric relations: MARRIED_TO, SIBLING_OF, KNOWS.
 - Properties (surname, date_of_birth, nationality) go in create_node properties or update_node set, NOT as edges.
+- When you learn an entity's full name (e.g. "James" becomes "James Taylor"), use update_node with "name" in the set field to rename it. Do NOT create SURNAME edges — update the name directly.
+- The node with a "user_id" property is the person saying "I"/"me"/"my". Use its id for first-person references. If no such node exists in the subgraph, create one with the user's actual name (or "Me" if unknown) and set the property "user_id" to the value from the subgraph context.
 - Confidence: 0.9+ for explicitly stated facts, 0.7-0.9 for inferred facts.
 - Resolve pronouns ("they", "he", "she") to the correct entities from context.
+- "Widower" means spouse has died — model as MARRIED_TO edge (DECEASED on the spouse captures the temporal aspect).
 
-Respond with JSON only: {"operations": [...]}"#;
+You MUST use EXACTLY this JSON schema. The discriminator field is "op" (NOT "operation").
+
+create_node: {"op": "create_node", "ref": "n1", "name": "Alice", "type": "person", "properties": {}}
+update_node: {"op": "update_node", "id": "<existing-node-id>", "set": {"name": "New Name"}}
+create_edge: {"op": "create_edge", "from": "n1", "to": "n2", "relation": "KNOWS", "fact": "Alice knows Bob", "confidence": 0.9}
+invalidate_edge: {"op": "invalidate_edge", "edge_id": 123, "fact": "old fact text", "reason": "superseded"}
+
+"type" must be one of: person, place, organization, event, concept, content, unknown.
+"relation" must be UPPER_SNAKE_CASE (e.g. PARENT_OF, WORKS_AT, MARRIED_TO).
+
+Respond with ONLY valid JSON: {"operations": [...]}"#;
 
         let user = format!("Subgraph:\n{subgraph_json}\n\nNew statement: \"{statement}\"");
         let text = self.call(system, &user, 4096).await?;
@@ -191,10 +204,14 @@ Respond with JSON only: {"operations": [...]}"#;
         let subgraph_json = additional_context.to_json();
         let ops_json = serde_json::to_string_pretty(original_ops)?;
         let system = "You are a knowledge graph mutation planner. You previously planned operations \
-            but now have additional graph context. Revise the operations if needed. \
-            Respond with the same JSON format: {\"operations\": [...]}";
+            but now have additional graph context. Revise the operations if needed — for example, \
+            convert create_node to update_node if you now see the entity already exists, or add \
+            new edges based on the additional context. \
+            Use the same JSON schema: the discriminator field is \"op\" (not \"operation\"). \
+            Return ONLY valid JSON with no markdown, no explanation: {\"operations\": [...]}";
         let user = format!(
-            "Additional context:\n{subgraph_json}\n\nOriginal operations:\n{ops_json}\n\nRevise if needed."
+            "Original planned operations:\n{ops_json}\n\nAdditional subgraph context discovered:\n{subgraph_json}\n\n\
+            Revise the operations. Return the COMPLETE final operations list (not just changes)."
         );
         let text = self.call(system, &user, 4096).await?;
         let text = clean_json(&text);
@@ -315,6 +332,43 @@ Respond with JSON only: {"operations": [...]}"#;
         );
         let user = format!("Facts:\n{facts_text}\n\nQuestion: {question}");
         self.call(&system, &user, 1024).await
+    }
+
+    async fn identify_missing_context(
+        &self,
+        question: &str,
+        facts: &[ContextFact],
+    ) -> Result<Vec<String>> {
+        if facts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let system = "You are a knowledge graph assistant. Given a question and a set of known facts, \
+            determine if additional context about specific entities is needed to answer the question. \
+            If the facts are sufficient, return an empty array. \
+            If not, return the names of entities you need more facts about — specifically entities \
+            that appear in the facts but whose relationships to each other are unclear. \
+            Return ONLY valid JSON with no markdown.";
+
+        let facts_block = facts.iter()
+            .map(|f| format!("- {} ({}→{})", f.fact, f.subject, f.object))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let user = format!(
+            "Question: {question}\n\nKnown facts:\n{facts_block}\n\n\
+            Return JSON: {{\"entities\": [\"EntityName\", ...]}}\n\
+            Return {{\"entities\": []}} if the facts are sufficient to answer."
+        );
+
+        let text = self.call(system, &user, 256).await?;
+        let text = clean_json(&text);
+        let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        let entities = v["entities"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        Ok(entities)
     }
 
     async fn find_missing_inferences(
