@@ -6,5 +6,5 @@ if ! command -v wasm-pack &> /dev/null; then
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 fi
 cd "$(dirname "$0")"
-wasm-pack build --target web --out-dir ../site/wasm
-echo "WASM built → site/wasm/"
+wasm-pack build --target web --out-dir pkg --scope dcprevere
+echo "WASM built → hippo-wasm/pkg/"

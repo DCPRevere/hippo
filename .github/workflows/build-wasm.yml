@@ -2,7 +2,7 @@ name: Build WASM
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'hippo-wasm/**'
   workflow_dispatch:
@@ -22,9 +22,3 @@ jobs:
 
       - name: Build WASM
         run: bash hippo-wasm/build.sh
-
-      - name: Commit WASM artifacts
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "build: update WASM artifacts"
-          file_pattern: site/wasm/
