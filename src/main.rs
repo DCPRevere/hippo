@@ -118,10 +118,10 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // Initialise audit log
+    // Initialise audit log (channel-backed background worker)
     let audit = {
         let audit_graph = graphs.get(audit::AUDIT_GRAPH).await;
-        Some(Arc::new(audit::AuditLog::new(audit_graph)))
+        Some(Arc::new(audit::AuditLog::spawn(audit_graph)))
     };
 
     // Rate limiter

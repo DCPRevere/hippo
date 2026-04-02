@@ -15,7 +15,6 @@ use tokio_stream::StreamExt as _;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-use crate::audit::AuditEntry;
 use crate::auth::Auth;
 use crate::error::AppError;
 use crate::models::{
@@ -181,7 +180,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         // API key management
         .route("/admin/users/{user_id}/keys", post(admin_create_key_handler))
         .route("/admin/users/{user_id}/keys", get(admin_list_keys_handler))
-        .route("/admin/users/{user_id}/keys/{label}", delete(admin_revoke_key_handler));
+        .route("/admin/users/{user_id}/keys/{label}", delete(admin_revoke_key_handler))
+        // Audit log
+        .route("/admin/audit", get(admin_audit_handler));
 
     let ui_dir = std::env::var("HIPPO_UI_DIR").unwrap_or_else(|_| "ui/build".to_string());
     let ui_service = ServeDir::new(&ui_dir)
@@ -204,15 +205,7 @@ async fn remember_handler(
     ValidJson(req): ValidJson<RememberRequest>,
 ) -> Result<JsonOk, AppError> {
     let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "remember".into(),
-            details: format!("statement: {}", &req.statement[..80.min(req.statement.len())]),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "remember", format!("statement: {}", &req.statement[..80.min(req.statement.len())]));
     let resp = remember::remember(&state, &*graph, req, None, Some(&user.user_id)).await?;
     Ok(json_ok(resp))
 }
@@ -592,15 +585,7 @@ async fn seed_handler(
         edges_created += 1;
     }
 
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "seed".into(),
-            details: format!("entities: {entities_created}, edges: {edges_created}"),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "seed", format!("entities: {entities_created}, edges: {edges_created}"));
 
     Ok(json_ok(AdminSeedResponse {
         entities_created,
@@ -775,15 +760,7 @@ async fn graphs_drop_handler(
         state.metrics.reset();
     }
 
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "graph.drop".into(),
-            details: format!("graph: {name}"),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "graph.drop", format!("graph: {name}"));
 
     Ok(json_ok(serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") })))
 }
@@ -820,15 +797,7 @@ async fn admin_create_user_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "user.create".into(),
-            details: format!("user_id: {}", req.user_id),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "user.create", format!("user_id: {}", req.user_id));
 
     Ok(json_ok(serde_json::json!({
         "user_id": req.user_id,
@@ -870,15 +839,7 @@ async fn admin_delete_user_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "user.delete".into(),
-            details: format!("user_id: {user_id}"),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "user.delete", format!("user_id: {user_id}"));
 
     Ok(json_ok(serde_json::json!({ "ok": true })))
 }
@@ -917,15 +878,7 @@ async fn admin_create_key_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "key.create".into(),
-            details: format!("user_id: {user_id}, label: {}", req.label),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "key.create", format!("user_id: {user_id}, label: {}", req.label));
 
     Ok(json_ok(serde_json::json!({
         "user_id": user_id,
@@ -967,15 +920,39 @@ async fn admin_revoke_key_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    if let Some(ref audit) = state.audit {
-        let audit = Arc::clone(audit);
-        let entry = AuditEntry {
-            user_id: user.user_id.clone(),
-            action: "key.revoke".into(),
-            details: format!("user_id: {user_id}, label: {label}"),
-        };
-        tokio::spawn(async move { audit.log(entry).await });
-    }
+    state.emit_audit(&user.user_id, "key.revoke", format!("user_id: {user_id}, label: {label}"));
 
     Ok(json_ok(serde_json::json!({ "ok": true })))
+}
+
+// -- Admin audit log ----------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+struct AuditQuery {
+    user_id: Option<String>,
+    action: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn admin_audit_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    Query(params): Query<AuditQuery>,
+) -> Result<JsonOk, AppError> {
+    if !user.is_admin() {
+        return Err(AppError::forbidden("admin access required"));
+    }
+
+    let audit_graph = state.graph_registry().get(crate::audit::AUDIT_GRAPH).await;
+    let limit = params.limit.unwrap_or(100).min(500);
+    let entries = crate::audit::query_audit_log(
+        &*audit_graph,
+        params.user_id.as_deref(),
+        params.action.as_deref(),
+        limit,
+    )
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(json_ok(serde_json::json!({ "entries": entries })))
 }

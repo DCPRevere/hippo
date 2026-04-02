@@ -66,6 +66,23 @@ impl AppState {
         }
     }
 
+    /// Record an audit event. No-op if audit is disabled.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn emit_audit(
+        &self,
+        user_id: impl Into<String>,
+        action: impl Into<String>,
+        details: impl Into<String>,
+    ) {
+        if let Some(ref audit) = self.audit {
+            audit.log(crate::audit::AuditEntry {
+                user_id: user_id.into(),
+                action: action.into(),
+                details: details.into(),
+            });
+        }
+    }
+
     /// Resolve a graph by name and check that the user has access.
     pub async fn resolve_graph_for_user(
         &self,
