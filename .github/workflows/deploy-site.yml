@@ -1,0 +1,23 @@
+name: Deploy site to Hetzner
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy site via rsync
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete
+          path: site/
+          remote_path: /var/www/hippoai.dev/
+          remote_host: 159.69.92.65
+          remote_user: root
+          remote_key: ${{ secrets.HETZNER_SSH_KEY }}
