@@ -20,6 +20,7 @@ pub struct WasmLlmClient {
 #[derive(Serialize)]
 struct ChatRequest {
     model: String,
+    #[serde(rename = "max_completion_tokens")]
     max_tokens: u32,
     messages: Vec<ChatMessage>,
 }
