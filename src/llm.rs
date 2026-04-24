@@ -9,9 +9,7 @@ use tokio::sync::RwLock;
 
 use crate::config::LlmProvider;
 use crate::fixtures::{self, FixtureStore, LlmFixture};
-use crate::models::{
-    EdgeClassification, EntityRow, ExtractedEntity, EMBEDDING_DIM,
-};
+use crate::models::{EdgeClassification, EntityRow, ExtractedEntity, EMBEDDING_DIM};
 
 /// Typed error for LLM provider failures.
 ///
@@ -48,14 +46,16 @@ pub const RELATION_PAIRS: &[(&str, &str)] = &[
 
 /// Returns the inverse relation type if one exists in the canonical pairs.
 pub fn inverse_relation(relation_type: &str) -> Option<&'static str> {
-    RELATION_PAIRS.iter()
+    RELATION_PAIRS
+        .iter()
         .find(|(fwd, _)| *fwd == relation_type)
         .map(|(_, inv)| *inv)
 }
 
 /// Returns true if the relation is symmetric (inverse equals itself).
 pub fn is_symmetric(relation_type: &str) -> bool {
-    RELATION_PAIRS.iter()
+    RELATION_PAIRS
+        .iter()
         .any(|(fwd, inv)| *fwd == relation_type && *fwd == *inv)
 }
 
@@ -187,6 +187,7 @@ struct OllamaEmbeddingResponse {
 }
 
 impl LlmClient {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         auth: AnthropicAuth,
         model: String,
@@ -200,7 +201,14 @@ impl LlmClient {
     ) -> Self {
         let fixture_store = Arc::new(RwLock::new(FixtureStore::load(&fixture_path)));
         Self {
-            http, auth, model, ollama_url, fixture_mode, fixture_store, fixture_path, mock_mode,
+            http,
+            auth,
+            model,
+            ollama_url,
+            fixture_mode,
+            fixture_store,
+            fixture_path,
+            mock_mode,
             provider: LlmProvider::Anthropic,
             openai_api_key: None,
             openai_base_url: "https://api.openai.com/v1".to_string(),
@@ -245,7 +253,11 @@ impl LlmClient {
         let facts_block = if candidate_facts.is_empty() {
             String::new()
         } else {
-            let facts_str = candidate_facts.iter().map(|f| format!("  - \"{f}\"")).collect::<Vec<_>>().join("\n");
+            let facts_str = candidate_facts
+                .iter()
+                .map(|f| format!("  - \"{f}\""))
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("\nKnown facts about Entity B:\n{facts_str}\n")
         };
 
@@ -268,9 +280,8 @@ Return: {{"same_entity": true/false, "confidence": 0.0-1.0}}"#,
 
         let text = self.call(system, &user, 256).await?;
         let text = clean_json(&text);
-        let v: Value = serde_json::from_str(text).with_context(|| {
-            format!("failed to parse entity resolution — LLM returned: {text}")
-        })?;
+        let v: Value = serde_json::from_str(text)
+            .with_context(|| format!("failed to parse entity resolution — LLM returned: {text}"))?;
         let same = v["same_entity"].as_bool().unwrap_or(false);
         let confidence = v["confidence"].as_f64().unwrap_or(0.0) as f32;
         Ok((same, confidence))
@@ -283,7 +294,11 @@ Return: {{"same_entity": true/false, "confidence": 0.0-1.0}}"#,
         pairs: &[(String, String, String, String, Vec<String>)], // (a_name, a_type, b_name, b_type, b_facts)
     ) -> Result<Vec<(usize, bool, f32)>> {
         if self.mock_mode || pairs.is_empty() {
-            return Ok(pairs.iter().enumerate().map(|(i, _)| (i, false, 0.5)).collect());
+            return Ok(pairs
+                .iter()
+                .enumerate()
+                .map(|(i, _)| (i, false, 0.5))
+                .collect());
         }
 
         let system = "You are an entity resolution agent. For each numbered pair, decide whether \
@@ -294,10 +309,19 @@ Return: {{"same_entity": true/false, "confidence": 0.0-1.0}}"#,
         let mut pairs_block = String::new();
         for (i, (a_name, a_type, b_name, b_type, b_facts)) in pairs.iter().enumerate() {
             pairs_block.push_str(&format!("Pair {i}:\n"));
-            pairs_block.push_str(&format!("  Entity A: name=\"{a_name}\", type=\"{a_type}\"\n"));
-            pairs_block.push_str(&format!("  Entity B: name=\"{b_name}\", type=\"{b_type}\"\n"));
+            pairs_block.push_str(&format!(
+                "  Entity A: name=\"{a_name}\", type=\"{a_type}\"\n"
+            ));
+            pairs_block.push_str(&format!(
+                "  Entity B: name=\"{b_name}\", type=\"{b_type}\"\n"
+            ));
             if !b_facts.is_empty() {
-                let facts_str = b_facts.iter().take(5).map(|f| format!("    - \"{f}\"")).collect::<Vec<_>>().join("\n");
+                let facts_str = b_facts
+                    .iter()
+                    .take(5)
+                    .map(|f| format!("    - \"{f}\""))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 pairs_block.push_str(&format!("  Known facts about B:\n{facts_str}\n"));
             }
             pairs_block.push('\n');
@@ -312,8 +336,9 @@ Return a JSON array:
 
         let text = self.call(system, &user, self.max_tokens).await?;
         let text = clean_json(&text);
-        let items: Vec<Value> = serde_json::from_str(text)
-            .with_context(|| format!("failed to parse batch entity resolution — LLM returned: {text}"))?;
+        let items: Vec<Value> = serde_json::from_str(text).with_context(|| {
+            format!("failed to parse batch entity resolution — LLM returned: {text}")
+        })?;
 
         let mut results = Vec::with_capacity(items.len());
         for item in items {
@@ -355,8 +380,9 @@ Return: {{"classification": "contradiction", "confidence": 0.9}}"#
 
         let text = self.call(system, &user, 256).await?;
         let text = clean_json(&text);
-        let v: Value = serde_json::from_str(text)
-            .with_context(|| format!("failed to parse edge classification — LLM returned: {text}"))?;
+        let v: Value = serde_json::from_str(text).with_context(|| {
+            format!("failed to parse edge classification — LLM returned: {text}")
+        })?;
         let classification = match v["classification"].as_str().unwrap_or("unrelated") {
             "duplicate" => EdgeClassification::Duplicate,
             "contradiction" => EdgeClassification::Contradiction,
@@ -393,10 +419,18 @@ Should these entities have a direct relationship edge?
 Return: {{"create_edge": false, "relation_type": null, "fact": null, "confidence": 0.0}}"#,
             a.name,
             a.entity_type,
-            a_facts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n"),
+            a_facts
+                .iter()
+                .map(|f| format!("- {f}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
             b.name,
             b.entity_type,
-            b_facts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n"),
+            b_facts
+                .iter()
+                .map(|f| format!("- {f}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
         );
 
         let text = self.call(system, &user, 256).await?;
@@ -430,7 +464,11 @@ Return: {{"create_edge": false, "relation_type": null, "fact": null, "confidence
 
         facts_block.push_str("\nNeighbour facts:\n");
         for (name, facts) in neighbor_facts {
-            let facts_str = facts.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", ");
+            let facts_str = facts
+                .iter()
+                .map(|f| format!("\"{f}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
             facts_block.push_str(&format!("- {name}: {facts_str}\n"));
         }
 
@@ -464,8 +502,9 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
             confidence: f32,
         }
 
-        let inferences: Vec<Inference> = serde_json::from_str(text)
-            .with_context(|| format!("failed to parse missing inferences — LLM returned: {text}"))?;
+        let inferences: Vec<Inference> = serde_json::from_str(text).with_context(|| {
+            format!("failed to parse missing inferences — LLM returned: {text}")
+        })?;
         Ok(inferences
             .into_iter()
             .map(|i| (i.relation_type, i.object, i.fact, i.confidence))
@@ -479,18 +518,24 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
         gap_types: &[String],
     ) -> Result<Vec<String>> {
         if self.mock_mode {
-            return Ok(gap_types.iter()
+            return Ok(gap_types
+                .iter()
                 .map(|g| format!("What is {entity_name}'s {g}?"))
                 .collect());
         }
 
-        let system = "You are a knowledge gap analyst. Given known facts about an entity and identified \
+        let system =
+            "You are a knowledge gap analyst. Given known facts about an entity and identified \
             gap areas, generate specific questions that would fill those gaps.";
 
         let facts_list = if known_facts.is_empty() {
             "(none)".to_string()
         } else {
-            known_facts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n")
+            known_facts
+                .iter()
+                .map(|f| format!("- {f}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         let gaps_list = gap_types.join(", ");
 
@@ -540,7 +585,8 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
         let facts_block = if facts.is_empty() {
             "No relevant facts found.".to_string()
         } else {
-            facts.iter()
+            facts
+                .iter()
                 .map(|f| format!("- {} (confidence: {:.0}%)", f.fact, f.confidence * 100.0))
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -569,7 +615,8 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
             that appear in the facts but whose relationships to each other are unclear. \
             Return ONLY valid JSON with no markdown.";
 
-        let facts_block = facts.iter()
+        let facts_block = facts
+            .iter()
             .map(|f| format!("- {} ({}→{})", f.fact, f.subject, f.object))
             .collect::<Vec<_>>()
             .join("\n");
@@ -585,7 +632,11 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
         let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
         let entities = v["entities"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         Ok(entities)
     }
@@ -599,19 +650,24 @@ Only include facts with confidence >= 0.7. Return [] if nothing can be strongly 
             // Simple mock: create nodes for capitalised words, edge between first two
             let names: Vec<String> = statement
                 .split_whitespace()
-                .filter(|w| w.chars().next().map_or(false, |c| c.is_uppercase()))
+                .filter(|w| w.chars().next().is_some_and(|c| c.is_uppercase()))
                 .take(3)
-                .map(|w| w.trim_end_matches(|c: char| !c.is_alphanumeric()).to_string())
+                .map(|w| {
+                    w.trim_end_matches(|c: char| !c.is_alphanumeric())
+                        .to_string()
+                })
                 .collect();
 
-            let mut ops: Vec<crate::models::GraphOp> = names.iter().enumerate().map(|(i, name)| {
-                crate::models::GraphOp::CreateNode {
+            let mut ops: Vec<crate::models::GraphOp> = names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| crate::models::GraphOp::CreateNode {
                     node_ref: Some(format!("n{}", i + 1)),
                     name: name.clone(),
                     node_type: "unknown".to_string(),
                     properties: std::collections::HashMap::new(),
-                }
-            }).collect();
+                })
+                .collect();
 
             if names.len() >= 2 {
                 ops.push(crate::models::GraphOp::CreateEdge {
@@ -645,12 +701,13 @@ Rules:
         let system = if self.extraction_prompt.is_empty() {
             system.to_string()
         } else {
-            format!("{system}\n\nAdditional domain context:\n{}", self.extraction_prompt)
+            format!(
+                "{system}\n\nAdditional domain context:\n{}",
+                self.extraction_prompt
+            )
         };
 
-        let user = format!(
-            "Subgraph:\n{subgraph_json}\n\nNew statement: \"{statement}\""
-        );
+        let user = format!("Subgraph:\n{subgraph_json}\n\nNew statement: \"{statement}\"");
 
         let schema = serde_json::json!({
             "type": "object",
@@ -717,7 +774,8 @@ Rules:
         let subgraph_json = additional_context.to_json();
         let ops_json = serde_json::to_string_pretty(&original_ops)?;
 
-        let system = "You are a knowledge graph mutation planner. You previously planned operations \
+        let system =
+            "You are a knowledge graph mutation planner. You previously planned operations \
             but now have additional graph context. Revise the operations if needed — for example, \
             convert create_node to update_node if you now see the entity already exists, or add \
             new edges based on the additional context. \
@@ -765,7 +823,9 @@ Use the same JSON format: {{"operations": [...]}}"#
 
         match self.http.post(&url).json(&body).send().await {
             Ok(resp) if resp.status().is_success() => {
-                let r: OllamaEmbeddingResponse = resp.json().await
+                let r: OllamaEmbeddingResponse = resp
+                    .json()
+                    .await
                     .context("failed to parse Ollama embedding response")?;
                 if r.embedding.len() == EMBEDDING_DIM {
                     return Ok(normalize(r.embedding));
@@ -793,7 +853,9 @@ Use the same JSON format: {{"operations": [...]}}"#
     }
 
     async fn embed_openai(&self, text: &str, model: &str) -> Result<Vec<f32>> {
-        let api_key = self.openai_api_key.as_deref()
+        let api_key = self
+            .openai_api_key
+            .as_deref()
             .context("OPENAI_API_KEY required for OpenAI embeddings")?;
 
         let url = format!("{}/embeddings", self.openai_base_url);
@@ -802,7 +864,8 @@ Use the same JSON format: {{"operations": [...]}}"#
             input: text.to_string(),
         };
 
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
@@ -814,11 +877,15 @@ Use the same JSON format: {{"operations": [...]}}"#
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            tracing::warn!("OpenAI embeddings error {status}: {body}, falling back to pseudo-embed");
+            tracing::warn!(
+                "OpenAI embeddings error {status}: {body}, falling back to pseudo-embed"
+            );
             return Ok(pseudo_embed(text));
         }
 
-        let r: OpenAIEmbeddingResponse = resp.json().await
+        let r: OpenAIEmbeddingResponse = resp
+            .json()
+            .await
             .context("failed to parse OpenAI embedding response")?;
 
         if let Some(data) = r.data.into_iter().next() {
@@ -851,7 +918,9 @@ Use the same JSON format: {{"operations": [...]}}"#
                 if let Some(fixture) = store.get(&hash) {
                     return Ok(fixture.response.clone());
                 }
-                anyhow::bail!("REPLAY mode: no fixture for hash {hash}. Run with EVAL_RECORD=1 first.");
+                anyhow::bail!(
+                    "REPLAY mode: no fixture for hash {hash}. Run with EVAL_RECORD=1 first."
+                );
             }
             FixtureMode::Record => {
                 let response = self.call_real(system, user, max_tokens).await?;
@@ -904,7 +973,8 @@ Use the same JSON format: {{"operations": [...]}}"#
             _ => "https://api.anthropic.com/v1/messages",
         };
 
-        let mut builder = self.http
+        let mut builder = self
+            .http
             .post(url)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json");
@@ -913,7 +983,10 @@ Use the same JSON format: {{"operations": [...]}}"#
             AnthropicAuth::ApiKey(key) => builder.header("x-api-key", key),
             AnthropicAuth::OAuthToken(token) => builder
                 .header("Authorization", format!("Bearer {token}"))
-                .header("anthropic-beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14,token-counting-2024-11-01"),
+                .header(
+                    "anthropic-beta",
+                    "oauth-2025-04-20,interleaved-thinking-2025-05-14,token-counting-2024-11-01",
+                ),
         };
 
         let req_body = serde_json::to_string(&req).unwrap_or_default();
@@ -931,7 +1004,10 @@ Use the same JSON format: {{"operations": [...]}}"#
             return Err(LlmError::AnthropicApi { status, body }.into());
         }
 
-        let r: AnthropicResponse = resp.json().await.context("failed to parse Anthropic response")?;
+        let r: AnthropicResponse = resp
+            .json()
+            .await
+            .context("failed to parse Anthropic response")?;
         // Extract text from the first text block
         for block in &r.content {
             if block.content_type.as_deref() == Some("text") {
@@ -941,7 +1017,9 @@ Use the same JSON format: {{"operations": [...]}}"#
             }
         }
         // Fallback: try first block's text field regardless of type
-        r.content.into_iter().next()
+        r.content
+            .into_iter()
+            .next()
             .and_then(|c| c.text)
             .context("empty Anthropic response")
     }
@@ -988,7 +1066,8 @@ Use the same JSON format: {{"operations": [...]}}"#
             _ => "https://api.anthropic.com/v1/messages",
         };
 
-        let mut builder = self.http
+        let mut builder = self
+            .http
             .post(url)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json");
@@ -997,7 +1076,10 @@ Use the same JSON format: {{"operations": [...]}}"#
             AnthropicAuth::ApiKey(key) => builder.header("x-api-key", key.as_str()),
             AnthropicAuth::OAuthToken(token) => builder
                 .header("Authorization", format!("Bearer {token}"))
-                .header("anthropic-beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14,token-counting-2024-11-01"),
+                .header(
+                    "anthropic-beta",
+                    "oauth-2025-04-20,interleaved-thinking-2025-05-14,token-counting-2024-11-01",
+                ),
         };
 
         let resp = builder
@@ -1012,13 +1094,15 @@ Use the same JSON format: {{"operations": [...]}}"#
             return Err(LlmError::AnthropicApi { status, body }.into());
         }
 
-        let r: AnthropicResponse = resp.json().await.context("failed to parse Anthropic tool response")?;
+        let r: AnthropicResponse = resp
+            .json()
+            .await
+            .context("failed to parse Anthropic tool response")?;
         for block in r.content {
             if block.content_type.as_deref() == Some("tool_use") {
                 if let Some(input) = block.input {
                     tracing::debug!(tool = %tool_name, input = %input, "LLM tool response");
-                    return serde_json::from_value(input)
-                        .context("failed to parse tool use input");
+                    return serde_json::from_value(input).context("failed to parse tool use input");
                 }
             }
         }
@@ -1026,7 +1110,9 @@ Use the same JSON format: {{"operations": [...]}}"#
     }
 
     async fn call_openai(&self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
-        let api_key = self.openai_api_key.as_deref()
+        let api_key = self
+            .openai_api_key
+            .as_deref()
             .context("OPENAI_API_KEY required for OpenAI provider")?;
 
         let req = OpenAIRequest {
@@ -1045,7 +1131,8 @@ Use the same JSON format: {{"operations": [...]}}"#
         };
 
         let url = format!("{}/chat/completions", self.openai_base_url);
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
@@ -1060,14 +1147,19 @@ Use the same JSON format: {{"operations": [...]}}"#
             return Err(LlmError::OpenAiApi { status, body }.into());
         }
 
-        let r: OpenAIResponse = resp.json().await.context("failed to parse OpenAI response")?;
-        r.choices.into_iter().next()
+        let r: OpenAIResponse = resp
+            .json()
+            .await
+            .context("failed to parse OpenAI response")?;
+        r.choices
+            .into_iter()
+            .next()
             .and_then(|c| c.message.content)
             .context("empty OpenAI response")
     }
 }
 
-pub use crate::math::{clean_json, pseudo_embed, normalize};
+pub use crate::math::{clean_json, normalize, pseudo_embed};
 
 // ---- Trait implementation ----
 

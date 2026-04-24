@@ -7,7 +7,10 @@ use serde_json::Value;
 // -- CLI definition -----------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "hippo-cli", about = "CLI client for the hippo natural-language database")]
+#[command(
+    name = "hippo-cli",
+    about = "CLI client for the hippo natural-language database"
+)]
 struct Cli {
     /// Base URL of the hippo server
     #[arg(long, env = "HIPPO_URL", default_value = "http://localhost:21693")]
@@ -158,8 +161,7 @@ impl ApiClient {
         if !status.is_success() {
             return Err(format!("HTTP {status}: {text}"));
         }
-        serde_json::from_str(&text)
-            .map_err(|_| format!("invalid JSON response: {text}"))
+        serde_json::from_str(&text).map_err(|_| format!("invalid JSON response: {text}"))
     }
 }
 
@@ -188,7 +190,10 @@ fn encode_path(s: &str) -> String {
 // -- Output formatting --------------------------------------------------------
 
 fn print_json(value: &Value) {
-    println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).unwrap_or_default()
+    );
 }
 
 fn print_table_rows(headers: &[&str], rows: &[Vec<String>]) {
@@ -208,7 +213,11 @@ fn print_table_rows(headers: &[&str], rows: &[Vec<String>]) {
         .collect::<Vec<_>>()
         .join("  ");
     println!("{header}");
-    let separator: String = widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("  ");
+    let separator: String = widths
+        .iter()
+        .map(|w| "-".repeat(*w))
+        .collect::<Vec<_>>()
+        .join("  ");
     println!("{separator}");
 
     // Rows
@@ -245,7 +254,11 @@ fn run(cli: Cli) -> Result<(), String> {
             }
         }
 
-        Command::Remember { statement, graph, source_agent } => {
+        Command::Remember {
+            statement,
+            graph,
+            source_agent,
+        } => {
             let mut body = serde_json::json!({ "statement": statement });
             if let Some(g) = graph {
                 body["graph"] = Value::String(g);
@@ -257,7 +270,11 @@ fn run(cli: Cli) -> Result<(), String> {
             print_json(&val);
         }
 
-        Command::Ask { question, graph, verbose } => {
+        Command::Ask {
+            question,
+            graph,
+            verbose,
+        } => {
             let mut body = serde_json::json!({ "question": question, "verbose": verbose });
             if let Some(g) = graph {
                 body["graph"] = Value::String(g);
@@ -266,7 +283,11 @@ fn run(cli: Cli) -> Result<(), String> {
             print_json(&val);
         }
 
-        Command::Context { query, graph, limit } => {
+        Command::Context {
+            query,
+            graph,
+            limit,
+        } => {
             let mut body = serde_json::json!({ "query": query });
             if let Some(g) = graph {
                 body["graph"] = Value::String(g);
@@ -279,7 +300,12 @@ fn run(cli: Cli) -> Result<(), String> {
         }
 
         Command::User { action } => match action {
-            UserAction::Create { user_id, display_name, role, graphs } => {
+            UserAction::Create {
+                user_id,
+                display_name,
+                role,
+                graphs,
+            } => {
                 let body = serde_json::json!({
                     "user_id": user_id,
                     "display_name": display_name,

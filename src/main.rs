@@ -54,7 +54,11 @@ async fn main() -> anyhow::Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
-    let auth = match config.anthropic_auth.as_ref().expect("anthropic_auth resolved in Config::load") {
+    let auth = match config
+        .anthropic_auth
+        .as_ref()
+        .expect("anthropic_auth resolved in Config::load")
+    {
         AnthropicAuth::ApiKey(k) => llm::AnthropicAuth::ApiKey(k.clone()),
         AnthropicAuth::OAuthToken(t) => llm::AnthropicAuth::OAuthToken(t.clone()),
     };
@@ -111,7 +115,10 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("==========================================================");
         }
 
-        tracing::info!("Auth enabled (users stored in {})", hippo::auth::USERS_GRAPH);
+        tracing::info!(
+            "Auth enabled (users stored in {})",
+            hippo::auth::USERS_GRAPH
+        );
         Some(Arc::new(store))
     } else {
         tracing::info!("Auth disabled (set auth.enabled = true to enable)");
@@ -130,7 +137,9 @@ async fn main() -> anyhow::Result<()> {
             "Rate limiting enabled ({} req/min per user)",
             config.rate_limit.requests_per_minute
         );
-        Some(hippo::rate_limit::RateLimiter::new(config.rate_limit.requests_per_minute))
+        Some(hippo::rate_limit::RateLimiter::new(
+            config.rate_limit.requests_per_minute,
+        ))
     } else {
         None
     };
@@ -159,7 +168,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn background maintenance loop
     let maintenance_state = Arc::clone(&state);
-    tokio::spawn(pipeline::maintain::run_maintenance_loop(maintenance_state, shutdown_rx));
+    tokio::spawn(pipeline::maintain::run_maintenance_loop(
+        maintenance_state,
+        shutdown_rx,
+    ));
 
     // Start HTTP server
     let addr = format!("0.0.0.0:{}", state.config.port);

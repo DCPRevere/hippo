@@ -7,8 +7,8 @@ use std::io::{BufRead, Write};
 use serde_json::Value;
 
 fn main() {
-    let base_url = std::env::var("HIPPO_URL")
-        .unwrap_or_else(|_| "http://localhost:21693".to_string());
+    let base_url =
+        std::env::var("HIPPO_URL").unwrap_or_else(|_| "http://localhost:21693".to_string());
     let api_key = std::env::var("HIPPO_API_KEY").ok();
 
     let client = reqwest::blocking::Client::new();
@@ -37,7 +37,9 @@ fn main() {
             "initialize" => mcp::handle_initialize(id),
             "notifications/initialized" => continue,
             "tools/list" => mcp::handle_tools_list(id),
-            "tools/call" => mcp::handle_tool_call(id, params, &client, &base_url, api_key.as_deref()),
+            "tools/call" => {
+                mcp::handle_tool_call(id, params, &client, &base_url, api_key.as_deref())
+            }
             _ => mcp::make_error(id, -32601, "Method not found"),
         };
 

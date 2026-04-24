@@ -288,9 +288,7 @@ async fn eval_multi_hop_retrieval(client: &Client, base: &str) -> EvalResult {
 
     let resp: Value = client
         .post(format!("{base}/context"))
-        .json(
-            &serde_json::json!({ "query": "Carol company location", "limit": 15, "max_hops": 2 }),
-        )
+        .json(&serde_json::json!({ "query": "Carol company location", "limit": 15, "max_hops": 2 }))
         .send()
         .await
         .expect("context failed")
@@ -315,11 +313,7 @@ async fn eval_multi_hop_retrieval(client: &Client, base: &str) -> EvalResult {
 
     let (passed, score, details) = if has_london {
         if london_hops == Some(2) {
-            (
-                true,
-                1.0,
-                "London found via 2-hop traversal".to_string(),
-            )
+            (true, 1.0, "London found via 2-hop traversal".to_string())
         } else {
             let hop_detail =
                 london_hops.map_or("unknown hops".to_string(), |h| format!("at hop {h}"));
@@ -351,7 +345,12 @@ async fn eval_multi_hop_retrieval(client: &Client, base: &str) -> EvalResult {
 
 async fn eval_entity_resolution(client: &Client, base: &str) -> EvalResult {
     let start = Instant::now();
-    remember(client, base, "Alice Chen is a software engineer at Anthropic").await;
+    remember(
+        client,
+        base,
+        "Alice Chen is a software engineer at Anthropic",
+    )
+    .await;
     remember(client, base, "Alice is married to Bob").await;
     remember(client, base, "Alice Chen lives in San Francisco").await;
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -380,11 +379,7 @@ async fn eval_entity_resolution(client: &Client, base: &str) -> EvalResult {
         .count();
 
     let (passed, score, details) = match alice_count {
-        1 if facts_found == 3 => (
-            true,
-            1.0,
-            "1 Alice entity, all facts found".to_string(),
-        ),
+        1 if facts_found == 3 => (true, 1.0, "1 Alice entity, all facts found".to_string()),
         1 => (
             true,
             0.8,
@@ -535,11 +530,7 @@ async fn eval_timeline_history(client: &Client, base: &str) -> EvalResult {
             ),
         )
     } else {
-        (
-            false,
-            0.0,
-            format!("Only {} events returned", events.len()),
-        )
+        (false, 0.0, format!("Only {} events returned", events.len()))
     };
 
     EvalResult {

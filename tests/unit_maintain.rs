@@ -85,12 +85,7 @@ async fn maintain_does_not_promote_low_salience() {
     seed_entity(&graph, "b", "Bob").await;
 
     // Working edge, low salience — should NOT be promoted
-    let rel = make_rel(
-        "Alice saw Bob",
-        MemoryTier::Working,
-        1,
-        Duration::hours(2),
-    );
+    let rel = make_rel("Alice saw Bob", MemoryTier::Working, 1, Duration::hours(2));
     graph.create_edge("a", "b", &rel).await.unwrap();
 
     let promoted = graph.promote_working_memory().await.unwrap();
@@ -181,7 +176,10 @@ async fn maintain_decays_stale_edges() {
     graph.create_edge("a", "b", &rel).await.unwrap();
 
     let stale_before = Utc::now() - Duration::days(30);
-    let decayed = graph.decay_stale_edges(stale_before, Utc::now()).await.unwrap();
+    let decayed = graph
+        .decay_stale_edges(stale_before, Utc::now())
+        .await
+        .unwrap();
     assert_eq!(decayed, 1, "should decay 1 edge");
 
     let edges = graph.dump_all_edges().await.unwrap();

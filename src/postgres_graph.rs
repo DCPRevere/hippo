@@ -45,7 +45,11 @@ impl PostgresGraph {
             .max_connections(10)
             .connect(connection_string)
             .await
-            .map_err(|e| GraphConnectError::new(format!("failed to connect to PostgreSQL at {connection_string}: {e}")))?;
+            .map_err(|e| {
+                GraphConnectError::new(format!(
+                    "failed to connect to PostgreSQL at {connection_string}: {e}"
+                ))
+            })?;
         Ok(Self {
             pool,
             graph_name: graph_name.to_string(),
@@ -72,7 +76,9 @@ fn row_to_edge(row: &sqlx::postgres::PgRow) -> EdgeRow {
     EdgeRow {
         edge_id: row.get("edge_id"),
         subject_id: row.get("subject_id"),
-        subject_name: row.get::<Option<String>, _>("subject_name").unwrap_or_default(),
+        subject_name: row
+            .get::<Option<String>, _>("subject_name")
+            .unwrap_or_default(),
         fact: row.get("fact"),
         relation_type: row.get("relation_type"),
         confidence: row.get("confidence"),
@@ -80,7 +86,9 @@ fn row_to_edge(row: &sqlx::postgres::PgRow) -> EdgeRow {
         valid_at: row.get("valid_at"),
         invalid_at: row.get("invalid_at"),
         object_id: row.get("object_id"),
-        object_name: row.get::<Option<String>, _>("object_name").unwrap_or_default(),
+        object_name: row
+            .get::<Option<String>, _>("object_name")
+            .unwrap_or_default(),
         embedding: deserialize_embedding(&embedding_blob),
         decayed_confidence: row.get("decayed_confidence"),
         source_agents: row.get("source_agents"),
@@ -192,21 +200,29 @@ impl GraphBackend for PostgresGraph {
         .await?;
 
         // Indexes
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_graph_from ON edges(graph_name, from_id)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_edges_graph_from ON edges(graph_name, from_id)",
+        )
+        .execute(&self.pool)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_graph_to ON edges(graph_name, to_id)")
             .execute(&self.pool)
             .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_graph_invalid ON edges(graph_name, invalid_at)")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_entities_graph_name ON entities(graph_name, name)")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(graph_name, relation_type)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_edges_graph_invalid ON edges(graph_name, invalid_at)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_entities_graph_name ON entities(graph_name, name)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(graph_name, relation_type)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         // GIN indexes for fulltext search
         sqlx::query(
@@ -252,10 +268,7 @@ impl GraphBackend for PostgresGraph {
 
     async fn fulltext_search_entities(&self, query_str: &str) -> Result<Vec<EntityRow>> {
         // Try tsvector search first, fall back to ILIKE
-        let tsquery = query_str
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" & ");
+        let tsquery = query_str.split_whitespace().collect::<Vec<_>>().join(" & ");
 
         let rows = sqlx::query(
             "SELECT id, name, entity_type, resolved, hint, content, created_at, embedding
@@ -334,10 +347,7 @@ impl GraphBackend for PostgresGraph {
         query_str: &str,
         at: Option<DateTime<Utc>>,
     ) -> Result<Vec<EdgeRow>> {
-        let tsquery = query_str
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" & ");
+        let tsquery = query_str.split_whitespace().collect::<Vec<_>>().join(" & ");
 
         let rows = if let Some(at) = at {
             let at_str = at.to_rfc3339();
@@ -826,7 +836,9 @@ impl GraphBackend for PostgresGraph {
             SupersessionRecord {
                 old_edge_id: row.get("old_edge_id"),
                 new_edge_id: row.get("new_edge_id"),
-                superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+                superseded_at: at_str
+                    .parse::<DateTime<Utc>>()
+                    .unwrap_or_else(|_| Utc::now()),
                 old_fact: row.get("old_fact"),
                 new_fact: row.get("new_fact"),
             }
@@ -848,7 +860,9 @@ impl GraphBackend for PostgresGraph {
                 SupersessionRecord {
                     old_edge_id: row.get("old_edge_id"),
                     new_edge_id: row.get("new_edge_id"),
-                    superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+                    superseded_at: at_str
+                        .parse::<DateTime<Utc>>()
+                        .unwrap_or_else(|_| Utc::now()),
                     old_fact: row.get("old_fact"),
                     new_fact: row.get("new_fact"),
                 }

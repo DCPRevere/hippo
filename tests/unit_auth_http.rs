@@ -104,7 +104,10 @@ fn delete_auth(uri: &str, key: &str) -> Request<Body> {
 #[tokio::test]
 async fn no_auth_header_returns_401() {
     let (state, _) = test_state_with_auth().await;
-    let req = json_post("/api/remember", r#"{"statement":"hello","source_agent":"t"}"#);
+    let req = json_post(
+        "/api/remember",
+        r#"{"statement":"hello","source_agent":"t"}"#,
+    );
     let (status, body) = send(state, req).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(body.contains("missing or invalid Authorization header"));
@@ -273,11 +276,7 @@ async fn admin_key_lifecycle() {
     assert_eq!(status, StatusCode::OK);
 
     // Create a second key for bob
-    let req = json_post_auth(
-        "/api/admin/users/bob/keys",
-        r#"{"label":"ci"}"#,
-        &admin_key,
-    );
+    let req = json_post_auth("/api/admin/users/bob/keys", r#"{"label":"ci"}"#, &admin_key);
     let (status, body) = send(Arc::clone(&state), req).await;
     assert_eq!(status, StatusCode::OK);
     let ci_key: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -414,7 +413,10 @@ async fn insecure_mode_bypasses_auth() {
     });
 
     // No auth header at all → still 200 (insecure mode)
-    let req = json_post("/api/remember", r#"{"statement":"hello","source_agent":"t"}"#);
+    let req = json_post(
+        "/api/remember",
+        r#"{"statement":"hello","source_agent":"t"}"#,
+    );
     let (status, _) = send(state, req).await;
     assert_eq!(status, StatusCode::OK);
 }

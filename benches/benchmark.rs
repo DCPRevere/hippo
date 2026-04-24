@@ -223,7 +223,12 @@ async fn remember(client: &Client, base_url: &str, statement: &str) -> (Duration
     (elapsed, contradictions)
 }
 
-async fn query_context(client: &Client, base_url: &str, query: &str, limit: usize) -> (Duration, Vec<String>) {
+async fn query_context(
+    client: &Client,
+    base_url: &str,
+    query: &str,
+    limit: usize,
+) -> (Duration, Vec<String>) {
     let start = Instant::now();
     let resp: Value = client
         .post(format!("{base_url}/context"))
@@ -372,10 +377,7 @@ async fn main() {
     // 4. Retrieval evaluation
     // -----------------------------------------------------------------------
     println!();
-    println!(
-        "\u{1f4d6} Retrieval ({} queries)",
-        RETRIEVAL_CASES.len()
-    );
+    println!("\u{1f4d6} Retrieval ({} queries)", RETRIEVAL_CASES.len());
 
     let mut retrieval_latencies: Vec<Duration> = Vec::new();
     let mut hits = 0;
@@ -393,11 +395,7 @@ async fn main() {
         if all_found {
             hits += 1;
             let targets: Vec<&str> = case.must_contain.to_vec();
-            println!(
-                "  {}  \u{2705}  [{} found]",
-                case.query,
-                targets.join(", ")
-            );
+            println!("  {}  \u{2705}  [{} found]", case.query, targets.join(", "));
         } else {
             let mut found = Vec::new();
             let mut missing = Vec::new();
@@ -470,8 +468,6 @@ async fn main() {
     println!();
     println!("\u{1f4ca} Graph stats after benchmark:");
     println!("  Entities: {entity_count}");
-    println!(
-        "  Active facts: {active_count}  ({invalidated_count} contradicted)"
-    );
+    println!("  Active facts: {active_count}  ({invalidated_count} contradicted)");
     println!("  Avg confidence: {avg_conf:.2}");
 }

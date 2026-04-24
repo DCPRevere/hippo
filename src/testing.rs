@@ -9,11 +9,10 @@ use std::sync::Mutex;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::math;
 use crate::llm_service::LlmService;
+use crate::math;
 use crate::models::{
-    ContextFact, EdgeClassification, EntityRow,
-    ExtractedEntity, GraphContext, OperationsResult,
+    ContextFact, EdgeClassification, EntityRow, ExtractedEntity, GraphContext, OperationsResult,
 };
 
 /// A configurable LLM test double.
@@ -23,6 +22,7 @@ use crate::models::{
 ///
 /// Use the builder methods (`with_operations`, `with_classification`, …) to
 /// set up the responses a test expects.
+#[allow(clippy::type_complexity)]
 pub struct FakeLlm {
     operations: Mutex<VecDeque<OperationsResult>>,
     revised_operations: Mutex<VecDeque<OperationsResult>>,
@@ -33,6 +33,12 @@ pub struct FakeLlm {
     answers: Mutex<VecDeque<String>>,
     missing_inferences: Mutex<VecDeque<Vec<(String, String, String, f32)>>>,
     gap_questions: Mutex<VecDeque<Vec<String>>>,
+}
+
+impl Default for FakeLlm {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FakeLlm {
@@ -81,10 +87,7 @@ impl FakeLlm {
     }
 
     /// Enqueue a link discovery result.
-    pub fn with_link_discovery(
-        self,
-        link: Option<(String, String, f32)>,
-    ) -> Self {
+    pub fn with_link_discovery(self, link: Option<(String, String, f32)>) -> Self {
         self.link_discoveries.lock().unwrap().push_back(link);
         self
     }
@@ -128,9 +131,7 @@ impl LlmService for FakeLlm {
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| OperationsResult {
-                operations: vec![],
-            }))
+            .unwrap_or_else(|| OperationsResult { operations: vec![] }))
     }
 
     async fn revise_operations(
@@ -208,18 +209,13 @@ impl LlmService for FakeLlm {
         facts: &[ContextFact],
         _user_display_name: Option<&str>,
     ) -> Result<String> {
-        Ok(self
-            .answers
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| {
-                facts
-                    .iter()
-                    .map(|f| f.fact.clone())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            }))
+        Ok(self.answers.lock().unwrap().pop_front().unwrap_or_else(|| {
+            facts
+                .iter()
+                .map(|f| f.fact.clone())
+                .collect::<Vec<_>>()
+                .join("; ")
+        }))
     }
 
     async fn identify_missing_context(

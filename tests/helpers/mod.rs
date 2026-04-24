@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod fixtures;
 
 use std::net::TcpListener;
@@ -24,7 +26,13 @@ impl Drop for TestAgent {
         let _ = self.child.wait();
         if self.use_falkordb {
             let _ = Command::new("docker")
-                .args(["exec", "hippo-falkordb-1", "redis-cli", "GRAPH.DELETE", &self.graph_name])
+                .args([
+                    "exec",
+                    "hippo-falkordb-1",
+                    "redis-cli",
+                    "GRAPH.DELETE",
+                    &self.graph_name,
+                ])
                 .output();
         }
     }
@@ -75,7 +83,13 @@ async fn start_agent_inner_opts(allow_admin: bool, force_mock: bool) -> TestAgen
     if use_falkordb {
         // Clear the FalkorDB graph before starting
         let _ = Command::new("docker")
-            .args(["exec", "hippo-falkordb-1", "redis-cli", "GRAPH.DELETE", &graph_name])
+            .args([
+                "exec",
+                "hippo-falkordb-1",
+                "redis-cli",
+                "GRAPH.DELETE",
+                &graph_name,
+            ])
             .output();
     }
 
@@ -150,7 +164,11 @@ pub async fn seed_fixture(client: &Client, base_url: &str, fixture: &fixtures::G
         .send()
         .await
         .expect("seed request failed");
-    assert!(resp.status().is_success(), "seed failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "seed failed: {:?}",
+        resp.text().await
+    );
 }
 
 /// Seed a partial graph (custom JSON) via POST /seed.
@@ -161,7 +179,11 @@ pub async fn seed_raw(client: &Client, base_url: &str, body: &serde_json::Value)
         .send()
         .await
         .expect("seed request failed");
-    assert!(resp.status().is_success(), "seed failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "seed failed: {:?}",
+        resp.text().await
+    );
 }
 
 // ---- HTTP helpers ----
@@ -173,7 +195,10 @@ pub async fn remember(client: &Client, base_url: &str, statement: &str) {
         .send()
         .await
         .unwrap_or_else(|e| panic!("remember '{statement}' failed: {e}"));
-    assert!(resp.status().is_success(), "remember failed for: {statement}");
+    assert!(
+        resp.status().is_success(),
+        "remember failed for: {statement}"
+    );
     let _: Value = resp.json().await.expect("remember response not JSON");
 }
 
@@ -200,10 +225,7 @@ pub async fn query_facts(client: &Client, base_url: &str, q: &str, _limit: usize
         .expect("context response not JSON");
 
     // /context now returns GraphContext {nodes, edges} — extract edges as facts
-    resp["edges"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
+    resp["edges"].as_array().cloned().unwrap_or_default()
 }
 
 pub fn fact_strings(facts: &[Value]) -> Vec<String> {
@@ -346,7 +368,10 @@ pub async fn run_eval_case(client: &Client, base_url: &str, case: &EvalCase) -> 
 
     // Check that at least one expected keyword appears
     if !case.must_contain.is_empty() {
-        let any_found = case.must_contain.iter().any(|kw| any_fact_contains(&facts, kw));
+        let any_found = case
+            .must_contain
+            .iter()
+            .any(|kw| any_fact_contains(&facts, kw));
         if !any_found {
             failures.push(format!(
                 "expected at least one of {:?} in results",

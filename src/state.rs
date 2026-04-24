@@ -40,7 +40,9 @@ pub struct AppState {
 impl AppState {
     /// Access the graph registry. Panics in test configurations where no registry is set.
     pub fn graph_registry(&self) -> &GraphRegistry {
-        self.graphs.as_ref().expect("GraphRegistry not available (test mode)")
+        self.graphs
+            .as_ref()
+            .expect("GraphRegistry not available (test mode)")
     }
 
     /// Construct an `AppState` for unit tests (no FalkorDB connection needed).
@@ -100,8 +102,7 @@ impl AppState {
         if !user.can_access_graph(name) {
             return Err(AppError::forbidden(format!(
                 "user '{}' does not have access to graph '{}'",
-                user.user_id,
-                name
+                user.user_id, name
             )));
         }
         Ok(graph)
@@ -116,6 +117,12 @@ pub struct MetricsState {
     pub reflect_calls_total: AtomicU64,
     pub entity_count: AtomicU64,
     pub fact_count: AtomicU64,
+}
+
+impl Default for MetricsState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MetricsState {
@@ -145,11 +152,31 @@ impl MetricsState {
         let mut buf = String::new();
 
         let counters = [
-            ("hippo_remember_calls_total", "Total number of /remember calls", &self.remember_calls_total),
-            ("hippo_facts_written_total", "Total facts written to graph", &self.remember_facts_written),
-            ("hippo_contradictions_total", "Total contradictions detected", &self.remember_contradictions),
-            ("hippo_context_calls_total", "Total /context queries", &self.context_calls_total),
-            ("hippo_reflect_calls_total", "Total /reflect queries", &self.reflect_calls_total),
+            (
+                "hippo_remember_calls_total",
+                "Total number of /remember calls",
+                &self.remember_calls_total,
+            ),
+            (
+                "hippo_facts_written_total",
+                "Total facts written to graph",
+                &self.remember_facts_written,
+            ),
+            (
+                "hippo_contradictions_total",
+                "Total contradictions detected",
+                &self.remember_contradictions,
+            ),
+            (
+                "hippo_context_calls_total",
+                "Total /context queries",
+                &self.context_calls_total,
+            ),
+            (
+                "hippo_reflect_calls_total",
+                "Total /reflect queries",
+                &self.reflect_calls_total,
+            ),
         ];
 
         for (name, help, counter) in &counters {
@@ -159,8 +186,16 @@ impl MetricsState {
         }
 
         let gauges = [
-            ("hippo_entity_count", "Current entity count (from last maintenance)", &self.entity_count),
-            ("hippo_fact_count", "Current active fact count", &self.fact_count),
+            (
+                "hippo_entity_count",
+                "Current entity count (from last maintenance)",
+                &self.entity_count,
+            ),
+            (
+                "hippo_fact_count",
+                "Current active fact count",
+                &self.fact_count,
+            ),
         ];
 
         for (name, help, gauge) in &gauges {

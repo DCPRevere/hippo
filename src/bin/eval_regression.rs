@@ -109,10 +109,7 @@ fn wait_for_health(agent: &AgentProcess) {
             }
         }
     }
-    panic!(
-        "hippo did not become healthy in time (port {})",
-        agent.port
-    );
+    panic!("hippo did not become healthy in time (port {})", agent.port);
 }
 
 // ---- HTTP helpers ----
@@ -123,7 +120,10 @@ fn remember(client: &reqwest::blocking::Client, base: &str, statement: &str, sou
         .json(&serde_json::json!({ "statement": statement, "source_agent": source }))
         .send()
         .unwrap_or_else(|e| panic!("remember failed: {e}"));
-    assert!(resp.status().is_success(), "remember failed for: {statement}");
+    assert!(
+        resp.status().is_success(),
+        "remember failed for: {statement}"
+    );
 }
 
 fn query_facts(
@@ -248,10 +248,7 @@ fn eval_temporal_query(client: &reqwest::blocking::Client, base: &str) -> (bool,
     (passed, if passed { 1.0 } else { 0.0 }, details)
 }
 
-fn eval_multi_hop_retrieval(
-    client: &reqwest::blocking::Client,
-    base: &str,
-) -> (bool, f64, String) {
+fn eval_multi_hop_retrieval(client: &reqwest::blocking::Client, base: &str) -> (bool, f64, String) {
     remember(client, base, "Carol is the CEO of Synodal Inc", "eval");
     remember(
         client,
@@ -280,9 +277,7 @@ fn eval_multi_hop_retrieval(
         .map(|f| f["fact"].as_str().unwrap_or("").to_string())
         .collect();
 
-    let has_london = texts
-        .iter()
-        .any(|f| f.to_lowercase().contains("london"));
+    let has_london = texts.iter().any(|f| f.to_lowercase().contains("london"));
     let details = if has_london {
         "London found via 2-hop traversal".to_string()
     } else {
@@ -324,13 +319,9 @@ fn eval_entity_resolution(client: &reqwest::blocking::Client, base: &str) -> (bo
 
     let passed = alice_count <= 2 && has_anthropic && has_bob && has_sf;
     let details = if passed {
-        format!(
-            "Alice entities: {alice_count}, all facts retrievable"
-        )
+        format!("Alice entities: {alice_count}, all facts retrievable")
     } else {
-        format!(
-            "entities={alice_count} anthropic={has_anthropic} bob={has_bob} sf={has_sf}"
-        )
+        format!("entities={alice_count} anthropic={has_anthropic} bob={has_bob} sf={has_sf}")
     };
     (passed, if passed { 1.0 } else { 0.0 }, details)
 }
@@ -449,10 +440,7 @@ fn eval_confidence_compounding(
         .and_then(|f| f["source_agents"].as_array())
         .cloned()
         .unwrap_or_default();
-    let agent_names: Vec<&str> = source_agents
-        .iter()
-        .filter_map(|s| s.as_str())
-        .collect();
+    let agent_names: Vec<&str> = source_agents.iter().filter_map(|s| s.as_str()).collect();
 
     let confidence_ok = after_confidence >= initial_confidence;
     let agents_ok = agent_names.contains(&"agent-1") && agent_names.contains(&"agent-2");
@@ -484,10 +472,7 @@ fn save_run(run: &EvalRun) -> PathBuf {
     let dir = evals_dir();
     std::fs::create_dir_all(&dir).expect("cannot create ~/.hippo-evals");
 
-    let filename = run
-        .timestamp
-        .format("%Y-%m-%d-%H%M%S.json")
-        .to_string();
+    let filename = run.timestamp.format("%Y-%m-%d-%H%M%S.json").to_string();
     let path = dir.join(&filename);
 
     let json = serde_json::to_string_pretty(run).expect("cannot serialize run");
@@ -533,10 +518,7 @@ fn format_duration_ago(prev: DateTime<Utc>, now: DateTime<Utc>) -> String {
 
 fn print_report(current: &EvalRun, previous: Option<&EvalRun>) {
     println!("\n=== Hippo Eval Regression Report ===");
-    println!(
-        "Run: {}",
-        current.timestamp.format("%Y-%m-%d %H:%M:%S")
-    );
+    println!("Run: {}", current.timestamp.format("%Y-%m-%d %H:%M:%S"));
 
     if let Some(prev) = previous {
         let ago = format_duration_ago(prev.timestamp, current.timestamp);
@@ -547,10 +529,7 @@ fn print_report(current: &EvalRun, previous: Option<&EvalRun>) {
     }
 
     let pct = current.score * 100.0;
-    print!(
-        "\nSCORE: {}/{} ({pct:.1}%)",
-        current.passed, current.total
-    );
+    print!("\nSCORE: {}/{} ({pct:.1}%)", current.passed, current.total);
 
     if let Some(prev) = previous {
         let prev_pct = prev.score * 100.0;
@@ -581,7 +560,11 @@ fn print_report(current: &EvalRun, previous: Option<&EvalRun>) {
                 } else if (entry.score - prev_entry.score).abs() > 0.01 {
                     let diff = entry.score - prev_entry.score;
                     let sign = if diff > 0.0 { "+" } else { "" };
-                    let icon = if diff > 0.0 { "\u{2728}" } else { "\u{26a0}\u{fe0f} " };
+                    let icon = if diff > 0.0 {
+                        "\u{2728}"
+                    } else {
+                        "\u{26a0}\u{fe0f} "
+                    };
                     improvements.push(format!(
                         "  {icon} {}: score {:.1} -> {:.1} ({sign}{:.1})",
                         entry.name, prev_entry.score, entry.score, diff
@@ -613,10 +596,7 @@ fn print_report(current: &EvalRun, previous: Option<&EvalRun>) {
         }
     }
 
-    println!(
-        "\nGit SHA: {}",
-        current.git_sha
-    );
+    println!("\nGit SHA: {}", current.git_sha);
 }
 
 // ---- Main ----
@@ -624,10 +604,7 @@ fn print_report(current: &EvalRun, previous: Option<&EvalRun>) {
 fn main() {
     println!("Building and starting hippo...");
     let agent = start_agent_process();
-    println!(
-        "Waiting for agent health on port {}...",
-        agent.port
-    );
+    println!("Waiting for agent health on port {}...", agent.port);
     wait_for_health(&agent);
     println!("Agent healthy. Running evals...\n");
 
@@ -638,16 +615,25 @@ fn main() {
 
     let base = &agent.base_url;
 
-    let eval_fns: Vec<(&str, Box<dyn Fn(&reqwest::blocking::Client, &str) -> (bool, f64, String)>)> =
-        vec![
-            ("contradiction_detection", Box::new(eval_contradiction_detection)),
-            ("temporal_query", Box::new(eval_temporal_query)),
-            ("multi_hop_retrieval", Box::new(eval_multi_hop_retrieval)),
-            ("entity_resolution", Box::new(eval_entity_resolution)),
-            ("reflect_gap_analysis", Box::new(eval_reflect_gap_analysis)),
-            ("timeline_history", Box::new(eval_timeline_history)),
-            ("confidence_compounding", Box::new(eval_confidence_compounding)),
-        ];
+    #[allow(clippy::type_complexity)]
+    let eval_fns: Vec<(
+        &str,
+        Box<dyn Fn(&reqwest::blocking::Client, &str) -> (bool, f64, String)>,
+    )> = vec![
+        (
+            "contradiction_detection",
+            Box::new(eval_contradiction_detection),
+        ),
+        ("temporal_query", Box::new(eval_temporal_query)),
+        ("multi_hop_retrieval", Box::new(eval_multi_hop_retrieval)),
+        ("entity_resolution", Box::new(eval_entity_resolution)),
+        ("reflect_gap_analysis", Box::new(eval_reflect_gap_analysis)),
+        ("timeline_history", Box::new(eval_timeline_history)),
+        (
+            "confidence_compounding",
+            Box::new(eval_confidence_compounding),
+        ),
+    ];
 
     let mut entries = Vec::new();
 

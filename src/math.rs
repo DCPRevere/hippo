@@ -43,7 +43,9 @@ pub fn pseudo_embed(text: &str) -> Vec<f32> {
     let hash = hasher.finalize();
     let seed = u64::from_le_bytes(hash[..8].try_into().unwrap());
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let v: Vec<f32> = (0..EMBEDDING_DIM).map(|_| rng.gen_range(-1.0f32..1.0f32)).collect();
+    let v: Vec<f32> = (0..EMBEDDING_DIM)
+        .map(|_| rng.gen_range(-1.0f32..1.0f32))
+        .collect();
     normalize(v)
 }
 
@@ -78,12 +80,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 ///
 /// Returns the indices (into the original `items` slice) of the selected items,
 /// in selection order, up to `k` items.
-pub fn mmr_select<F>(
-    items: &[(f32, usize)],
-    k: usize,
-    lambda: f32,
-    similarity: F,
-) -> Vec<usize>
+pub fn mmr_select<F>(items: &[(f32, usize)], k: usize, lambda: f32, similarity: F) -> Vec<usize>
 where
     F: Fn(usize, usize) -> f32,
 {
@@ -180,11 +177,13 @@ mod tests {
         // Three items: 0 and 1 are identical (similarity=1.0), 2 is different
         let items = vec![(0.9, 0), (0.85, 1), (0.8, 2)];
         let sim = |a: usize, b: usize| -> f32 {
-            if a == b { return 1.0; }
+            if a == b {
+                return 1.0;
+            }
             let (lo, hi) = if a < b { (a, b) } else { (b, a) };
             match (lo, hi) {
-                (0, 1) => 0.99,  // 0 and 1 are near-duplicates
-                _ => 0.1,        // 2 is different from both
+                (0, 1) => 0.99, // 0 and 1 are near-duplicates
+                _ => 0.1,       // 2 is different from both
             }
         };
         let result = mmr_select(&items, 3, 0.5, sim);

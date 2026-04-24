@@ -64,14 +64,19 @@ pub async fn ask(
 ) -> Result<AskResponse> {
     let max_iterations = req.max_iterations.max(1);
 
-    let mut ctx = super::remember::gather_pre_extraction_context(state, graph, &req.question, user_id).await?;
+    let mut ctx =
+        super::remember::gather_pre_extraction_context(state, graph, &req.question, user_id)
+            .await?;
     let mut facts = graph_context_to_facts(&ctx);
     let mut iterations_used = 0;
 
     for i in 0..max_iterations {
         iterations_used = i + 1;
 
-        let missing = state.llm.identify_missing_context(&req.question, &facts).await?;
+        let missing = state
+            .llm
+            .identify_missing_context(&req.question, &facts)
+            .await?;
         if missing.is_empty() {
             tracing::debug!(iteration = i + 1, "ask: LLM has sufficient context");
             break;
@@ -93,7 +98,10 @@ pub async fn ask(
         facts = graph_context_to_facts(&ctx);
     }
 
-    let answer = state.llm.synthesise_answer(&req.question, &facts, user_display_name).await?;
+    let answer = state
+        .llm
+        .synthesise_answer(&req.question, &facts, user_display_name)
+        .await?;
 
     Ok(AskResponse {
         answer,

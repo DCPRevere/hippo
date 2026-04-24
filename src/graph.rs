@@ -1,26 +1,34 @@
-use anyhow::{Context, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::GraphConnectError;
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
+use anyhow::Result;
 #[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
 use chrono::{DateTime, Utc};
 #[cfg(not(target_arch = "wasm32"))]
 use falkordb::{AsyncGraph, FalkorClientBuilder, FalkorConnectionInfo, FalkorValue};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock};
+use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::HashSet;
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
 #[cfg(not(target_arch = "wasm32"))]
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "my", "your", "his", "her",
-        "its", "our", "their", "i", "me", "we", "you", "he", "she", "they",
-        "it", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "and", "or", "but", "not", "no", "about", "what", "where", "when",
-        "who", "how", "which", "that", "this", "these", "those",
-    ].into_iter().collect()
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+        "my", "your", "his", "her", "its", "our", "their", "i", "me", "we", "you", "he", "she",
+        "they", "it", "to", "of", "in", "for", "on", "with", "at", "by", "from", "and", "or",
+        "but", "not", "no", "about", "what", "where", "when", "who", "how", "which", "that",
+        "this", "these", "those",
+    ]
+    .into_iter()
+    .collect()
 });
 
 use crate::graph_backend::GraphBackend;
@@ -57,9 +65,9 @@ pub struct GraphRegistry {
 #[cfg(not(target_arch = "wasm32"))]
 impl GraphRegistry {
     pub async fn connect(connection_string: &str, default_graph: &str) -> Result<Self> {
-        let info: FalkorConnectionInfo = connection_string
-            .try_into()
-            .map_err(|e| GraphConnectError::new(format!("invalid FalkorDB connection string: {e}")))?;
+        let info: FalkorConnectionInfo = connection_string.try_into().map_err(|e| {
+            GraphConnectError::new(format!("invalid FalkorDB connection string: {e}"))
+        })?;
         let client = FalkorClientBuilder::new_async()
             .with_connection_info(info)
             .build()
@@ -111,15 +119,16 @@ impl GraphRegistry {
     /// All graphs share the same Postgres instance, distinguished by `graph_name` column.
     pub async fn postgres(connection_string: &str, default_graph: &str) -> Result<Self> {
         // Verify connectivity
-        let test = crate::postgres_graph::PostgresGraph::new(connection_string, default_graph).await?;
+        let test =
+            crate::postgres_graph::PostgresGraph::new(connection_string, default_graph).await?;
         test.ping().await?;
 
         let conn_str = connection_string.to_string();
         let registry = Self {
             factory: Box::new(move |name: &str| {
-                let pool = futures::executor::block_on(
-                    crate::postgres_graph::PostgresGraph::new(&conn_str, name),
-                )
+                let pool = futures::executor::block_on(crate::postgres_graph::PostgresGraph::new(
+                    &conn_str, name,
+                ))
                 .expect("failed to connect to PostgreSQL");
                 Arc::new(pool) as Arc<dyn GraphBackend>
             }),
@@ -141,9 +150,9 @@ impl GraphRegistry {
         let url_owned = url.to_string();
         let registry = Self {
             factory: Box::new(move |name: &str| {
-                let graph = futures::executor::block_on(
-                    crate::qdrant_graph::QdrantGraph::new(&url_owned, name),
-                )
+                let graph = futures::executor::block_on(crate::qdrant_graph::QdrantGraph::new(
+                    &url_owned, name,
+                ))
                 .expect("failed to connect to Qdrant");
                 Arc::new(graph) as Arc<dyn GraphBackend>
             }),
@@ -160,14 +169,13 @@ impl GraphRegistry {
 impl GraphRegistry {
     /// Create a registry backed by in-memory graphs (no database needed).
     pub fn in_memory(default_graph: &str) -> Self {
-        let registry = Self {
+        Self {
             factory: Box::new(|name: &str| {
                 Arc::new(crate::in_memory_graph::InMemoryGraph::new(name)) as Arc<dyn GraphBackend>
             }),
             default_graph: default_graph.to_string(),
             graphs: Mutex::new(HashMap::new()),
-        };
-        registry
+        }
     }
 
     pub fn default_graph_name(&self) -> &str {
@@ -227,9 +235,9 @@ impl GraphRegistry {
 #[cfg(not(target_arch = "wasm32"))]
 impl GraphClient {
     pub async fn connect(connection_string: &str, graph_name: &str) -> Result<Self> {
-        let info: FalkorConnectionInfo = connection_string
-            .try_into()
-            .map_err(|e| GraphConnectError::new(format!("invalid FalkorDB connection string: {e}")))?;
+        let info: FalkorConnectionInfo = connection_string.try_into().map_err(|e| {
+            GraphConnectError::new(format!("invalid FalkorDB connection string: {e}"))
+        })?;
         let client = FalkorClientBuilder::new_async()
             .with_connection_info(info)
             .build()
@@ -247,7 +255,10 @@ impl GraphClient {
 
     pub async fn ping(&self) -> Result<()> {
         let mut graph = self.conn().lock().await;
-        graph.query("RETURN 1").execute().await
+        graph
+            .query("RETURN 1")
+            .execute()
+            .await
             .map_err(|e| GraphConnectError::new(format!("ping failed: {e}")))?;
         Ok(())
     }
@@ -295,7 +306,8 @@ impl GraphClient {
 
     pub async fn fulltext_search_entities(&self, query_str: &str) -> Result<Vec<EntityRow>> {
         // Search each word independently and merge results, so "Alice sister" finds "Alice"
-        let tokens: Vec<&str> = query_str.split_whitespace()
+        let tokens: Vec<&str> = query_str
+            .split_whitespace()
             .filter(|t| t.len() >= 2)
             .filter(|t| !STOP_WORDS.contains(&t.to_lowercase().as_str()))
             // Strip punctuation that breaks fulltext queries (e.g. &, —, (, ))
@@ -308,10 +320,13 @@ impl GraphClient {
         let mut graph = self.conn().lock().await;
         for token in tokens {
             // Strip non-alphanumeric chars from edges of token
-            let clean: String = token.chars()
+            let clean: String = token
+                .chars()
                 .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
                 .collect();
-            if clean.is_empty() { continue; }
+            if clean.is_empty() {
+                continue;
+            }
             let safe = clean.replace('\'', "\\'");
             let query = format!(
                 "CALL db.idx.fulltext.queryNodes('Entity', '{}') YIELD node RETURN node LIMIT 5",
@@ -321,7 +336,7 @@ impl GraphClient {
                 Ok(result) => {
                     let rows: Vec<Vec<FalkorValue>> = result.data.collect();
                     for row in rows {
-                        if let Some(entity) = row.into_iter().next().and_then(|v| node_to_entity_row(v)) {
+                        if let Some(entity) = row.into_iter().next().and_then(node_to_entity_row) {
                             match entity {
                                 Ok(e) if seen.insert(e.id.clone()) => results.push(Ok(e)),
                                 Ok(_) => {}
@@ -352,12 +367,17 @@ impl GraphClient {
              ORDER BY score DESC"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("vector search entities failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
             .filter_map(|row| {
-                if row.len() < 2 { return None; }
+                if row.len() < 2 {
+                    return None;
+                }
                 let score = extract_float(&row[1]);
                 node_to_entity_row(row.into_iter().next()?).map(|e| e.map(|e| (e, score)))
             })
@@ -382,12 +402,17 @@ impl GraphClient {
              LIMIT {k}"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("vector search edges failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
             .filter_map(|row| {
-                if row.len() < 4 { return None; }
+                if row.len() < 4 {
+                    return None;
+                }
                 let mut it = row.into_iter();
                 let rel = it.next()?;
                 let src = it.next()?;
@@ -425,11 +450,16 @@ impl GraphClient {
                  RETURN r, a, b LIMIT 15",
                 token
             );
-            let result = graph.query(&query).execute().await
+            let result = graph
+                .query(&query)
+                .execute()
+                .await
                 .context("edge contains search failed")?;
             let rows: Vec<Vec<FalkorValue>> = result.data.collect();
             for row in rows {
-                let Ok([rel, src, dst]) = take_n(row) else { continue };
+                let Ok([rel, src, dst]) = take_n(row) else {
+                    continue;
+                };
                 match edge_row_from_values(rel, src, dst) {
                     Ok(e) if seen.insert(e.edge_id) => results.push(e),
                     _ => {}
@@ -439,7 +469,11 @@ impl GraphClient {
         Ok(results)
     }
 
-    pub async fn fulltext_search_edges_at(&self, query_str: &str, at: DateTime<Utc>) -> Result<Vec<EdgeRow>> {
+    pub async fn fulltext_search_edges_at(
+        &self,
+        query_str: &str,
+        at: DateTime<Utc>,
+    ) -> Result<Vec<EdgeRow>> {
         let at_iso = at.to_rfc3339();
 
         let tokens: Vec<String> = query_str
@@ -464,11 +498,16 @@ impl GraphClient {
                  AND (r.invalid_at IS NULL OR r.invalid_at > '{at_iso}') \
                  RETURN r, a, b LIMIT 15"
             );
-            let result = graph.query(&query).execute().await
+            let result = graph
+                .query(&query)
+                .execute()
+                .await
                 .context("edge contains search (temporal) failed")?;
             let rows: Vec<Vec<FalkorValue>> = result.data.collect();
             for row in rows {
-                let Ok([rel, src, dst]) = take_n(row) else { continue };
+                let Ok([rel, src, dst]) = take_n(row) else {
+                    continue;
+                };
                 match edge_row_from_values(rel, src, dst) {
                     Ok(e) if seen.insert(e.edge_id) => results.push(e),
                     _ => {}
@@ -496,12 +535,17 @@ impl GraphClient {
              ORDER BY score DESC"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("vector search edges (temporal) failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
             .filter_map(|row| {
-                if row.len() < 4 { return None; }
+                if row.len() < 4 {
+                    return None;
+                }
                 let mut it = row.into_iter();
                 let rel = it.next()?;
                 let src = it.next()?;
@@ -512,7 +556,12 @@ impl GraphClient {
             .collect::<Result<Vec<_>>>()
     }
 
-    pub async fn walk_one_hop_at(&self, entity_ids: &[String], limit: usize, at: DateTime<Utc>) -> Result<Vec<EdgeRow>> {
+    pub async fn walk_one_hop_at(
+        &self,
+        entity_ids: &[String],
+        limit: usize,
+        at: DateTime<Utc>,
+    ) -> Result<Vec<EdgeRow>> {
         if entity_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -546,7 +595,10 @@ impl GraphClient {
 
     async fn query_edge_rows(&self, query: &str) -> Result<Vec<EdgeRow>> {
         let mut graph = self.conn().lock().await;
-        let result = graph.query(query).execute().await
+        let result = graph
+            .query(query)
+            .execute()
+            .await
             .context("edge query failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
@@ -580,7 +632,11 @@ impl GraphClient {
             content_clause,
         );
         let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await.context("upsert entity failed")?;
+        graph
+            .query(&query)
+            .execute()
+            .await
+            .context("upsert entity failed")?;
         Ok(())
     }
 
@@ -613,7 +669,11 @@ impl GraphClient {
              RETURN id(r)",
             rel.fact.replace('\'', "\\'"),
             rel.relation_type,
-            rel.source_agents.iter().map(|s| sanitise(s)).collect::<Vec<_>>().join("|"),
+            rel.source_agents
+                .iter()
+                .map(|s| sanitise(s))
+                .collect::<Vec<_>>()
+                .join("|"),
             rel.valid_at.to_rfc3339(),
             rel.confidence,
             rel.created_at.to_rfc3339(),
@@ -622,7 +682,11 @@ impl GraphClient {
             rel.memory_tier,
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await.context("create edge failed")?;
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
+            .context("create edge failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
             if let Some(v) = row.into_iter().next() {
@@ -635,7 +699,8 @@ impl GraphClient {
     pub async fn promote_working_memory(&self) -> Result<usize> {
         let one_hour_ago_rfc = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
         let one_hour_ago = falkor_strip_tz(&one_hour_ago_rfc);
-        let query = format!("\
+        let query = format!(
+            "\
             MATCH ()-[r:RELATION]-() \
             WHERE r.invalid_at IS NULL \
               AND (r.archived IS NULL OR r.archived = false) \
@@ -648,9 +713,13 @@ impl GraphClient {
                 ) \
               ) \
             SET r.memory_tier = 'long_term' \
-            RETURN count(r) AS promoted");
+            RETURN count(r) AS promoted"
+        );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(query).execute().await
+        let result = graph
+            .query(query)
+            .execute()
+            .await
             .context("promote working memory failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
@@ -675,7 +744,10 @@ impl GraphClient {
             now.to_rfc3339()
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("expire TTL edges failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
@@ -695,16 +767,25 @@ impl GraphClient {
               sum(CASE WHEN r.memory_tier = 'working' THEN 1 ELSE 0 END) AS working, \
               sum(CASE WHEN r.memory_tier = 'long_term' OR r.memory_tier IS NULL THEN 1 ELSE 0 END) AS long_term";
         let mut graph = self.conn().lock().await;
-        let result = graph.query(query).execute().await
+        let result = graph
+            .query(query)
+            .execute()
+            .await
             .context("memory tier stats failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
             let mut iter = row.into_iter();
             let working_count = iter.next().map(|v| extract_int(&v) as usize).unwrap_or(0);
             let long_term_count = iter.next().map(|v| extract_int(&v) as usize).unwrap_or(0);
-            return Ok(crate::models::MemoryTierStats { working_count, long_term_count });
+            return Ok(crate::models::MemoryTierStats {
+                working_count,
+                long_term_count,
+            });
         }
-        Ok(crate::models::MemoryTierStats { working_count: 0, long_term_count: 0 })
+        Ok(crate::models::MemoryTierStats {
+            working_count: 0,
+            long_term_count: 0,
+        })
     }
 
     pub async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> {
@@ -714,7 +795,11 @@ impl GraphClient {
             at.to_rfc3339()
         );
         let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await.context("invalidate edge failed")?;
+        graph
+            .query(&query)
+            .execute()
+            .await
+            .context("invalidate edge failed")?;
         Ok(())
     }
 
@@ -743,7 +828,10 @@ impl GraphClient {
              RETURN r.confidence"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("compound edge confidence failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let conf = rows
@@ -841,7 +929,10 @@ impl GraphClient {
              RETURN count(r) AS updated"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("decay stale edges failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let count = rows
@@ -871,22 +962,24 @@ impl GraphClient {
              LIMIT 10"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("find close unlinked failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
             .filter_map(|row| {
-                if row.len() < 2 { return None; }
+                if row.len() < 2 {
+                    return None;
+                }
                 let score = extract_float(&row[1]);
                 node_to_entity_row(row.into_iter().next()?).map(|e| e.map(|e| (e, score)))
             })
             .collect::<Result<Vec<_>>>()
     }
 
-    pub async fn find_placeholder_nodes(
-        &self,
-        cutoff: DateTime<Utc>,
-    ) -> Result<Vec<EntityRow>> {
+    pub async fn find_placeholder_nodes(&self, cutoff: DateTime<Utc>) -> Result<Vec<EntityRow>> {
         let query = format!(
             "MATCH (e:Entity) \
              WHERE e.resolved = false AND e.created_at < '{}' \
@@ -895,11 +988,14 @@ impl GraphClient {
             cutoff.to_rfc3339()
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("find placeholders failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
-            .filter_map(|row| row.into_iter().next().and_then(|v| node_to_entity_row(v)))
+            .filter_map(|row| row.into_iter().next().and_then(node_to_entity_row))
             .collect::<Result<Vec<_>>>()
     }
 
@@ -920,7 +1016,11 @@ impl GraphClient {
                  last_accessed_at: r.last_accessed_at, decayed_confidence: r.decayed_confidence \
              }}]->(o) DELETE r"
         );
-        graph.query(&q1).execute().await.context("merge placeholder step 1 failed")?;
+        graph
+            .query(&q1)
+            .execute()
+            .await
+            .context("merge placeholder step 1 failed")?;
 
         let q2 = format!(
             "MATCH (o:Entity)-[r:RELATION]->(p:Entity {{id: '{placeholder_id}'}}) \
@@ -934,12 +1034,18 @@ impl GraphClient {
                  last_accessed_at: r.last_accessed_at, decayed_confidence: r.decayed_confidence \
              }}]->(res) DELETE r"
         );
-        graph.query(&q2).execute().await.context("merge placeholder step 2 failed")?;
+        graph
+            .query(&q2)
+            .execute()
+            .await
+            .context("merge placeholder step 2 failed")?;
 
-        let q3 = format!(
-            "MATCH (p:Entity {{id: '{placeholder_id}'}}) DELETE p"
-        );
-        graph.query(&q3).execute().await.context("merge placeholder step 3 failed")?;
+        let q3 = format!("MATCH (p:Entity {{id: '{placeholder_id}'}}) DELETE p");
+        graph
+            .query(&q3)
+            .execute()
+            .await
+            .context("merge placeholder step 3 failed")?;
 
         Ok(())
     }
@@ -948,10 +1054,15 @@ impl GraphClient {
         let mut graph = self.conn().lock().await;
 
         // Entity count
-        let result = graph.query("MATCH (e:Entity) RETURN count(e) AS entity_count")
-            .execute().await.context("graph_stats entity count failed")?;
+        let result = graph
+            .query("MATCH (e:Entity) RETURN count(e) AS entity_count")
+            .execute()
+            .await
+            .context("graph_stats entity count failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        let entity_count = rows.into_iter().next()
+        let entity_count = rows
+            .into_iter()
+            .next()
             .and_then(|r| r.into_iter().next())
             .map(|v| extract_int(&v) as usize)
             .unwrap_or(0);
@@ -964,38 +1075,69 @@ impl GraphClient {
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         if let Some(row) = rows.into_iter().next() {
             let vals: Vec<FalkorValue> = row;
-            let edge_count = vals.get(0).map(extract_int).unwrap_or(0) as usize;
+            let edge_count = vals.first().map(extract_int).unwrap_or(0) as usize;
             let oldest_valid_at = vals.get(1).and_then(|v| {
                 let s = extract_string(v);
-                if s.is_empty() { None } else { Some(s) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
             });
             let newest_valid_at = vals.get(2).and_then(|v| {
                 let s = extract_string(v);
-                if s.is_empty() { None } else { Some(s) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
             });
             let avg_confidence = vals.get(3).map(extract_float).unwrap_or(0.0);
-            Ok(crate::models::GraphStats { entity_count, edge_count, oldest_valid_at, newest_valid_at, avg_confidence })
+            Ok(crate::models::GraphStats {
+                entity_count,
+                edge_count,
+                oldest_valid_at,
+                newest_valid_at,
+                avg_confidence,
+            })
         } else {
-            Ok(crate::models::GraphStats { entity_count, edge_count: 0, oldest_valid_at: None, newest_valid_at: None, avg_confidence: 0.0 })
+            Ok(crate::models::GraphStats {
+                entity_count,
+                edge_count: 0,
+                oldest_valid_at: None,
+                newest_valid_at: None,
+                avg_confidence: 0.0,
+            })
         }
-    }    pub async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> {
+    }
+    pub async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> {
         let query = "MATCH (e:Entity) RETURN e ORDER BY e.name".to_string();
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await.context("dump entities failed")?;
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
+            .context("dump entities failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
-            .filter_map(|row| row.into_iter().next().and_then(|v| node_to_entity_row(v)))
+            .filter_map(|row| row.into_iter().next().and_then(node_to_entity_row))
             .collect()
     }
 
     pub async fn dump_all_edges(&self) -> Result<Vec<EdgeRow>> {
         let query = "MATCH (a)-[r:RELATION]->(b) RETURN r, a, b ORDER BY a.name".to_string();
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await.context("dump edges failed")?;
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
+            .context("dump edges failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let mut out = Vec::new();
         for row in rows {
-            let Ok([rel, src, dst]) = take_n(row) else { continue };
+            let Ok([rel, src, dst]) = take_n(row) else {
+                continue;
+            };
             if let Ok(e) = edge_row_from_values(rel, src, dst) {
                 out.push(e);
             }
@@ -1013,7 +1155,11 @@ impl GraphClient {
              LIMIT 20"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await.context("get entity facts failed")?;
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
+            .context("get entity facts failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let facts = rows
             .into_iter()
@@ -1044,7 +1190,11 @@ impl GraphClient {
             superseded_at.to_rfc3339(),
         );
         let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await.context("create supersession failed")?;
+        graph
+            .query(&query)
+            .execute()
+            .await
+            .context("create supersession failed")?;
         Ok(())
     }
 
@@ -1056,20 +1206,20 @@ impl GraphClient {
              ORDER BY s.superseded_at"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("get supersession chain failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        rows.into_iter()
-            .map(|row| supersession_from_row(row))
-            .collect()
+        rows.into_iter().map(supersession_from_row).collect()
     }
 
     pub async fn get_provenance(&self, edge_id: i64) -> Result<crate::models::ProvenanceResponse> {
         let chain = self.get_supersession_chain(edge_id).await?;
-        let superseded_by = chain.iter()
-            .find(|s| s.old_edge_id == edge_id)
-            .cloned();
-        let supersedes: Vec<SupersessionRecord> = chain.into_iter()
+        let superseded_by = chain.iter().find(|s| s.old_edge_id == edge_id).cloned();
+        let supersedes: Vec<SupersessionRecord> = chain
+            .into_iter()
             .filter(|s| s.new_edge_id == edge_id)
             .collect();
         Ok(crate::models::ProvenanceResponse {
@@ -1077,22 +1227,29 @@ impl GraphClient {
             superseded_by,
             supersedes,
         })
-    }    pub async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> {
+    }
+    pub async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> {
         let entity_id = sanitise(entity_id);
-        let query = format!(
-            "MATCH (e:Entity {{id: '{entity_id}'}}) RETURN e"
-        );
+        let query = format!("MATCH (e:Entity {{id: '{entity_id}'}}) RETURN e");
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await.context("get entity by id failed")?;
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
+            .context("get entity by id failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        Ok(rows.into_iter()
-            .filter_map(|row| row.into_iter().next().and_then(|v| node_to_entity_row(v)))
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.into_iter().next().and_then(node_to_entity_row))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .next())
     }
 
-    pub async fn save_source_credibility(&self, cred: &crate::credibility::SourceCredibility) -> Result<()> {
+    pub async fn save_source_credibility(
+        &self,
+        cred: &crate::credibility::SourceCredibility,
+    ) -> Result<()> {
         let agent_id = sanitise(&cred.agent_id);
         let updated_at = chrono::Utc::now().to_rfc3339();
         let query = format!(
@@ -1101,25 +1258,34 @@ impl GraphClient {
                  s.fact_count = {}, \
                  s.contradiction_rate = {}, \
                  s.updated_at = '{updated_at}'",
-            cred.credibility,
-            cred.fact_count,
-            cred.contradiction_rate,
+            cred.credibility, cred.fact_count, cred.contradiction_rate,
         );
         let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await.context("save source credibility failed")?;
+        graph
+            .query(&query)
+            .execute()
+            .await
+            .context("save source credibility failed")?;
         Ok(())
     }
 
-    pub async fn load_all_source_credibility(&self) -> Result<Vec<crate::credibility::SourceCredibility>> {
+    pub async fn load_all_source_credibility(
+        &self,
+    ) -> Result<Vec<crate::credibility::SourceCredibility>> {
         let query = "MATCH (s:SourceCredibility) \
                      RETURN s.agent_id, s.credibility, s.fact_count, s.contradiction_rate";
         let mut graph = self.conn().lock().await;
-        let result = graph.query(query).execute().await
+        let result = graph
+            .query(query)
+            .execute()
+            .await
             .context("load source credibility failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         let mut out = Vec::new();
         for row in rows {
-            let Ok([a, b, c, d]) = take_n(row) else { continue };
+            let Ok([a, b, c, d]) = take_n(row) else {
+                continue;
+            };
             let agent_id = extract_string(&a);
             let credibility = extract_float(&b);
             let fact_count = extract_int(&c) as usize;
@@ -1144,20 +1310,25 @@ impl GraphClient {
             now.to_rfc3339()
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&invalidate_query).execute().await
+        let result = graph
+            .query(&invalidate_query)
+            .execute()
+            .await
             .context("delete_entity: invalidate edges failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
-        let count = rows.into_iter()
+        let count = rows
+            .into_iter()
             .next()
             .and_then(|row| row.into_iter().next())
             .map(|v| extract_int(&v) as usize)
             .unwrap_or(0);
 
         // Delete the entity node
-        let delete_query = format!(
-            "MATCH (e:Entity {{id: '{entity_id}'}}) DELETE e"
-        );
-        graph.query(&delete_query).execute().await
+        let delete_query = format!("MATCH (e:Entity {{id: '{entity_id}'}}) DELETE e");
+        graph
+            .query(&delete_query)
+            .execute()
+            .await
             .context("delete_entity: delete node failed")?;
 
         Ok(count)
@@ -1166,11 +1337,12 @@ impl GraphClient {
     pub async fn rename_entity(&self, entity_id: &str, new_name: &str) -> Result<()> {
         let entity_id = sanitise(entity_id);
         let new_name = sanitise(new_name);
-        let query = format!(
-            "MATCH (e:Entity {{id: '{entity_id}'}}) SET e.name = '{new_name}'"
-        );
+        let query = format!("MATCH (e:Entity {{id: '{entity_id}'}}) SET e.name = '{new_name}'");
         let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await
+        graph
+            .query(&query)
+            .execute()
+            .await
             .context("rename_entity failed")?;
         Ok(())
     }
@@ -1184,30 +1356,43 @@ impl GraphClient {
             "false" => "false".to_string(),
             _ => format!("'{}'", sanitise(value)),
         };
-        let query = format!(
-            "MATCH (e:Entity {{id: '{entity_id}'}}) SET e.`{key}` = {cypher_value}"
-        );
+        let query =
+            format!("MATCH (e:Entity {{id: '{entity_id}'}}) SET e.`{key}` = {cypher_value}");
         let mut graph = self.conn().lock().await;
-        graph.query(&query).execute().await
+        graph
+            .query(&query)
+            .execute()
+            .await
             .context("set_entity_property failed")?;
         Ok(())
     }
 
-    pub async fn list_entities_by_recency(&self, offset: usize, limit: usize) -> Result<Vec<EntityRow>> {
+    pub async fn list_entities_by_recency(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<EntityRow>> {
         let query = format!(
             "MATCH (e:Entity) RETURN e ORDER BY e.created_at DESC SKIP {offset} LIMIT {limit}"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("list_entities_by_recency failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         rows.into_iter()
             .filter_map(|row| row.into_iter().next())
-            .filter_map(|val| node_to_entity_row(val))
+            .filter_map(node_to_entity_row)
             .collect::<Result<Vec<_>>>()
     }
 
-    pub async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> {
+    pub async fn find_entity_by_property(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> Result<Option<EntityRow>> {
         let key = sanitise(key);
         let value = sanitise(value);
         // Match both string and boolean forms (e.g. is_principal = 'true' OR is_principal = true)
@@ -1215,7 +1400,10 @@ impl GraphClient {
             "MATCH (e:Entity) WHERE e.`{key}` = '{value}' OR e.`{key}` = {value} RETURN e LIMIT 1"
         );
         let mut graph = self.conn().lock().await;
-        let result = graph.query(&query).execute().await
+        let result = graph
+            .query(&query)
+            .execute()
+            .await
             .context("find_entity_by_property failed")?;
         let rows: Vec<Vec<FalkorValue>> = result.data.collect();
         for row in rows {
@@ -1232,39 +1420,76 @@ impl GraphClient {
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl GraphBackend for GraphClient {
-    fn graph_name(&self) -> &str { &self.graph_name }
-    async fn ping(&self) -> Result<()> { self.ping().await }
-    async fn setup_schema(&self) -> Result<()> { self.setup_schema().await }
-    async fn drop_and_reinitialise(&self) -> Result<()> { self.drop_and_reinitialise().await }
-    async fn fulltext_search_entities(&self, query_str: &str) -> Result<Vec<EntityRow>> { self.fulltext_search_entities(query_str).await }
-    async fn vector_search_entities(&self, embedding: &[f32], k: usize) -> Result<Vec<(EntityRow, f32)>> { self.vector_search_entities(embedding, k).await }
-    async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> { self.get_entity_by_id(entity_id).await }
-    async fn fulltext_search_edges(&self, query_str: &str, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
+    fn graph_name(&self) -> &str {
+        &self.graph_name
+    }
+    async fn ping(&self) -> Result<()> {
+        self.ping().await
+    }
+    async fn setup_schema(&self) -> Result<()> {
+        self.setup_schema().await
+    }
+    async fn drop_and_reinitialise(&self) -> Result<()> {
+        self.drop_and_reinitialise().await
+    }
+    async fn fulltext_search_entities(&self, query_str: &str) -> Result<Vec<EntityRow>> {
+        self.fulltext_search_entities(query_str).await
+    }
+    async fn vector_search_entities(
+        &self,
+        embedding: &[f32],
+        k: usize,
+    ) -> Result<Vec<(EntityRow, f32)>> {
+        self.vector_search_entities(embedding, k).await
+    }
+    async fn get_entity_by_id(&self, entity_id: &str) -> Result<Option<EntityRow>> {
+        self.get_entity_by_id(entity_id).await
+    }
+    async fn fulltext_search_edges(
+        &self,
+        query_str: &str,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Vec<EdgeRow>> {
         match at {
             Some(t) => self.fulltext_search_edges_at(query_str, t).await,
             None => GraphClient::fulltext_search_edges(self, query_str).await,
         }
     }
-    async fn vector_search_edges_scored(&self, embedding: &[f32], k: usize, at: Option<DateTime<Utc>>) -> Result<Vec<(EdgeRow, f32)>> {
+    async fn vector_search_edges_scored(
+        &self,
+        embedding: &[f32],
+        k: usize,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Vec<(EdgeRow, f32)>> {
         match at {
             Some(t) => {
                 let rows = self.vector_search_edges_at(embedding, k, t).await?;
-                Ok(rows.into_iter().map(|r| {
-                    let score = cosine_sim(embedding, &r.embedding);
-                    (r, score)
-                }).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| {
+                        let score = cosine_sim(embedding, &r.embedding);
+                        (r, score)
+                    })
+                    .collect())
             }
             None => GraphClient::vector_search_edges_scored(self, embedding, k).await,
         }
     }
-    async fn walk_n_hops(&self, seed_entity_ids: &[String], max_hops: usize, limit_per_hop: usize, at: Option<DateTime<Utc>>) -> Result<Vec<(EdgeRow, usize)>> {
+    async fn walk_n_hops(
+        &self,
+        seed_entity_ids: &[String],
+        max_hops: usize,
+        limit_per_hop: usize,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Vec<(EdgeRow, usize)>> {
         // Delegate to inherent walk_n_hops which uses walk_one_hop or walk_one_hop_at internally
         match at {
             Some(t) => {
                 // Manually do n-hop walk with temporal filtering
                 let mut results = Vec::new();
                 let mut frontier: Vec<String> = seed_entity_ids.to_vec();
-                let mut visited_edges: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                let mut visited_edges: std::collections::HashSet<i64> =
+                    std::collections::HashSet::new();
                 for hop in 1..=max_hops {
                     let hop_edges = self.walk_one_hop_at(&frontier, limit_per_hop, t).await?;
                     let mut next_frontier = Vec::new();
@@ -1289,36 +1514,101 @@ impl GraphBackend for GraphClient {
             None => GraphClient::walk_n_hops(self, seed_entity_ids, max_hops, limit_per_hop).await,
         }
     }
-    async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> { self.find_all_active_edges_from(node_id).await }
-    async fn upsert_entity(&self, entity: &crate::models::Entity) -> Result<()> { self.upsert_entity(entity).await }
-    async fn create_edge(&self, from_id: &str, to_id: &str, rel: &crate::models::Relation) -> Result<i64> { self.create_edge(from_id, to_id, rel).await }
-    async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> { self.invalidate_edge(edge_id, at).await }
-    async fn delete_entity(&self, entity_id: &str) -> Result<usize> { self.delete_entity(entity_id).await }
-    async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()> { self.merge_placeholder(placeholder_id, resolved_id).await }
-    async fn promote_working_memory(&self) -> Result<usize> { self.promote_working_memory().await }
-    async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> { self.expire_ttl_edges(now).await }
-    async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> { self.memory_tier_stats().await }
-    async fn decay_stale_edges(&self, stale_before: DateTime<Utc>, now: DateTime<Utc>) -> Result<usize> { self.decay_stale_edges(stale_before, now).await }
-    async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> { self.get_entity_facts(entity_id).await }
-    async fn graph_stats(&self) -> Result<crate::models::GraphStats> { self.graph_stats().await }
-    async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> { self.dump_all_entities().await }
-    async fn dump_all_edges(&self) -> Result<Vec<EdgeRow>> { self.dump_all_edges().await }
-    async fn list_entities_by_recency(&self, offset: usize, limit: usize) -> Result<Vec<EntityRow>> { self.list_entities_by_recency(offset, limit).await }
-    async fn get_provenance(&self, edge_id: i64) -> Result<crate::models::ProvenanceResponse> { self.get_provenance(edge_id).await }
-    async fn find_close_unlinked(&self, node_id: &str, embedding: &[f32], threshold: f32) -> Result<Vec<(EntityRow, f32)>> { self.find_close_unlinked(node_id, embedding, threshold).await }
-    async fn find_placeholder_nodes(&self, cutoff: DateTime<Utc>) -> Result<Vec<EntityRow>> { self.find_placeholder_nodes(cutoff).await }
-    async fn rename_entity(&self, entity_id: &str, new_name: &str) -> Result<()> { self.rename_entity(entity_id, new_name).await }
-    async fn set_entity_property(&self, entity_id: &str, key: &str, value: &str) -> Result<()> { self.set_entity_property(entity_id, key, value).await }
-    async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> { self.find_entity_by_property(key, value).await }
+    async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> {
+        self.find_all_active_edges_from(node_id).await
+    }
+    async fn upsert_entity(&self, entity: &crate::models::Entity) -> Result<()> {
+        self.upsert_entity(entity).await
+    }
+    async fn create_edge(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        rel: &crate::models::Relation,
+    ) -> Result<i64> {
+        self.create_edge(from_id, to_id, rel).await
+    }
+    async fn invalidate_edge(&self, edge_id: i64, at: DateTime<Utc>) -> Result<()> {
+        self.invalidate_edge(edge_id, at).await
+    }
+    async fn delete_entity(&self, entity_id: &str) -> Result<usize> {
+        self.delete_entity(entity_id).await
+    }
+    async fn merge_placeholder(&self, placeholder_id: &str, resolved_id: &str) -> Result<()> {
+        self.merge_placeholder(placeholder_id, resolved_id).await
+    }
+    async fn promote_working_memory(&self) -> Result<usize> {
+        self.promote_working_memory().await
+    }
+    async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> {
+        self.expire_ttl_edges(now).await
+    }
+    async fn memory_tier_stats(&self) -> Result<crate::models::MemoryTierStats> {
+        self.memory_tier_stats().await
+    }
+    async fn decay_stale_edges(
+        &self,
+        stale_before: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<usize> {
+        self.decay_stale_edges(stale_before, now).await
+    }
+    async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> {
+        self.get_entity_facts(entity_id).await
+    }
+    async fn graph_stats(&self) -> Result<crate::models::GraphStats> {
+        self.graph_stats().await
+    }
+    async fn dump_all_entities(&self) -> Result<Vec<EntityRow>> {
+        self.dump_all_entities().await
+    }
+    async fn dump_all_edges(&self) -> Result<Vec<EdgeRow>> {
+        self.dump_all_edges().await
+    }
+    async fn list_entities_by_recency(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<EntityRow>> {
+        self.list_entities_by_recency(offset, limit).await
+    }
+    async fn get_provenance(&self, edge_id: i64) -> Result<crate::models::ProvenanceResponse> {
+        self.get_provenance(edge_id).await
+    }
+    async fn find_close_unlinked(
+        &self,
+        node_id: &str,
+        embedding: &[f32],
+        threshold: f32,
+    ) -> Result<Vec<(EntityRow, f32)>> {
+        self.find_close_unlinked(node_id, embedding, threshold)
+            .await
+    }
+    async fn find_placeholder_nodes(&self, cutoff: DateTime<Utc>) -> Result<Vec<EntityRow>> {
+        self.find_placeholder_nodes(cutoff).await
+    }
+    async fn rename_entity(&self, entity_id: &str, new_name: &str) -> Result<()> {
+        self.rename_entity(entity_id, new_name).await
+    }
+    async fn set_entity_property(&self, entity_id: &str, key: &str, value: &str) -> Result<()> {
+        self.set_entity_property(entity_id, key, value).await
+    }
+    async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> {
+        self.find_entity_by_property(key, value).await
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() { return 0.0; }
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
     dot / (norm_a * norm_b)
 }
 
@@ -1379,36 +1669,53 @@ fn node_to_entity_row(v: FalkorValue) -> Option<Result<EntityRow>> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn edge_row_from_values(rel: FalkorValue, src: FalkorValue, dst: FalkorValue) -> Result<EdgeRow> {
-    let (edge_id, fact, relation_type, confidence, salience, valid_at, invalid_at, embedding, decayed_confidence, source_agents, memory_tier, expires_at) =
-        match &rel {
-            FalkorValue::Edge(edge) => {
-                let p = &edge.properties;
-                let confidence = prop_float(p, "confidence");
-                let valid_at = prop_string(p, "valid_at");
-                let decayed_confidence = {
-                    let v = prop_float(p, "decayed_confidence");
-                    if v == 0.0 { confidence } else { v }
-                };
-                let source_agents = prop_opt_string(p, "source_agents").unwrap_or_default();
-                let memory_tier = prop_opt_string(p, "memory_tier").unwrap_or_else(|| "long_term".to_string());
-                let expires_at = prop_opt_string(p, "expires_at");
-                (
-                    edge.entity_id,
-                    prop_string(p, "fact"),
-                    prop_string(p, "relation_type"),
-                    confidence,
-                    prop_int(p, "salience"),
-                    valid_at,
-                    prop_opt_string(p, "invalid_at"),
-                    prop_embedding(p, "embedding"),
-                    decayed_confidence,
-                    source_agents,
-                    memory_tier,
-                    expires_at,
-                )
-            }
-            _ => anyhow::bail!("expected Edge value"),
-        };
+    let (
+        edge_id,
+        fact,
+        relation_type,
+        confidence,
+        salience,
+        valid_at,
+        invalid_at,
+        embedding,
+        decayed_confidence,
+        source_agents,
+        memory_tier,
+        expires_at,
+    ) = match &rel {
+        FalkorValue::Edge(edge) => {
+            let p = &edge.properties;
+            let confidence = prop_float(p, "confidence");
+            let valid_at = prop_string(p, "valid_at");
+            let decayed_confidence = {
+                let v = prop_float(p, "decayed_confidence");
+                if v == 0.0 {
+                    confidence
+                } else {
+                    v
+                }
+            };
+            let source_agents = prop_opt_string(p, "source_agents").unwrap_or_default();
+            let memory_tier =
+                prop_opt_string(p, "memory_tier").unwrap_or_else(|| "long_term".to_string());
+            let expires_at = prop_opt_string(p, "expires_at");
+            (
+                edge.entity_id,
+                prop_string(p, "fact"),
+                prop_string(p, "relation_type"),
+                confidence,
+                prop_int(p, "salience"),
+                valid_at,
+                prop_opt_string(p, "invalid_at"),
+                prop_embedding(p, "embedding"),
+                decayed_confidence,
+                source_agents,
+                memory_tier,
+                expires_at,
+            )
+        }
+        _ => anyhow::bail!("expected Edge value"),
+    };
 
     let (subject_id, subject_name) = match &src {
         FalkorValue::Node(node) => {
@@ -1452,7 +1759,10 @@ fn prop_string(p: &std::collections::HashMap<String, FalkorValue>, key: &str) ->
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn prop_opt_string(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> Option<String> {
+fn prop_opt_string(
+    p: &std::collections::HashMap<String, FalkorValue>,
+    key: &str,
+) -> Option<String> {
     p.get(key).and_then(|v| match v {
         FalkorValue::None => None,
         FalkorValue::String(s) if s.is_empty() => None,
@@ -1477,7 +1787,9 @@ fn prop_int(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> i6
 
 #[cfg(not(target_arch = "wasm32"))]
 fn prop_embedding(p: &std::collections::HashMap<String, FalkorValue>, key: &str) -> Vec<f32> {
-    p.get(key).map(extract_embedding).unwrap_or_else(|| vec![0.0; EMBEDDING_DIM])
+    p.get(key)
+        .map(extract_embedding)
+        .unwrap_or_else(|| vec![0.0; EMBEDDING_DIM])
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1543,7 +1855,8 @@ fn supersession_from_row(row: Vec<FalkorValue>) -> Result<SupersessionRecord> {
     let superseded_at_str = extract_string(&c);
     let old_fact = extract_string(&d);
     let new_fact = extract_string(&e);
-    let superseded_at = superseded_at_str.parse::<DateTime<Utc>>()
+    let superseded_at = superseded_at_str
+        .parse::<DateTime<Utc>>()
         .unwrap_or_else(|_| Utc::now());
     Ok(SupersessionRecord {
         old_edge_id,
@@ -1556,7 +1869,8 @@ fn supersession_from_row(row: Vec<FalkorValue>) -> Result<SupersessionRecord> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn vec_literal(v: &[f32]) -> String {
-    let inner = v.iter()
+    let inner = v
+        .iter()
         .map(|f| format!("{:.6}", f))
         .collect::<Vec<_>>()
         .join(", ");

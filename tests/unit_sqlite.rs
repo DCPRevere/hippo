@@ -72,7 +72,10 @@ async fn create_edge_and_search() {
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "Bob")).await.unwrap();
 
-    let edge_id = g.create_edge("e1", "e2", &make_relation("Alice knows Bob")).await.unwrap();
+    let edge_id = g
+        .create_edge("e1", "e2", &make_relation("Alice knows Bob"))
+        .await
+        .unwrap();
     assert!(edge_id > 0);
 
     let edges = g.fulltext_search_edges("knows bob", None).await.unwrap();
@@ -86,7 +89,10 @@ async fn invalidate_edge() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "Bob")).await.unwrap();
-    let edge_id = g.create_edge("e1", "e2", &make_relation("Alice knows Bob")).await.unwrap();
+    let edge_id = g
+        .create_edge("e1", "e2", &make_relation("Alice knows Bob"))
+        .await
+        .unwrap();
 
     g.invalidate_edge(edge_id, Utc::now()).await.unwrap();
 
@@ -99,9 +105,15 @@ async fn compound_confidence() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
-    let edge_id = g.create_edge("e1", "e2", &make_relation("fact")).await.unwrap();
+    let edge_id = g
+        .create_edge("e1", "e2", &make_relation("fact"))
+        .await
+        .unwrap();
 
-    let combined = g.compound_edge_confidence(edge_id, "agent2", 0.8).await.unwrap();
+    let combined = g
+        .compound_edge_confidence(edge_id, "agent2", 0.8)
+        .await
+        .unwrap();
     // Bayesian: 1 - (1-0.9)(1-0.8) = 1 - 0.02 = 0.98
     assert!((combined - 0.98).abs() < 0.01);
 }
@@ -112,10 +124,17 @@ async fn walk_one_hop() {
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
     g.upsert_entity(&make_entity("e3", "C")).await.unwrap();
-    g.create_edge("e1", "e2", &make_relation("A-B")).await.unwrap();
-    g.create_edge("e2", "e3", &make_relation("B-C")).await.unwrap();
+    g.create_edge("e1", "e2", &make_relation("A-B"))
+        .await
+        .unwrap();
+    g.create_edge("e2", "e3", &make_relation("B-C"))
+        .await
+        .unwrap();
 
-    let results = g.walk_n_hops(&["e1".to_string()], 1, 10, None).await.unwrap();
+    let results = g
+        .walk_n_hops(&["e1".to_string()], 1, 10, None)
+        .await
+        .unwrap();
     let hops: Vec<_> = results.into_iter().map(|(e, _)| e).collect();
     assert_eq!(hops.len(), 1);
     assert_eq!(hops[0].fact, "A-B");
@@ -127,10 +146,17 @@ async fn walk_n_hops() {
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
     g.upsert_entity(&make_entity("e3", "C")).await.unwrap();
-    g.create_edge("e1", "e2", &make_relation("A-B")).await.unwrap();
-    g.create_edge("e2", "e3", &make_relation("B-C")).await.unwrap();
+    g.create_edge("e1", "e2", &make_relation("A-B"))
+        .await
+        .unwrap();
+    g.create_edge("e2", "e3", &make_relation("B-C"))
+        .await
+        .unwrap();
 
-    let results = g.walk_n_hops(&["e1".to_string()], 2, 10, None).await.unwrap();
+    let results = g
+        .walk_n_hops(&["e1".to_string()], 2, 10, None)
+        .await
+        .unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].1, 1); // first hop
     assert_eq!(results[1].1, 2); // second hop
@@ -141,7 +167,9 @@ async fn graph_stats() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
-    g.create_edge("e1", "e2", &make_relation("fact")).await.unwrap();
+    g.create_edge("e1", "e2", &make_relation("fact"))
+        .await
+        .unwrap();
 
     let stats = g.graph_stats().await.unwrap();
     assert_eq!(stats.entity_count, 2);
@@ -154,7 +182,9 @@ async fn memory_tier_stats() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
-    g.create_edge("e1", "e2", &make_relation("fact")).await.unwrap();
+    g.create_edge("e1", "e2", &make_relation("fact"))
+        .await
+        .unwrap();
 
     let tier = g.memory_tier_stats().await.unwrap();
     assert_eq!(tier.working_count, 1);
@@ -175,7 +205,9 @@ async fn rename_entity() {
 async fn entity_properties() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
-    g.set_entity_property("e1", "role", "engineer").await.unwrap();
+    g.set_entity_property("e1", "role", "engineer")
+        .await
+        .unwrap();
 
     let found = g.find_entity_by_property("role", "engineer").await.unwrap();
     assert!(found.is_some());
@@ -197,10 +229,18 @@ async fn supersession_and_provenance() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
-    let e1 = g.create_edge("e1", "e2", &make_relation("old fact")).await.unwrap();
-    let e2 = g.create_edge("e1", "e2", &make_relation("new fact")).await.unwrap();
+    let e1 = g
+        .create_edge("e1", "e2", &make_relation("old fact"))
+        .await
+        .unwrap();
+    let e2 = g
+        .create_edge("e1", "e2", &make_relation("new fact"))
+        .await
+        .unwrap();
 
-    g.create_supersession(e1, e2, Utc::now(), "old fact", "new fact").await.unwrap();
+    g.create_supersession(e1, e2, Utc::now(), "old fact", "new fact")
+        .await
+        .unwrap();
 
     let chain = g.get_supersession_chain(e1).await.unwrap();
     assert_eq!(chain.len(), 1);
@@ -266,7 +306,9 @@ async fn merge_placeholder() {
     g.upsert_entity(&placeholder).await.unwrap();
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
     g.upsert_entity(&make_entity("e2", "Bob")).await.unwrap();
-    g.create_edge("p1", "e2", &make_relation("placeholder-Bob")).await.unwrap();
+    g.create_edge("p1", "e2", &make_relation("placeholder-Bob"))
+        .await
+        .unwrap();
 
     g.merge_placeholder("p1", "e1").await.unwrap();
 

@@ -158,7 +158,11 @@ mod tests {
     fn csv_has_two_sections() {
         let csv = to_csv(&sample_entities(), &sample_edges());
         let sections: Vec<&str> = csv.split("\n\n").collect();
-        assert_eq!(sections.len(), 2, "expected two sections separated by blank line");
+        assert_eq!(
+            sections.len(),
+            2,
+            "expected two sections separated by blank line"
+        );
         assert!(sections[0].starts_with("id,name,"));
         assert!(sections[1].starts_with("edge_id,subject_id,"));
     }

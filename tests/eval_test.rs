@@ -72,7 +72,11 @@ async fn test_eval_retrieval_precision() {
     }
 
     let (passed, total) = print_summary(&results);
-    assert!(passed == total, "{} eval(s) failed out of {total}", total - passed);
+    assert!(
+        passed == total,
+        "{} eval(s) failed out of {total}",
+        total - passed
+    );
 }
 
 // ---- Contradiction Handling ----
@@ -111,7 +115,12 @@ async fn test_eval_contradiction() {
     results.last().unwrap().print();
 
     // Apply contradiction
-    remember(client, base, "My doctor is now Dr. Jones at Riverside Clinic").await;
+    remember(
+        client,
+        base,
+        "My doctor is now Dr. Jones at Riverside Clinic",
+    )
+    .await;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // After contradiction
@@ -168,7 +177,11 @@ async fn test_eval_contradiction() {
     results.last().unwrap().print();
 
     let (passed, total) = print_summary(&results);
-    assert!(passed == total, "{} eval(s) failed out of {total}", total - passed);
+    assert!(
+        passed == total,
+        "{} eval(s) failed out of {total}",
+        total - passed
+    );
 }
 
 // ---- Entity Resolution ----
@@ -195,10 +208,15 @@ async fn test_eval_entity_resolution() {
     let mut results = Vec::new();
 
     // Alice should be one entity, not duplicated
-    let alice_count = entities.iter().filter(|e| e.to_lowercase() == "alice").count();
+    let alice_count = entities
+        .iter()
+        .filter(|e| e.to_lowercase() == "alice")
+        .count();
     let mut failures = Vec::new();
     if alice_count != 1 {
-        failures.push(format!("expected exactly 1 'Alice' entity, found {alice_count}"));
+        failures.push(format!(
+            "expected exactly 1 'Alice' entity, found {alice_count}"
+        ));
         println!("    all entities: {:?}", entities);
     }
     results.push(EvalResult {
@@ -210,10 +228,15 @@ async fn test_eval_entity_resolution() {
     });
 
     // Bob should be one entity
-    let bob_count = entities.iter().filter(|e| e.to_lowercase() == "bob").count();
+    let bob_count = entities
+        .iter()
+        .filter(|e| e.to_lowercase() == "bob")
+        .count();
     let mut failures = Vec::new();
     if bob_count != 1 {
-        failures.push(format!("expected exactly 1 'Bob' entity, found {bob_count}"));
+        failures.push(format!(
+            "expected exactly 1 'Bob' entity, found {bob_count}"
+        ));
         println!("    all entities: {:?}", entities);
     }
     results.push(EvalResult {
@@ -234,7 +257,9 @@ async fn test_eval_entity_resolution() {
         .count();
     let mut failures = Vec::new();
     if smith_count != 1 {
-        failures.push(format!("expected exactly 1 'Dr. Smith' entity, found {smith_count}"));
+        failures.push(format!(
+            "expected exactly 1 'Dr. Smith' entity, found {smith_count}"
+        ));
         println!("    all entities: {:?}", entities);
     }
     results.push(EvalResult {
@@ -280,7 +305,11 @@ async fn test_eval_entity_resolution() {
     }
 
     let (passed, total) = print_summary(&results);
-    assert!(passed == total, "{} eval(s) failed out of {total}", total - passed);
+    assert!(
+        passed == total,
+        "{} eval(s) failed out of {total}",
+        total - passed
+    );
 }
 
 // ---- Graph Quality ----
@@ -299,7 +328,10 @@ async fn test_eval_graph_quality() {
     let start = Instant::now();
     let graph = query_graph(client, base).await;
     let entities = graph["entities"].as_array().cloned().unwrap_or_default();
-    let active_edges = graph["active_edges"].as_array().cloned().unwrap_or_default();
+    let active_edges = graph["active_edges"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
 
     let mut results = Vec::new();
 
@@ -375,7 +407,11 @@ async fn test_eval_graph_quality() {
     }
 
     let (passed, total) = print_summary(&results);
-    assert!(passed == total, "{} eval(s) failed out of {total}", total - passed);
+    assert!(
+        passed == total,
+        "{} eval(s) failed out of {total}",
+        total - passed
+    );
 }
 
 // ---- Helpers local to this file ----

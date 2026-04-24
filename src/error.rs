@@ -17,12 +17,15 @@ mod status_compat {
         pub const BAD_GATEWAY: Self = Self(502);
         pub const SERVICE_UNAVAILABLE: Self = Self(503);
         pub const GATEWAY_TIMEOUT: Self = Self(504);
-        pub fn as_u16(&self) -> u16 { self.0 }
+        pub fn as_u16(&self) -> u16 {
+            self.0
+        }
     }
 }
 #[cfg(target_arch = "wasm32")]
 use status_compat::StatusCode;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::models::ErrorResponse;
 
 /// Application-level error that carries an HTTP status code.
@@ -38,7 +41,10 @@ pub struct AppError {
 
 impl AppError {
     pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self { status, message: message.into() }
+        Self {
+            status,
+            message: message.into(),
+        }
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
@@ -149,6 +155,8 @@ pub struct GraphConnectError {
 
 impl GraphConnectError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }

@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 // Re-export shared API types so existing `use crate::models::X` continues to work.
 pub use hippo_api::{
-    AskRequest, AskResponse, BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
-    ContextFact, ContextRequest, ContextResponse, ErrorResponse, GraphOp, HealthResponse,
-    LlmUsage, MemoryTier, OpExecutionTrace, OperationsResult, RememberRequest, RememberResponse,
-    RememberTrace, ScoringParams, UserInfo, ApiKeyInfo,
+    ApiKeyInfo, AskRequest, AskResponse, BatchRememberRequest, BatchRememberResponse,
+    BatchRememberResult, ContextFact, ContextRequest, ContextResponse, ErrorResponse, GraphOp,
+    HealthResponse, LlmUsage, MemoryTier, OpExecutionTrace, OperationsResult, RememberRequest,
+    RememberResponse, RememberTrace, ScoringParams, UserInfo,
 };
 
 pub const EMBEDDING_DIM: usize = 768;
@@ -166,10 +166,18 @@ pub enum RememberProgress {
 
 // Batch ingest helpers (default functions)
 
-fn default_confidence() -> f32 { 0.9 }
-fn default_source() -> String { "seed".to_string() }
-fn default_tier() -> String { "long_term".to_string() }
-fn default_true() -> bool { true }
+fn default_confidence() -> f32 {
+    0.9
+}
+fn default_source() -> String {
+    "seed".to_string()
+}
+fn default_tier() -> String {
+    "long_term".to_string()
+}
+fn default_true() -> bool {
+    true
+}
 
 // Consolidation types
 
@@ -348,7 +356,11 @@ pub struct GraphContext {
 
 impl GraphContext {
     pub fn empty() -> Self {
-        Self { nodes: vec![], edges: vec![], principal_id: None }
+        Self {
+            nodes: vec![],
+            edges: vec![],
+            principal_id: None,
+        }
     }
 
     pub fn is_empty(&self) -> bool {

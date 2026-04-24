@@ -1,15 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use crate::error::GraphConnectError;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use crate::error::GraphConnectError;
 use qdrant_client::qdrant::{
-    Condition, CreateCollectionBuilder, Distance, Filter, PointId, PointStruct,
-    ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder, UpsertPointsBuilder,
-    VectorParamsBuilder, DeleteCollectionBuilder, PointsIdsList, DeletePointsBuilder,
-    value::Kind, with_payload_selector, with_vectors_selector,
+    value::Kind, with_payload_selector, with_vectors_selector, Condition, CreateCollectionBuilder,
+    DeleteCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointId, PointStruct,
+    PointsIdsList, ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder,
+    UpsertPointsBuilder, VectorParamsBuilder,
 };
 use qdrant_client::Qdrant;
 
@@ -42,7 +42,10 @@ fn payload_str(payload: &HashMap<String, qdrant_client::qdrant::Value>, key: &st
         .unwrap_or_default()
 }
 
-fn payload_str_opt(payload: &HashMap<String, qdrant_client::qdrant::Value>, key: &str) -> Option<String> {
+fn payload_str_opt(
+    payload: &HashMap<String, qdrant_client::qdrant::Value>,
+    key: &str,
+) -> Option<String> {
     payload.get(key).and_then(|v| match &v.kind {
         Some(Kind::StringValue(s)) => {
             if s.is_empty() {
@@ -231,10 +234,7 @@ impl QdrantGraph {
 
     async fn collection_exists(&self, name: &str) -> Result<bool> {
         let collections = self.client.list_collections().await?;
-        Ok(collections
-            .collections
-            .iter()
-            .any(|c| c.name == name))
+        Ok(collections.collections.iter().any(|c| c.name == name))
     }
 
     async fn ensure_collection(&self, name: &str, vector_size: u64) -> Result<()> {
@@ -517,10 +517,9 @@ impl GraphBackend for QdrantGraph {
             Some(Filter::must(vec![Condition::is_null("invalid_at")]))
         };
 
-        let mut builder =
-            SearchPointsBuilder::new(&collection, embedding.to_vec(), (k * 3) as u64)
-                .with_payload(true)
-                .with_vectors(true);
+        let mut builder = SearchPointsBuilder::new(&collection, embedding.to_vec(), (k * 3) as u64)
+            .with_payload(true)
+            .with_vectors(true);
         if let Some(f) = filter {
             builder = builder.filter(f);
         }
@@ -657,7 +656,6 @@ impl GraphBackend for QdrantGraph {
         Ok(rows
             .into_iter()
             .zip(results.iter().map(|(_, h)| *h))
-            .map(|(row, hop)| (row, hop))
             .collect())
     }
 
@@ -730,7 +728,9 @@ impl GraphBackend for QdrantGraph {
         let point_id = edge_point_id(edge_id);
 
         // Look up entity names
-        let names = self.entity_names(&[from_id.to_string(), to_id.to_string()]).await?;
+        let names = self
+            .entity_names(&[from_id.to_string(), to_id.to_string()])
+            .await?;
         let from_name = names.get(from_id).cloned().unwrap_or_default();
         let to_name = names.get(to_id).cloned().unwrap_or_default();
 
@@ -790,10 +790,7 @@ impl GraphBackend for QdrantGraph {
 
         let point_id = edge_point_id(edge_id);
         let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
-        payload.insert(
-            "invalid_at".into(),
-            qdrant_value_str(&at.to_rfc3339()),
-        );
+        payload.insert("invalid_at".into(), qdrant_value_str(&at.to_rfc3339()));
 
         self.client
             .set_payload(
@@ -876,10 +873,7 @@ impl GraphBackend for QdrantGraph {
             for point in &points {
                 if let Some(pid) = &point.id {
                     let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
-                    payload.insert(
-                        "invalid_at".into(),
-                        qdrant_value_str(&now.to_rfc3339()),
-                    );
+                    payload.insert("invalid_at".into(), qdrant_value_str(&now.to_rfc3339()));
                     self.client
                         .set_payload(
                             SetPayloadPointsBuilder::new(&edges_col, payload)
@@ -958,7 +952,9 @@ impl GraphBackend for QdrantGraph {
         }
 
         let active_filter = Filter::must(vec![Condition::is_null("invalid_at")]);
-        let points = self.scroll_all(&collection, Some(active_filter), false).await?;
+        let points = self
+            .scroll_all(&collection, Some(active_filter), false)
+            .await?;
 
         let mut working = 0;
         let mut long_term = 0;
@@ -987,7 +983,9 @@ impl GraphBackend for QdrantGraph {
         }
 
         let active_filter = Filter::must(vec![Condition::is_null("invalid_at")]);
-        let points = self.scroll_all(&collection, Some(active_filter), false).await?;
+        let points = self
+            .scroll_all(&collection, Some(active_filter), false)
+            .await?;
 
         let stale_str = stale_before.to_rfc3339();
         let mut count = 0;
@@ -1023,7 +1021,9 @@ impl GraphBackend for QdrantGraph {
         }
 
         let active_filter = Filter::must(vec![Condition::is_null("invalid_at")]);
-        let points = self.scroll_all(&collection, Some(active_filter), false).await?;
+        let points = self
+            .scroll_all(&collection, Some(active_filter), false)
+            .await?;
 
         let now_str = now.to_rfc3339();
         let mut count = 0;
@@ -1033,10 +1033,7 @@ impl GraphBackend for QdrantGraph {
                     if let Some(pid) = &point.id {
                         let mut payload: HashMap<String, qdrant_client::qdrant::Value> =
                             HashMap::new();
-                        payload.insert(
-                            "invalid_at".into(),
-                            qdrant_value_str(&now_str),
-                        );
+                        payload.insert("invalid_at".into(), qdrant_value_str(&now_str));
                         self.client
                             .set_payload(
                                 SetPayloadPointsBuilder::new(&collection, payload)
@@ -1097,7 +1094,9 @@ impl GraphBackend for QdrantGraph {
         }
 
         let active_filter = Filter::must(vec![Condition::is_null("invalid_at")]);
-        let points = self.scroll_all(&edges_col, Some(active_filter), false).await?;
+        let points = self
+            .scroll_all(&edges_col, Some(active_filter), false)
+            .await?;
 
         let edge_count = points.len();
         let mut sum_confidence = 0.0f32;
@@ -1342,7 +1341,10 @@ impl GraphBackend for QdrantGraph {
         }
 
         let prop_key = format!("prop_{key}");
-        let filter = Filter::must(vec![Condition::matches(prop_key.as_str(), value.to_string())]);
+        let filter = Filter::must(vec![Condition::matches(
+            prop_key.as_str(),
+            value.to_string(),
+        )]);
         let points = self.scroll_all(&collection, Some(filter), true).await?;
 
         Ok(points.first().map(|p| {

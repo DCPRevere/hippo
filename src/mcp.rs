@@ -270,9 +270,7 @@ fn call_reflect(
     args: &Value,
     api_key: Option<&str>,
 ) -> Result<String, String> {
-    let body = build_body(&[
-        ("about", args.get("about")),
-    ]);
+    let body = build_body(&[("about", args.get("about"))]);
     post(client, &format!("{base_url}/reflect"), &body, api_key)
 }
 
@@ -312,5 +310,10 @@ fn call_recall_at(
         ("at", args.get("at")),
         ("limit", args.get("limit")),
     ]);
-    post(client, &format!("{base_url}/context/temporal"), &body, api_key)
+    post(
+        client,
+        &format!("{base_url}/context/temporal"),
+        &body,
+        api_key,
+    )
 }

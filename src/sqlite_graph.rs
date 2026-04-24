@@ -56,8 +56,8 @@ impl SqliteGraph {
     }
 
     pub fn in_memory(name: &str) -> Result<Self> {
-        let conn = Connection::open_in_memory()
-            .context("failed to open in-memory SQLite database")?;
+        let conn =
+            Connection::open_in_memory().context("failed to open in-memory SQLite database")?;
         let graph = Self {
             name: name.to_string(),
             conn: Mutex::new(conn),
@@ -69,18 +69,29 @@ impl SqliteGraph {
     async fn init_next_edge_id(&self) -> Result<()> {
         let conn = self.conn.lock().await;
         let max_id: i64 = conn
-            .query_row("SELECT COALESCE(MAX(edge_id), 0) FROM edges", [], |row| row.get(0))
+            .query_row("SELECT COALESCE(MAX(edge_id), 0) FROM edges", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(0);
         self.next_edge_id.store(max_id + 1, Ordering::Relaxed);
         Ok(())
     }
 
-    async fn walk_one_hop_inner(&self, entity_ids: &[String], limit: usize, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
+    async fn walk_one_hop_inner(
+        &self,
+        entity_ids: &[String],
+        limit: usize,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Vec<EdgeRow>> {
         if entity_ids.is_empty() {
             return Ok(vec![]);
         }
         let conn = self.conn.lock().await;
-        let placeholders: Vec<String> = entity_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let placeholders: Vec<String> = entity_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect();
         let ph = placeholders.join(",");
         if let Some(at) = at {
             let at_str = at.to_rfc3339();
@@ -99,7 +110,8 @@ impl SqliteGraph {
                 .collect();
             param_values.push(Box::new(at_str));
             param_values.push(Box::new(limit_i64));
-            let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+                param_values.iter().map(|b| b.as_ref()).collect();
             let rows = stmt
                 .query_map(params_ref.as_slice(), row_to_edge)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -117,7 +129,8 @@ impl SqliteGraph {
                 .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
                 .collect();
             param_values.push(Box::new(limit_i64));
-            let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+                param_values.iter().map(|b| b.as_ref()).collect();
             let rows = stmt
                 .query_map(params_ref.as_slice(), row_to_edge)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -324,7 +337,11 @@ impl GraphBackend for SqliteGraph {
 
     // --- Edge search ---
 
-    async fn fulltext_search_edges(&self, query_str: &str, at: Option<DateTime<Utc>>) -> Result<Vec<EdgeRow>> {
+    async fn fulltext_search_edges(
+        &self,
+        query_str: &str,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<Vec<EdgeRow>> {
         let conn = self.conn.lock().await;
         let pattern = format!("%{}%", query_str.to_lowercase());
         if let Some(at) = at {
@@ -366,13 +383,15 @@ impl GraphBackend for SqliteGraph {
                 EDGES_SELECT
             );
             let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map(params![at_str], row_to_edge)?
+            let rows = stmt
+                .query_map(params![at_str], row_to_edge)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         } else {
             let sql = format!("{} WHERE e.invalid_at IS NULL", EDGES_SELECT);
             let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], row_to_edge)?
+            let rows = stmt
+                .query_map([], row_to_edge)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         };
@@ -405,7 +424,9 @@ impl GraphBackend for SqliteGraph {
         let mut visited_edges: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
         for hop in 1..=max_hops {
-            let hop_edges = self.walk_one_hop_inner(&frontier, limit_per_hop, at).await?;
+            let hop_edges = self
+                .walk_one_hop_inner(&frontier, limit_per_hop, at)
+                .await?;
             let mut next_frontier = Vec::new();
             for edge in hop_edges {
                 if visited_edges.insert(edge.edge_id) {
@@ -425,7 +446,6 @@ impl GraphBackend for SqliteGraph {
         }
         Ok(results)
     }
-
 
     async fn find_all_active_edges_from(&self, node_id: &str) -> Result<Vec<EdgeRow>> {
         let conn = self.conn.lock().await;
@@ -512,7 +532,6 @@ impl GraphBackend for SqliteGraph {
         Ok(())
     }
 
-
     async fn delete_entity(&self, entity_id: &str) -> Result<usize> {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
@@ -534,7 +553,10 @@ impl GraphBackend for SqliteGraph {
             "UPDATE edges SET to_id = ?1 WHERE to_id = ?2",
             params![resolved_id, placeholder_id],
         )?;
-        conn.execute("DELETE FROM entities WHERE id = ?1", params![placeholder_id])?;
+        conn.execute(
+            "DELETE FROM entities WHERE id = ?1",
+            params![placeholder_id],
+        )?;
         Ok(())
     }
 
@@ -564,7 +586,10 @@ impl GraphBackend for SqliteGraph {
             [],
             |row| row.get(0),
         )?;
-        Ok(crate::models::MemoryTierStats { working_count, long_term_count })
+        Ok(crate::models::MemoryTierStats {
+            working_count,
+            long_term_count,
+        })
     }
 
     async fn decay_stale_edges(
@@ -595,7 +620,6 @@ impl GraphBackend for SqliteGraph {
 
     // --- Facts / reflection ---
 
-
     async fn get_entity_facts(&self, entity_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
@@ -610,7 +634,8 @@ impl GraphBackend for SqliteGraph {
 
     async fn graph_stats(&self) -> Result<crate::models::GraphStats> {
         let conn = self.conn.lock().await;
-        let entity_count: usize = conn.query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+        let entity_count: usize =
+            conn.query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
         let edge_count: usize = conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE invalid_at IS NULL",
             [],
@@ -632,12 +657,11 @@ impl GraphBackend for SqliteGraph {
             )
             .ok()
             .flatten();
-        let avg_confidence: f32 = conn
-            .query_row(
-                "SELECT COALESCE(AVG(confidence), 0.0) FROM edges WHERE invalid_at IS NULL",
-                [],
-                |row| row.get(0),
-            )?;
+        let avg_confidence: f32 = conn.query_row(
+            "SELECT COALESCE(AVG(confidence), 0.0) FROM edges WHERE invalid_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(crate::models::GraphStats {
             entity_count,
             edge_count,
@@ -646,9 +670,6 @@ impl GraphBackend for SqliteGraph {
             avg_confidence,
         })
     }
-
-
-
 
     // --- Dump / pagination ---
 
@@ -673,7 +694,11 @@ impl GraphBackend for SqliteGraph {
         Ok(rows)
     }
 
-    async fn list_entities_by_recency(&self, offset: usize, limit: usize) -> Result<Vec<EntityRow>> {
+    async fn list_entities_by_recency(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<EntityRow>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
             "SELECT id, name, entity_type, resolved, hint, content, created_at, embedding
@@ -699,7 +724,9 @@ impl GraphBackend for SqliteGraph {
                     Ok(SupersessionRecord {
                         old_edge_id: row.get(0)?,
                         new_edge_id: row.get(1)?,
-                        superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+                        superseded_at: at_str
+                            .parse::<DateTime<Utc>>()
+                            .unwrap_or_else(|_| Utc::now()),
                         old_fact: row.get(3)?,
                         new_fact: row.get(4)?,
                     })
@@ -717,7 +744,9 @@ impl GraphBackend for SqliteGraph {
                 Ok(SupersessionRecord {
                     old_edge_id: row.get(0)?,
                     new_edge_id: row.get(1)?,
-                    superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+                    superseded_at: at_str
+                        .parse::<DateTime<Utc>>()
+                        .unwrap_or_else(|_| Utc::now()),
                     old_fact: row.get(3)?,
                     new_fact: row.get(4)?,
                 })
@@ -785,9 +814,7 @@ impl GraphBackend for SqliteGraph {
         Ok(rows)
     }
 
-
     // --- Archive ---
-
 
     // --- Entity updates ---
 
@@ -833,8 +860,6 @@ impl GraphBackend for SqliteGraph {
     }
 
     // --- Clustering ---
-
-
 }
 
 impl SqliteGraph {
@@ -847,7 +872,12 @@ impl SqliteGraph {
                 credibility = excluded.credibility,
                 fact_count = excluded.fact_count,
                 contradiction_rate = excluded.contradiction_rate",
-            params![cred.agent_id, cred.credibility, cred.fact_count as i64, cred.contradiction_rate],
+            params![
+                cred.agent_id,
+                cred.credibility,
+                cred.fact_count as i64,
+                cred.contradiction_rate
+            ],
         )?;
         Ok(())
     }
@@ -933,7 +963,9 @@ impl SqliteGraph {
                 Ok(SupersessionRecord {
                     old_edge_id: row.get(0)?,
                     new_edge_id: row.get(1)?,
-                    superseded_at: at_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now()),
+                    superseded_at: at_str
+                        .parse::<DateTime<Utc>>()
+                        .unwrap_or_else(|_| Utc::now()),
                     old_fact: row.get(3)?,
                     new_fact: row.get(4)?,
                 })

@@ -2,8 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::models::{
-    ContextFact, EdgeClassification, EntityRow,
-    ExtractedEntity, GraphContext, OperationsResult,
+    ContextFact, EdgeClassification, EntityRow, ExtractedEntity, GraphContext, OperationsResult,
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

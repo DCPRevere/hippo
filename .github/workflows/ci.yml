@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -37,6 +37,17 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
 
+  wasm-check:
+    name: WASM check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target wasm32-unknown-unknown --manifest-path hippo-wasm/Cargo.toml
+
   rust-test:
     name: Rust unit tests
     runs-on: ubuntu-latest
@@ -47,8 +58,9 @@ jobs:
       - run: >
           cargo test
           --test unit_remember
-          --test unit_context
           --test unit_maintain
+          --test unit_auth_http
+          --test unit_sqlite
           --test retrieval
           --test maintenance
           --test memory_creation

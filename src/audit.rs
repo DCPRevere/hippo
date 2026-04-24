@@ -96,8 +96,7 @@ pub async fn query_audit_log(
         .into_iter()
         .filter(|e| e.entity_type == "_audit")
         .filter_map(|e| {
-            let hint: serde_json::Value =
-                serde_json::from_str(e.hint.as_deref()?).ok()?;
+            let hint: serde_json::Value = serde_json::from_str(e.hint.as_deref()?).ok()?;
             let user_id = hint["user_id"].as_str()?.to_string();
             let action = hint["action"].as_str()?.to_string();
             let details = hint["details"].as_str().unwrap_or("").to_string();
@@ -235,12 +234,16 @@ mod tests {
         assert_eq!(all.len(), 3);
 
         // Filter by user
-        let alice = query_audit_log(&*graph, Some("alice"), None, 100).await.unwrap();
+        let alice = query_audit_log(&*graph, Some("alice"), None, 100)
+            .await
+            .unwrap();
         assert_eq!(alice.len(), 2);
         assert!(alice.iter().all(|e| e.user_id == "alice"));
 
         // Filter by action
-        let asks = query_audit_log(&*graph, None, Some("ask"), 100).await.unwrap();
+        let asks = query_audit_log(&*graph, None, Some("ask"), 100)
+            .await
+            .unwrap();
         assert_eq!(asks.len(), 1);
         assert_eq!(asks[0].user_id, "bob");
 

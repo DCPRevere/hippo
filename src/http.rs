@@ -18,10 +18,9 @@ use tower_http::trace::TraceLayer;
 use crate::auth::Auth;
 use crate::error::AppError;
 use crate::models::{
-    AdminSeedRequest, AdminSeedResponse, AskRequest,
-    BackupEntity, BackupPayload, BackupRequest, RestoreRequest,
-    BatchRememberRequest, BatchRememberResponse, BatchRememberResult,
-    ContextRequest, HealthResponse, RememberRequest,
+    AdminSeedRequest, AdminSeedResponse, AskRequest, BackupEntity, BackupPayload, BackupRequest,
+    BatchRememberRequest, BatchRememberResponse, BatchRememberResult, ContextRequest,
+    HealthResponse, RememberRequest, RestoreRequest,
 };
 use crate::pipeline::{ask, maintain, remember};
 use crate::state::AppState;
@@ -63,6 +62,7 @@ where
 {
     type Rejection = AppError;
 
+    #[allow(clippy::manual_async_fn)]
     fn from_request(
         req: Request,
         state: &S,
@@ -151,7 +151,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/context", post(context_handler))
         .route("/ask", post(ask_handler))
         // REST resources
-        .route("/entities/{id}", get(entity_handler).delete(entity_delete_handler))
+        .route(
+            "/entities/{id}",
+            get(entity_handler).delete(entity_delete_handler),
+        )
         .route("/entities/{id}/edges", get(entity_edges_handler))
         .route("/edges/{id}", get(edge_handler))
         .route("/edges/{id}/provenance", get(edge_provenance_handler))
@@ -178,15 +181,21 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/admin/users", get(admin_list_users_handler))
         .route("/admin/users/{user_id}", delete(admin_delete_user_handler))
         // API key management
-        .route("/admin/users/{user_id}/keys", post(admin_create_key_handler))
+        .route(
+            "/admin/users/{user_id}/keys",
+            post(admin_create_key_handler),
+        )
         .route("/admin/users/{user_id}/keys", get(admin_list_keys_handler))
-        .route("/admin/users/{user_id}/keys/{label}", delete(admin_revoke_key_handler))
+        .route(
+            "/admin/users/{user_id}/keys/{label}",
+            delete(admin_revoke_key_handler),
+        )
         // Audit log
         .route("/admin/audit", get(admin_audit_handler));
 
     let ui_dir = std::env::var("HIPPO_UI_DIR").unwrap_or_else(|_| "ui/build".to_string());
-    let ui_service = ServeDir::new(&ui_dir)
-        .not_found_service(ServeFile::new(format!("{}/index.html", ui_dir)));
+    let ui_service =
+        ServeDir::new(&ui_dir).not_found_service(ServeFile::new(format!("{}/index.html", ui_dir)));
 
     Router::new()
         // Root health endpoint for container health checks / backward compat
@@ -204,8 +213,17 @@ async fn remember_handler(
     Auth(user): Auth,
     ValidJson(req): ValidJson<RememberRequest>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
-    state.emit_audit(&user.user_id, "remember", format!("statement: {}", &req.statement[..80.min(req.statement.len())]));
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
+    state.emit_audit(
+        &user.user_id,
+        "remember",
+        format!(
+            "statement: {}",
+            &req.statement[..80.min(req.statement.len())]
+        ),
+    );
     let resp = remember::remember(&state, &*graph, req, None, Some(&user.user_id)).await?;
     Ok(json_ok(resp))
 }
@@ -217,7 +235,9 @@ async fn remember_batch_handler(
 ) -> Result<JsonOk, AppError> {
     let total = req.statements.len();
     let source_agent = req.source_agent.clone();
-    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
 
     let user_id = user.user_id.clone();
     let results = if req.parallel {
@@ -237,7 +257,8 @@ async fn remember_batch_handler(
                         graph: None,
                         ttl_secs: req.ttl_secs,
                     };
-                    match remember::remember(&state, &*graph, remember_req, None, Some(&uid)).await {
+                    match remember::remember(&state, &*graph, remember_req, None, Some(&uid)).await
+                    {
                         Ok(resp) => BatchRememberResult {
                             statement,
                             ok: true,
@@ -267,22 +288,24 @@ async fn remember_batch_handler(
                 graph: None,
                 ttl_secs: req.ttl_secs,
             };
-            let result = match remember::remember(&state, &*graph, remember_req, None, Some(&user_id)).await {
-                Ok(resp) => BatchRememberResult {
-                    statement,
-                    ok: true,
-                    facts_written: Some(resp.facts_written),
-                    entities_created: Some(resp.entities_created),
-                    error: None,
-                },
-                Err(e) => BatchRememberResult {
-                    statement,
-                    ok: false,
-                    facts_written: None,
-                    entities_created: None,
-                    error: Some(e.to_string()),
-                },
-            };
+            let result =
+                match remember::remember(&state, &*graph, remember_req, None, Some(&user_id)).await
+                {
+                    Ok(resp) => BatchRememberResult {
+                        statement,
+                        ok: true,
+                        facts_written: Some(resp.facts_written),
+                        entities_created: Some(resp.entities_created),
+                        error: None,
+                    },
+                    Err(e) => BatchRememberResult {
+                        statement,
+                        ok: false,
+                        facts_written: None,
+                        entities_created: None,
+                        error: Some(e.to_string()),
+                    },
+                };
             results.push(result);
         }
         results
@@ -304,8 +327,17 @@ async fn context_handler(
     Auth(user): Auth,
     ValidJson(req): ValidJson<ContextRequest>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
-    let ctx = remember::gather_pre_extraction_context_at(&state, &*graph, &req.query, req.at, Some(&user.user_id)).await?;
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
+    let ctx = remember::gather_pre_extraction_context_at(
+        &state,
+        &*graph,
+        &req.query,
+        req.at,
+        Some(&user.user_id),
+    )
+    .await?;
     Ok(json_ok(ctx))
 }
 
@@ -314,8 +346,17 @@ async fn ask_handler(
     Auth(user): Auth,
     ValidJson(req): ValidJson<AskRequest>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
-    let resp = ask::ask(&state, &*graph, req, Some(&user.user_id), Some(&user.display_name)).await?;
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
+    let resp = ask::ask(
+        &state,
+        &*graph,
+        req,
+        Some(&user.user_id),
+        Some(&user.display_name),
+    )
+    .await?;
     Ok(json_ok(resp))
 }
 
@@ -327,7 +368,9 @@ async fn entity_handler(
     Path(id): Path<String>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(params.graph.as_deref(), &user)
+        .await?;
     match graph.get_entity_by_id(&id).await? {
         Some(entity) => Ok(json_ok(entity)),
         None => Err(AppError::not_found(format!("entity '{id}' not found"))),
@@ -340,7 +383,9 @@ async fn entity_edges_handler(
     Path(id): Path<String>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(params.graph.as_deref(), &user)
+        .await?;
     // Verify entity exists
     if graph.get_entity_by_id(&id).await?.is_none() {
         return Err(AppError::not_found(format!("entity '{id}' not found")));
@@ -355,18 +400,26 @@ async fn entity_delete_handler(
     Path(id): Path<String>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
-    let entity = graph.get_entity_by_id(&id).await?
+    let graph = state
+        .resolve_graph_for_user(params.graph.as_deref(), &user)
+        .await?;
+    let entity = graph
+        .get_entity_by_id(&id)
+        .await?
         .ok_or_else(|| AppError::not_found(format!("entity '{id}' not found")))?;
-    let edges_invalidated = graph.delete_entity(&id).await
+    let edges_invalidated = graph
+        .delete_entity(&id)
+        .await
         .map_err(|e| AppError::internal(e.to_string()))?;
 
-    let _ = state.event_tx.send(crate::events::GraphEvent::EntityDeleted {
-        id: entity.id.clone(),
-        name: entity.name.clone(),
-        edges_invalidated,
-        graph: graph.graph_name().to_string(),
-    });
+    let _ = state
+        .event_tx
+        .send(crate::events::GraphEvent::EntityDeleted {
+            id: entity.id.clone(),
+            name: entity.name.clone(),
+            edges_invalidated,
+            graph: graph.graph_name().to_string(),
+        });
 
     Ok(json_ok(serde_json::json!({
         "id": entity.id,
@@ -381,7 +434,9 @@ async fn edge_handler(
     Path(id): Path<i64>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(params.graph.as_deref(), &user)
+        .await?;
     // Walk all edges from both endpoints to find this edge by ID
     let all_edges = graph.dump_all_edges().await?;
     match all_edges.into_iter().find(|e| e.edge_id == id) {
@@ -396,7 +451,9 @@ async fn edge_provenance_handler(
     Path(id): Path<i64>,
     Query(params): Query<GraphQuery>,
 ) -> Result<JsonOk, AppError> {
-    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(params.graph.as_deref(), &user)
+        .await?;
     let resp = graph.get_provenance(id).await?;
     Ok(json_ok(resp))
 }
@@ -409,7 +466,9 @@ async fn maintain_handler(
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
     maintain::run_once(&state, &*graph).await?;
-    Ok(json_ok(serde_json::json!({"status": "maintenance complete"})))
+    Ok(json_ok(
+        serde_json::json!({"status": "maintenance complete"}),
+    ))
 }
 
 async fn graph_handler(
@@ -417,7 +476,9 @@ async fn graph_handler(
     Auth(user): Auth,
     Query(params): Query<GraphQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let graph = state.resolve_graph_for_user(params.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(params.graph.as_deref(), &user)
+        .await?;
     let entities = graph.dump_all_entities().await?;
     let all_edges = graph.dump_all_edges().await?;
 
@@ -429,10 +490,14 @@ async fn graph_handler(
                 StatusCode::OK,
                 [
                     ("content-type", "application/xml"),
-                    ("content-disposition", "attachment; filename=\"graph.graphml\""),
+                    (
+                        "content-disposition",
+                        "attachment; filename=\"graph.graphml\"",
+                    ),
                 ],
                 body,
-            ).into_response())
+            )
+                .into_response())
         }
         "csv" => {
             let body = crate::export::to_csv(&entities, &all_edges);
@@ -443,30 +508,30 @@ async fn graph_handler(
                     ("content-disposition", "attachment; filename=\"graph.csv\""),
                 ],
                 body,
-            ).into_response())
+            )
+                .into_response())
         }
         _ => {
-            let (active, invalidated): (Vec<_>, Vec<_>) = all_edges
-                .into_iter()
-                .partition(|e| e.invalid_at.is_none());
+            let (active, invalidated): (Vec<_>, Vec<_>) =
+                all_edges.into_iter().partition(|e| e.invalid_at.is_none());
             Ok(json_ok(serde_json::json!({
                 "graph": graph.graph_name(),
                 "entities": entities,
                 "edges": { "active": active, "invalidated": invalidated },
-            })).into_response())
+            }))
+            .into_response())
         }
     }
 }
 
 // -- Observability ------------------------------------------------------------
 
-async fn health_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<JsonOk, AppError> {
+async fn health_handler(State(state): State<Arc<AppState>>) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    graph.ping().await.map_err(|e| {
-        AppError::unavailable(format!("graph backend unavailable: {e}"))
-    })?;
+    graph
+        .ping()
+        .await
+        .map_err(|e| AppError::unavailable(format!("graph backend unavailable: {e}")))?;
     Ok(json_ok(HealthResponse {
         status: "ok".to_string(),
         graph: state.graph_registry().default_graph_name().to_string(),
@@ -481,8 +546,6 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
     )
 }
 
-
-
 // -- SSE ----------------------------------------------------------------------
 
 async fn events_handler(
@@ -492,24 +555,23 @@ async fn events_handler(
     let rx = state.event_tx.subscribe();
     let graph_filter = params.graph;
 
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
-        .filter_map(move |result| {
-            match result {
-                Ok(event) => {
-                    // Apply optional graph filter
-                    if let Some(ref g) = graph_filter {
-                        if event.graph() != g {
-                            return None;
-                        }
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
+        match result {
+            Ok(event) => {
+                // Apply optional graph filter
+                if let Some(ref g) = graph_filter {
+                    if event.graph() != g {
+                        return None;
                     }
-                    let event_name = event.event_name().to_string();
-                    let data = serde_json::to_string(&event).unwrap_or_default();
-                    Some(Ok(Event::default().event(event_name).data(data)))
                 }
-                // Skip lagged messages
-                Err(_) => None,
+                let event_name = event.event_name().to_string();
+                let data = serde_json::to_string(&event).unwrap_or_default();
+                Some(Ok(Event::default().event(event_name).data(data)))
             }
-        });
+            // Skip lagged messages
+            Err(_) => None,
+        }
+    });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
@@ -525,11 +587,13 @@ async fn seed_handler(
         return Err(AppError::forbidden("admin access required"));
     }
 
-    use chrono::Utc;
     use crate::math::pseudo_embed;
     use crate::models::{Entity, MemoryTier, Relation};
+    use chrono::Utc;
 
-    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
 
     let mut entities_created = 0usize;
     let mut edges_created = 0usize;
@@ -546,15 +610,18 @@ async fn seed_handler(
             created_at: Utc::now(),
             embedding,
         };
-        graph.upsert_entity(&entity).await.map_err(|err| {
-            AppError::internal(format!("entity '{}': {err}", e.name))
-        })?;
+        graph
+            .upsert_entity(&entity)
+            .await
+            .map_err(|err| AppError::internal(format!("entity '{}': {err}", e.name)))?;
         entities_created += 1;
     }
 
     for edge in &req.edges {
         let embedding = pseudo_embed(&edge.fact);
-        let valid_at = edge.valid_at.as_deref()
+        let valid_at = edge
+            .valid_at
+            .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
@@ -562,7 +629,8 @@ async fn seed_handler(
             "working" => MemoryTier::Working,
             _ => MemoryTier::LongTerm,
         };
-        let source_agents: Vec<String> = edge.source_agents
+        let source_agents: Vec<String> = edge
+            .source_agents
             .split('|')
             .map(|s| s.to_string())
             .collect();
@@ -579,13 +647,18 @@ async fn seed_handler(
             memory_tier: tier,
             expires_at: None,
         };
-        graph.create_edge(&edge.subject_id, &edge.object_id, &relation).await.map_err(|err| {
-            AppError::internal(format!("edge '{}': {err}", edge.fact))
-        })?;
+        graph
+            .create_edge(&edge.subject_id, &edge.object_id, &relation)
+            .await
+            .map_err(|err| AppError::internal(format!("edge '{}': {err}", edge.fact)))?;
         edges_created += 1;
     }
 
-    state.emit_audit(&user.user_id, "seed", format!("entities: {entities_created}, edges: {edges_created}"));
+    state.emit_audit(
+        &user.user_id,
+        "seed",
+        format!("entities: {entities_created}, edges: {edges_created}"),
+    );
 
     Ok(json_ok(AdminSeedResponse {
         entities_created,
@@ -604,7 +677,9 @@ async fn backup_handler(
         return Err(AppError::forbidden("admin access required"));
     }
 
-    let graph = state.resolve_graph_for_user(req.graph.as_deref(), &user).await?;
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
     let entities = graph.dump_all_entities().await?;
     let edges = graph.dump_all_edges().await?;
 
@@ -646,7 +721,10 @@ async fn backup_handler(
         StatusCode::OK,
         [
             ("content-type", "application/json"),
-            ("content-disposition", "attachment; filename=\"backup.json\""),
+            (
+                "content-disposition",
+                "attachment; filename=\"backup.json\"",
+            ),
         ],
         body,
     ))
@@ -665,9 +743,9 @@ async fn restore_handler(
     let target = req.target_graph.as_deref().unwrap_or(&req.graph);
     let graph = state.resolve_graph_for_user(Some(target), &user).await?;
 
-    use chrono::Utc;
     use crate::math::pseudo_embed;
     use crate::models::{Entity, MemoryTier, Relation};
+    use chrono::Utc;
 
     let mut entities_created = 0usize;
     let mut edges_created = 0usize;
@@ -685,16 +763,19 @@ async fn restore_handler(
             created_at: Utc::now(),
             embedding,
         };
-        graph.upsert_entity(&entity).await.map_err(|err| {
-            AppError::internal(format!("entity '{}': {err}", e.name))
-        })?;
+        graph
+            .upsert_entity(&entity)
+            .await
+            .map_err(|err| AppError::internal(format!("entity '{}': {err}", e.name)))?;
         entities_created += 1;
     }
 
     // Create edges (same logic as seed_handler)
     for edge in &req.edges {
         let embedding = pseudo_embed(&edge.fact);
-        let valid_at = edge.valid_at.as_deref()
+        let valid_at = edge
+            .valid_at
+            .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
@@ -702,7 +783,8 @@ async fn restore_handler(
             "working" => MemoryTier::Working,
             _ => MemoryTier::LongTerm,
         };
-        let source_agents: Vec<String> = edge.source_agents
+        let source_agents: Vec<String> = edge
+            .source_agents
             .split('|')
             .map(|s| s.to_string())
             .collect();
@@ -719,9 +801,10 @@ async fn restore_handler(
             memory_tier: tier,
             expires_at: None,
         };
-        graph.create_edge(&edge.subject_id, &edge.object_id, &relation).await.map_err(|err| {
-            AppError::internal(format!("edge '{}': {err}", edge.fact))
-        })?;
+        graph
+            .create_edge(&edge.subject_id, &edge.object_id, &relation)
+            .await
+            .map_err(|err| AppError::internal(format!("edge '{}': {err}", edge.fact)))?;
         edges_created += 1;
     }
 
@@ -731,10 +814,7 @@ async fn restore_handler(
     }))
 }
 
-async fn graphs_list_handler(
-    State(state): State<Arc<AppState>>,
-    Auth(_user): Auth,
-) -> JsonOk {
+async fn graphs_list_handler(State(state): State<Arc<AppState>>, Auth(_user): Auth) -> JsonOk {
     let graphs = state.graph_registry().list().await;
     json_ok(serde_json::json!({
         "default": state.graph_registry().default_graph_name(),
@@ -762,7 +842,9 @@ async fn graphs_drop_handler(
 
     state.emit_audit(&user.user_id, "graph.drop", format!("graph: {name}"));
 
-    Ok(json_ok(serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") })))
+    Ok(json_ok(
+        serde_json::json!({ "ok": true, "message": format!("Graph '{name}' dropped and reinitialised") }),
+    ))
 }
 
 // -- Admin user management ----------------------------------------------------
@@ -797,7 +879,11 @@ async fn admin_create_user_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    state.emit_audit(&user.user_id, "user.create", format!("user_id: {}", req.user_id));
+    state.emit_audit(
+        &user.user_id,
+        "user.create",
+        format!("user_id: {}", req.user_id),
+    );
 
     Ok(json_ok(serde_json::json!({
         "user_id": req.user_id,
@@ -878,7 +964,11 @@ async fn admin_create_key_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    state.emit_audit(&user.user_id, "key.create", format!("user_id: {user_id}, label: {}", req.label));
+    state.emit_audit(
+        &user.user_id,
+        "key.create",
+        format!("user_id: {user_id}, label: {}", req.label),
+    );
 
     Ok(json_ok(serde_json::json!({
         "user_id": user_id,
@@ -920,7 +1010,11 @@ async fn admin_revoke_key_handler(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    state.emit_audit(&user.user_id, "key.revoke", format!("user_id: {user_id}, label: {label}"));
+    state.emit_audit(
+        &user.user_id,
+        "key.revoke",
+        format!("user_id: {user_id}, label: {label}"),
+    );
 
     Ok(json_ok(serde_json::json!({ "ok": true })))
 }

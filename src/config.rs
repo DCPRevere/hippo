@@ -1,8 +1,10 @@
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::models::ScoringParams;
 
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_CONFIG_PATH: &str = "hippo.toml";
 
 // --- Secrets (env-var only, never serialised) ---
@@ -34,32 +36,24 @@ impl Clone for AnthropicAuth {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LlmProvider {
+    #[default]
     Anthropic,
     #[serde(alias = "openai")]
     OpenAI,
 }
 
-impl Default for LlmProvider {
-    fn default() -> Self {
-        Self::Anthropic
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum GraphBackendType {
     FalkorDB,
+    #[default]
     Memory,
     Postgres,
     Qdrant,
     Sqlite,
-}
-
-impl Default for GraphBackendType {
-    fn default() -> Self {
-        Self::Memory
-    }
 }
 
 // --- Sub-configs ---
@@ -251,20 +245,11 @@ impl Default for PipelineConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct AuthConfig {
     pub enabled: bool,
     pub insecure: bool,
     pub allow_admin: bool,
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            insecure: false,
-            allow_admin: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -301,20 +286,11 @@ impl Default for EvalConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct TlsConfig {
     pub enabled: bool,
     pub cert_path: String,
     pub key_path: String,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            cert_path: String::new(),
-            key_path: String::new(),
-        }
-    }
 }
 
 // --- Top-level Config ---
@@ -391,8 +367,8 @@ impl Config {
     /// Load configuration: TOML file (if present) -> env var overrides -> secret resolution.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load() -> Result<Self> {
-        let config_path = std::env::var("HIPPO_CONFIG")
-            .unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
+        let config_path =
+            std::env::var("HIPPO_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
 
         let mut config: Config = match std::fs::read_to_string(&config_path) {
             Ok(contents) => toml::from_str(&contents)
@@ -466,13 +442,15 @@ impl Config {
 
         // Pipeline
         if let Ok(v) = std::env::var("DEFAULT_CONTEXT_LIMIT") {
-            config.pipeline.default_context_limit = v.parse().context("invalid DEFAULT_CONTEXT_LIMIT")?;
+            config.pipeline.default_context_limit =
+                v.parse().context("invalid DEFAULT_CONTEXT_LIMIT")?;
         }
         if let Ok(v) = std::env::var("DEFAULT_TTL_SECS") {
             config.pipeline.default_ttl_secs = Some(v.parse().context("invalid DEFAULT_TTL_SECS")?);
         }
         if let Ok(v) = std::env::var("MAINTENANCE_INTERVAL_SECS") {
-            config.pipeline.maintenance_interval_secs = v.parse().context("invalid MAINTENANCE_INTERVAL_SECS")?;
+            config.pipeline.maintenance_interval_secs =
+                v.parse().context("invalid MAINTENANCE_INTERVAL_SECS")?;
         }
         if let Ok(v) = std::env::var("INFER_PRE_CONTEXT") {
             config.pipeline.infer_pre_context = v == "1";
@@ -484,10 +462,12 @@ impl Config {
             config.pipeline.infer_maintenance = v == "1";
         }
         if let Ok(v) = std::env::var("SCORING_W_RELEVANCE") {
-            config.pipeline.scoring.w_relevance = v.parse().context("invalid SCORING_W_RELEVANCE")?;
+            config.pipeline.scoring.w_relevance =
+                v.parse().context("invalid SCORING_W_RELEVANCE")?;
         }
         if let Ok(v) = std::env::var("SCORING_W_CONFIDENCE") {
-            config.pipeline.scoring.w_confidence = v.parse().context("invalid SCORING_W_CONFIDENCE")?;
+            config.pipeline.scoring.w_confidence =
+                v.parse().context("invalid SCORING_W_CONFIDENCE")?;
         }
         if let Ok(v) = std::env::var("SCORING_W_RECENCY") {
             config.pipeline.scoring.w_recency = v.parse().context("invalid SCORING_W_RECENCY")?;
@@ -543,17 +523,15 @@ impl Config {
 
         config.openai_api_key = std::env::var("OPENAI_API_KEY").ok();
 
-        config.anthropic_auth = Some(
-            if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-                AnthropicAuth::ApiKey(key)
-            } else if let Ok(token) = std::env::var("ANTHROPIC_OAUTH_TOKEN") {
-                AnthropicAuth::OAuthToken(token)
-            } else if config.llm.mock_llm || config.llm.provider == LlmProvider::OpenAI {
-                AnthropicAuth::ApiKey("not-used".to_string())
-            } else {
-                anyhow::bail!("Either ANTHROPIC_API_KEY or ANTHROPIC_OAUTH_TOKEN is required");
-            },
-        );
+        config.anthropic_auth = Some(if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+            AnthropicAuth::ApiKey(key)
+        } else if let Ok(token) = std::env::var("ANTHROPIC_OAUTH_TOKEN") {
+            AnthropicAuth::OAuthToken(token)
+        } else if config.llm.mock_llm || config.llm.provider == LlmProvider::OpenAI {
+            AnthropicAuth::ApiKey("not-used".to_string())
+        } else {
+            anyhow::bail!("Either ANTHROPIC_API_KEY or ANTHROPIC_OAUTH_TOKEN is required");
+        });
 
         // --- Validation ---
 

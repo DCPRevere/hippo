@@ -28,7 +28,12 @@ async fn scenario_career_journey() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // PHASE 2: First job
-    remember(client, base, "Sarah works as a junior developer at TechStart").await;
+    remember(
+        client,
+        base,
+        "Sarah works as a junior developer at TechStart",
+    )
+    .await;
     remember(client, base, "Sarah earns 60000 dollars per year").await;
     remember(client, base, "Sarah lives in New York").await;
 
@@ -36,7 +41,12 @@ async fn scenario_career_journey() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // PHASE 3: Career change (contradicts previous job)
-    remember(client, base, "Sarah was promoted to senior engineer at TechStart").await;
+    remember(
+        client,
+        base,
+        "Sarah was promoted to senior engineer at TechStart",
+    )
+    .await;
     remember(client, base, "Sarah now earns 95000 dollars per year").await;
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -95,10 +105,7 @@ async fn scenario_career_journey() {
         .json()
         .await
         .expect("timeline json failed");
-    let events = timeline["events"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let events = timeline["events"].as_array().cloned().unwrap_or_default();
     assert!(
         events.len() >= 4,
         "FAIL: timeline should have ≥4 events. Got: {}",
@@ -143,7 +150,12 @@ async fn scenario_medical_knowledge() {
 
     // Initial patient knowledge
     remember(client, base, "James is a patient at City Medical").await;
-    remember(client, base, "James was diagnosed with hypertension in 2020").await;
+    remember(
+        client,
+        base,
+        "James was diagnosed with hypertension in 2020",
+    )
+    .await;
     remember(
         client,
         base,
@@ -182,7 +194,9 @@ async fn scenario_medical_knowledge() {
     // ASSERTION 2: Multi-hop: James → City Medical → Dr. Chen (2 hops)
     let context_resp: serde_json::Value = client
         .post(format!("{base}/context"))
-        .json(&serde_json::json!({"query": "James doctor cardiologist", "limit": 15, "max_hops": 2}))
+        .json(
+            &serde_json::json!({"query": "James doctor cardiologist", "limit": 15, "max_hops": 2}),
+        )
         .send()
         .await
         .expect("context failed")
@@ -197,8 +211,8 @@ async fn scenario_medical_knowledge() {
         .iter()
         .map(|f| f["fact"].as_str().unwrap_or("").to_string())
         .collect();
-    let has_dr_chen =
-        any_fact_contains(&context_texts, "Chen") || any_fact_contains(&context_texts, "cardiologist");
+    let has_dr_chen = any_fact_contains(&context_texts, "Chen")
+        || any_fact_contains(&context_texts, "cardiologist");
     assert!(
         has_dr_chen,
         "FAIL: Dr. Chen not found via multi-hop. Got: {:?}",
@@ -285,10 +299,7 @@ async fn scenario_multi_agent_knowledge() {
     });
     if let Some(f) = cfo_fact {
         let confidence = f["confidence"].as_f64().unwrap_or(0.0);
-        let source_agents = f["source_agents"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let source_agents = f["source_agents"].as_array().cloned().unwrap_or_default();
         println!(
             "  ✓ CFO fact confidence: {:.3} (from {} agents)",
             confidence,
@@ -315,10 +326,7 @@ async fn scenario_multi_agent_knowledge() {
         .json()
         .await
         .expect("sources json fail");
-    let source_list = sources["sources"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let source_list = sources["sources"].as_array().cloned().unwrap_or_default();
     let agent_ids: Vec<&str> = source_list
         .iter()
         .filter_map(|s| s["agent_id"].as_str())

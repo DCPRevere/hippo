@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use hippo::config::Config;
 use hippo::in_memory_graph::InMemoryGraph;
-use hippo::models::{
-    Entity, GraphOp, MemoryTier, OperationsResult, Relation, RememberRequest,
-};
+use hippo::models::{Entity, GraphOp, MemoryTier, OperationsResult, Relation, RememberRequest};
 use hippo::pipeline::remember::remember;
 use hippo::state::AppState;
 use hippo::testing::FakeLlm;
@@ -55,9 +53,15 @@ async fn remember_creates_entities_and_edges() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Alice works at Acme"), None, None)
-        .await
-        .unwrap();
+    let resp = remember(
+        &state,
+        &graph,
+        make_remember_req("Alice works at Acme"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.entities_created, 2, "should create Alice and Acme");
     assert_eq!(resp.facts_written, 1, "should write one edge");
@@ -77,7 +81,10 @@ async fn remember_creates_entities_and_edges() {
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].fact, "Alice works at Acme");
     assert_eq!(edges[0].relation_type, "WORKS_AT");
-    assert_eq!(edges[0].memory_tier, "working", "new edges start as Working");
+    assert_eq!(
+        edges[0].memory_tier, "working",
+        "new edges start as Working"
+    );
 }
 
 use hippo::graph_backend::GraphBackend;
@@ -120,9 +127,15 @@ async fn remember_reuses_existing_entities() {
     };
     graph.upsert_entity(&alice).await.unwrap();
 
-    let resp = remember(&state, &graph, make_remember_req("Alice is a person"), None, None)
-        .await
-        .unwrap();
+    let resp = remember(
+        &state,
+        &graph,
+        make_remember_req("Alice is a person"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.entities_created, 0, "should reuse existing Alice");
     let entities = graph.dump_all_entities().await.unwrap();
@@ -133,7 +146,7 @@ async fn remember_reuses_existing_entities() {
 
 #[tokio::test]
 async fn remember_invalidates_edge_by_id() {
-    let state = test_state(FakeLlm::new());
+    let _state = test_state(FakeLlm::new());
     let graph = InMemoryGraph::new("test");
 
     // Seed Alice and London with an edge
@@ -236,10 +249,7 @@ async fn remember_invalidates_edge_by_id() {
         .iter()
         .find(|e| e.fact == "Alice lives in Edinburgh")
         .unwrap();
-    assert!(
-        new_edge.invalid_at.is_none(),
-        "new edge should be active"
-    );
+    assert!(new_edge.invalid_at.is_none(), "new edge should be active");
 }
 
 // ---- Working memory tier ----
@@ -273,9 +283,15 @@ async fn remember_new_edges_are_working_tier() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    remember(&state, &graph, make_remember_req("Bob works at Beta"), None, None)
-        .await
-        .unwrap();
+    remember(
+        &state,
+        &graph,
+        make_remember_req("Bob works at Beta"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let tier = graph.memory_tier_stats().await.unwrap();
     assert_eq!(tier.working_count, 1, "new edge should be Working tier");
@@ -477,16 +493,27 @@ async fn remember_update_node_sets_properties() {
     let fake = FakeLlm::new().with_operations(OperationsResult {
         operations: vec![GraphOp::UpdateNode {
             id: "alice".into(),
-            set: [("nationality".into(), "British".into())].into_iter().collect(),
+            set: [("nationality".into(), "British".into())]
+                .into_iter()
+                .collect(),
         }],
     });
     let state = test_state(fake);
 
-    let resp = remember(&state, &graph, make_remember_req("Alice is British"), None, None)
-        .await
-        .unwrap();
+    let resp = remember(
+        &state,
+        &graph,
+        make_remember_req("Alice is British"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(resp.entities_resolved, 1, "UpdateNode should count as resolved");
+    assert_eq!(
+        resp.entities_resolved, 1,
+        "UpdateNode should count as resolved"
+    );
 }
 
 // ---- Unresolved edge references ----
@@ -505,11 +532,20 @@ async fn remember_skips_edge_with_unresolved_refs() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Ghost knows Phantom"), None, None)
-        .await
-        .unwrap();
+    let resp = remember(
+        &state,
+        &graph,
+        make_remember_req("Ghost knows Phantom"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(resp.facts_written, 0, "unresolved refs should skip the edge");
+    assert_eq!(
+        resp.facts_written, 0,
+        "unresolved refs should skip the edge"
+    );
     assert_eq!(resp.trace.execution[0].outcome, "skipped");
 }
 
@@ -528,9 +564,15 @@ async fn remember_creates_entity_with_properties() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Eve is an engineer"), None, None)
-        .await
-        .unwrap();
+    let resp = remember(
+        &state,
+        &graph,
+        make_remember_req("Eve is an engineer"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.entities_created, 1);
     let entities = graph.dump_all_entities().await.unwrap();
@@ -568,11 +610,24 @@ async fn remember_trace_includes_operations() {
     let state = test_state(fake);
     let graph = InMemoryGraph::new("test");
 
-    let resp = remember(&state, &graph, make_remember_req("Frank works at Omega"), None, None)
-        .await
-        .unwrap();
+    let resp = remember(
+        &state,
+        &graph,
+        make_remember_req("Frank works at Omega"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(resp.trace.operations.len(), 3, "trace should include all LLM operations");
-    assert!(resp.trace.revised_operations.is_none(), "no revision without enrichment");
+    assert_eq!(
+        resp.trace.operations.len(),
+        3,
+        "trace should include all LLM operations"
+    );
+    assert!(
+        resp.trace.revised_operations.is_none(),
+        "no revision without enrichment"
+    );
     assert_eq!(resp.trace.execution.len(), 3, "execution trace for each op");
 }

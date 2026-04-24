@@ -13,6 +13,7 @@ use axum::http::request::Parts;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::AppError;
 use crate::graph_backend::GraphBackend;
 use crate::models::Entity;
@@ -77,7 +78,7 @@ impl AuthenticatedUser {
     }
 }
 
-pub use hippo_api::{UserInfo, ApiKeyInfo};
+pub use hippo_api::{ApiKeyInfo, UserInfo};
 
 // -- UserStore trait -----------------------------------------------------------
 
@@ -344,7 +345,10 @@ impl GraphUserStore {
                 let graphs = if data.graphs.is_empty() {
                     vec![]
                 } else {
-                    data.graphs.split(',').map(|s| s.trim().to_string()).collect()
+                    data.graphs
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect()
                 };
                 UserInfo {
                     user_id: user_id.clone(),
@@ -388,7 +392,7 @@ fn parse_graphs_property(s: &str) -> GraphAcl {
         return GraphAcl::Specific(HashSet::new());
     }
     let items: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
-    if items.iter().any(|g| *g == "*") {
+    if items.contains(&"*") {
         GraphAcl::All
     } else {
         GraphAcl::Specific(items.into_iter().map(|s| s.to_string()).collect())
@@ -399,6 +403,12 @@ fn parse_graphs_property(s: &str) -> GraphAcl {
 
 pub struct InMemoryUserStore {
     users: HashMap<String, AuthenticatedUser>,
+}
+
+impl Default for InMemoryUserStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InMemoryUserStore {
@@ -643,9 +653,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = store
-            .create_user("alice", "Alice Again", "user", &[])
-            .await;
+        let result = store.create_user("alice", "Alice Again", "user", &[]).await;
         assert!(result.is_err());
     }
 
@@ -655,7 +663,12 @@ mod tests {
         let store = GraphUserStore::new(graph).await.unwrap();
 
         let raw_key = store
-            .create_user("bob", "Bob", "user", &["mydb".to_string(), "shared".to_string()])
+            .create_user(
+                "bob",
+                "Bob",
+                "user",
+                &["mydb".to_string(), "shared".to_string()],
+            )
             .await
             .unwrap();
 

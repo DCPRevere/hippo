@@ -4,7 +4,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 use uuid::Uuid;
 
-use helpers::{start_agent_mock_admin, seed_raw};
+use helpers::{seed_raw, start_agent_mock_admin};
 
 #[tokio::test]
 async fn maintenance_decay_stale_edges() {
@@ -15,36 +15,46 @@ async fn maintenance_decay_stale_edges() {
     let acme_id = Uuid::new_v4().to_string();
     let old_valid_at = (Utc::now() - Duration::days(60)).to_rfc3339();
 
-    seed_raw(&agent.client, &agent.base_url, &json!({
-        "entities": [
-            { "id": &alice_id, "name": "Alice", "entity_type": "person" },
-            { "id": &acme_id, "name": "Acme", "entity_type": "organization" }
-        ],
-        "edges": [{
-            "subject_id": &alice_id,
-            "object_id": &acme_id,
-            "fact": "Alice worked at Acme long ago",
-            "relation_type": "WORKS_AT",
-            "confidence": 0.9,
-            "salience": 1,
-            "valid_at": &old_valid_at,
-            "source_agents": "test",
-            "memory_tier": "long_term"
-        }]
-    })).await;
+    seed_raw(
+        &agent.client,
+        &agent.base_url,
+        &json!({
+            "entities": [
+                { "id": &alice_id, "name": "Alice", "entity_type": "person" },
+                { "id": &acme_id, "name": "Acme", "entity_type": "organization" }
+            ],
+            "edges": [{
+                "subject_id": &alice_id,
+                "object_id": &acme_id,
+                "fact": "Alice worked at Acme long ago",
+                "relation_type": "WORKS_AT",
+                "confidence": 0.9,
+                "salience": 1,
+                "valid_at": &old_valid_at,
+                "source_agents": "test",
+                "memory_tier": "long_term"
+            }]
+        }),
+    )
+    .await;
 
     // Run maintenance
-    let resp = agent.client
+    let resp = agent
+        .client
         .post(format!("{}/maintain", agent.base_url))
         .send()
         .await
         .expect("maintain request failed");
     let status = resp.status();
     let body: serde_json::Value = resp.json().await.unwrap_or_default();
-    assert!(status.is_success(), "maintain should succeed: {status} {body}");
+    assert!(
+        status.is_success(),
+        "maintain should succeed: {status} {body}"
+    );
 
     // Query the graph and check the edge's decayed_confidence
-    let graph: serde_json::Value = agent.client
+    let graph: serde_json::Value = agent
+        .client
         .get(format!("{}/graph", agent.base_url))
         .send()
         .await
@@ -68,35 +78,45 @@ async fn maintenance_promote_working_to_long_term() {
     let bob_id = Uuid::new_v4().to_string();
 
     // Seed a working-tier edge with salience >= 3 (should be promoted)
-    seed_raw(&agent.client, &agent.base_url, &json!({
-        "entities": [
-            { "id": &alice_id, "name": "Alice", "entity_type": "person" },
-            { "id": &bob_id, "name": "Bob", "entity_type": "person" }
-        ],
-        "edges": [{
-            "subject_id": &alice_id,
-            "object_id": &bob_id,
-            "fact": "Alice and Bob are friends",
-            "relation_type": "FRIENDS_WITH",
-            "confidence": 0.9,
-            "salience": 5,
-            "valid_at": (Utc::now() - Duration::hours(2)).to_rfc3339(),
-            "source_agents": "test",
-            "memory_tier": "working"
-        }]
-    })).await;
+    seed_raw(
+        &agent.client,
+        &agent.base_url,
+        &json!({
+            "entities": [
+                { "id": &alice_id, "name": "Alice", "entity_type": "person" },
+                { "id": &bob_id, "name": "Bob", "entity_type": "person" }
+            ],
+            "edges": [{
+                "subject_id": &alice_id,
+                "object_id": &bob_id,
+                "fact": "Alice and Bob are friends",
+                "relation_type": "FRIENDS_WITH",
+                "confidence": 0.9,
+                "salience": 5,
+                "valid_at": (Utc::now() - Duration::hours(2)).to_rfc3339(),
+                "source_agents": "test",
+                "memory_tier": "working"
+            }]
+        }),
+    )
+    .await;
 
     // Check initial state
-    let stats_before: serde_json::Value = agent.client
+    let stats_before: serde_json::Value = agent
+        .client
         .get(format!("{}/memory/stats", agent.base_url))
         .send()
-        .await.unwrap()
-        .json().await.unwrap();
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let working_before = stats_before["working_count"].as_u64().unwrap_or(0);
     assert!(working_before > 0, "should start with working memory");
 
     // Run maintenance
-    let resp = agent.client
+    let resp = agent
+        .client
         .post(format!("{}/maintain", agent.base_url))
         .send()
         .await
@@ -104,13 +124,20 @@ async fn maintenance_promote_working_to_long_term() {
     assert!(resp.status().is_success());
 
     // Check stats after — working count should have decreased
-    let stats_after: serde_json::Value = agent.client
+    let stats_after: serde_json::Value = agent
+        .client
         .get(format!("{}/memory/stats", agent.base_url))
         .send()
-        .await.unwrap()
-        .json().await.unwrap();
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let long_term_after = stats_after["long_term_count"].as_u64().unwrap_or(0);
-    assert!(long_term_after > 0, "should have promoted to long_term: {stats_after:?}");
+    assert!(
+        long_term_after > 0,
+        "should have promoted to long_term: {stats_after:?}"
+    );
 }
 
 // The old purge_stale_working_memory test was removed — working memory is no
@@ -127,38 +154,44 @@ async fn maintenance_consolidate_link_discovery() {
     let david_id = Uuid::new_v4().to_string();
     let acme_id = Uuid::new_v4().to_string();
 
-    seed_raw(&agent.client, &agent.base_url, &json!({
-        "entities": [
-            { "id": &carol_id, "name": "Carol", "entity_type": "person" },
-            { "id": &david_id, "name": "David", "entity_type": "person" },
-            { "id": &acme_id, "name": "Acme Corp", "entity_type": "organization" }
-        ],
-        "edges": [
-            {
-                "subject_id": &carol_id,
-                "object_id": &acme_id,
-                "fact": "Carol works at Acme Corp",
-                "relation_type": "WORKS_AT",
-                "confidence": 0.9,
-                "salience": 3,
-                "source_agents": "test",
-                "memory_tier": "long_term"
-            },
-            {
-                "subject_id": &david_id,
-                "object_id": &acme_id,
-                "fact": "David works at Acme Corp",
-                "relation_type": "WORKS_AT",
-                "confidence": 0.9,
-                "salience": 3,
-                "source_agents": "test",
-                "memory_tier": "long_term"
-            }
-        ]
-    })).await;
+    seed_raw(
+        &agent.client,
+        &agent.base_url,
+        &json!({
+            "entities": [
+                { "id": &carol_id, "name": "Carol", "entity_type": "person" },
+                { "id": &david_id, "name": "David", "entity_type": "person" },
+                { "id": &acme_id, "name": "Acme Corp", "entity_type": "organization" }
+            ],
+            "edges": [
+                {
+                    "subject_id": &carol_id,
+                    "object_id": &acme_id,
+                    "fact": "Carol works at Acme Corp",
+                    "relation_type": "WORKS_AT",
+                    "confidence": 0.9,
+                    "salience": 3,
+                    "source_agents": "test",
+                    "memory_tier": "long_term"
+                },
+                {
+                    "subject_id": &david_id,
+                    "object_id": &acme_id,
+                    "fact": "David works at Acme Corp",
+                    "relation_type": "WORKS_AT",
+                    "confidence": 0.9,
+                    "salience": 3,
+                    "source_agents": "test",
+                    "memory_tier": "long_term"
+                }
+            ]
+        }),
+    )
+    .await;
 
     // Run consolidate
-    let resp: serde_json::Value = agent.client
+    let resp: serde_json::Value = agent
+        .client
         .post(format!("{}/consolidate", agent.base_url))
         .json(&json!({
             "max_entity_pairs": 30,
@@ -174,6 +207,8 @@ async fn maintenance_consolidate_link_discovery() {
 
     // Consolidate should complete without error
     // In mock mode, LLM won't discover links, but the pipeline should run successfully
-    assert!(resp["duration_ms"].as_u64().is_some(),
-        "consolidate should return duration_ms: {resp:?}");
+    assert!(
+        resp["duration_ms"].as_u64().is_some(),
+        "consolidate should return duration_ms: {resp:?}"
+    );
 }

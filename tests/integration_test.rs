@@ -12,7 +12,14 @@ async fn test_recall_and_contradiction() {
     load_base_facts(client, base).await;
 
     println!("\n=== Recall queries ===");
-    for q in &["Alice", "wedding", "doctor", "medical bill", "bank account", "David Carol"] {
+    for q in &[
+        "Alice",
+        "wedding",
+        "doctor",
+        "medical bill",
+        "bank account",
+        "David Carol",
+    ] {
         let facts = query_facts(client, base, q, 8).await;
         let strings = fact_strings(&facts);
         println!("\nQuery: {:?} ({} results)", q, strings.len());
@@ -22,7 +29,12 @@ async fn test_recall_and_contradiction() {
     }
 
     println!("\n=== Contradiction: changing doctor ===");
-    remember(client, base, "My doctor is now Dr. Jones at Riverside Clinic").await;
+    remember(
+        client,
+        base,
+        "My doctor is now Dr. Jones at Riverside Clinic",
+    )
+    .await;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let facts = query_facts(client, base, "my doctor", 5).await;
@@ -33,7 +45,12 @@ async fn test_recall_and_contradiction() {
     }
 
     println!("\n=== Placeholder resolution ===");
-    remember(client, base, "John's wife called to reschedule my appointment").await;
+    remember(
+        client,
+        base,
+        "John's wife called to reschedule my appointment",
+    )
+    .await;
     remember(client, base, "John's wife is named Sarah").await;
     tokio::time::sleep(Duration::from_secs(3)).await;
 

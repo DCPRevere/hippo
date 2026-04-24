@@ -21,6 +21,7 @@ impl RateLimiter {
     }
 
     /// Returns Ok(()) if allowed, Err(()) if rate limited.
+    #[allow(clippy::result_unit_err)]
     pub fn check(&self, user_id: &str) -> Result<(), ()> {
         let mut buckets = self.buckets.lock().expect("rate limiter lock poisoned");
         let cap = self.capacity as f64;
@@ -83,7 +84,7 @@ mod tests {
     #[test]
     fn refills_over_time() {
         let limiter = RateLimiter::new(60); // 1 per second
-        // Exhaust all tokens
+                                            // Exhaust all tokens
         for _ in 0..60 {
             let _ = limiter.check("carol");
         }

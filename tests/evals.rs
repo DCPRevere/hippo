@@ -109,7 +109,9 @@ async fn eval_temporal_query() {
         .collect();
 
     assert!(
-        fact_texts.iter().any(|f| f.contains("50000") || f.contains("50,000")),
+        fact_texts
+            .iter()
+            .any(|f| f.contains("50000") || f.contains("50,000")),
         "FAIL: temporal query at t_after_first should return 50k. Got: {:?}",
         fact_texts
     );
@@ -194,7 +196,12 @@ async fn eval_entity_resolution() {
     let (client, base) = (&agent.client, agent.base_url.as_str());
 
     // These should all resolve to the same "Alice" entity
-    remember(client, base, "Alice Chen is a software engineer at Anthropic").await;
+    remember(
+        client,
+        base,
+        "Alice Chen is a software engineer at Anthropic",
+    )
+    .await;
     remember(client, base, "Alice is married to Bob").await;
     remember(client, base, "Alice Chen lives in San Francisco").await;
 
@@ -294,7 +301,10 @@ async fn eval_reflect_gap_analysis() {
 
     // gaps should be non-empty (we know very little)
     let gaps = resp["gaps"].as_array().cloned().unwrap_or_default();
-    assert!(!gaps.is_empty(), "FAIL: reflect should identify gaps. Got none.");
+    assert!(
+        !gaps.is_empty(),
+        "FAIL: reflect should identify gaps. Got none."
+    );
 
     // suggested_questions should be non-empty
     let questions = resp["suggested_questions"]
@@ -366,16 +376,17 @@ async fn eval_timeline_history() {
     );
 
     // Old Company should be marked superseded
-    let old_co_event = events
-        .iter()
-        .find(|e| {
-            e["fact"]
-                .as_str()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("old company")
-        });
-    assert!(old_co_event.is_some(), "FAIL: Old Company fact not in timeline");
+    let old_co_event = events.iter().find(|e| {
+        e["fact"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("old company")
+    });
+    assert!(
+        old_co_event.is_some(),
+        "FAIL: Old Company fact not in timeline"
+    );
     assert!(
         old_co_event.unwrap()["superseded"]
             .as_bool()
@@ -450,10 +461,7 @@ async fn eval_confidence_compounding() {
         .and_then(|f| f["source_agents"].as_array())
         .cloned()
         .unwrap_or_default();
-    let agent_names: Vec<&str> = source_agents
-        .iter()
-        .filter_map(|s| s.as_str())
-        .collect();
+    let agent_names: Vec<&str> = source_agents.iter().filter_map(|s| s.as_str()).collect();
 
     // Confidence should be higher after second assertion (Bayesian compounding)
     println!(
