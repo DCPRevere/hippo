@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use crate::error::GraphConnectError;
 #[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,12 +59,12 @@ impl GraphRegistry {
     pub async fn connect(connection_string: &str, default_graph: &str) -> Result<Self> {
         let info: FalkorConnectionInfo = connection_string
             .try_into()
-            .context("invalid FalkorDB connection string")?;
+            .map_err(|e| GraphConnectError::new(format!("invalid FalkorDB connection string: {e}")))?;
         let client = FalkorClientBuilder::new_async()
             .with_connection_info(info)
             .build()
             .await
-            .context("failed to connect to FalkorDB")?;
+            .map_err(|e| GraphConnectError::new(format!("failed to connect to FalkorDB: {e}")))?;
 
         let registry = Self {
             factory: Box::new(move |name: &str| {
@@ -228,12 +229,12 @@ impl GraphClient {
     pub async fn connect(connection_string: &str, graph_name: &str) -> Result<Self> {
         let info: FalkorConnectionInfo = connection_string
             .try_into()
-            .context("invalid FalkorDB connection string")?;
+            .map_err(|e| GraphConnectError::new(format!("invalid FalkorDB connection string: {e}")))?;
         let client = FalkorClientBuilder::new_async()
             .with_connection_info(info)
             .build()
             .await
-            .context("failed to connect to FalkorDB")?;
+            .map_err(|e| GraphConnectError::new(format!("failed to connect to FalkorDB: {e}")))?;
         let pool: Vec<Mutex<AsyncGraph>> = (0..DEFAULT_POOL_SIZE)
             .map(|_| Mutex::new(client.select_graph(graph_name)))
             .collect();
@@ -246,7 +247,8 @@ impl GraphClient {
 
     pub async fn ping(&self) -> Result<()> {
         let mut graph = self.conn().lock().await;
-        graph.query("RETURN 1").execute().await.context("ping failed")?;
+        graph.query("RETURN 1").execute().await
+            .map_err(|e| GraphConnectError::new(format!("ping failed: {e}")))?;
         Ok(())
     }
 
@@ -631,9 +633,8 @@ impl GraphClient {
     }
 
     pub async fn promote_working_memory(&self) -> Result<usize> {
-        // FalkorDB: use ISO string comparison instead of datetime() + duration()
-        let one_hour_ago = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        let one_hour_ago = &one_hour_ago[..19]; // strip tz for string compare
+        let one_hour_ago_rfc = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        let one_hour_ago = falkor_strip_tz(&one_hour_ago_rfc);
         let query = format!("\
             MATCH ()-[r:RELATION]-() \
             WHERE r.invalid_at IS NULL \
@@ -661,7 +662,8 @@ impl GraphClient {
     }
 
     pub async fn expire_ttl_edges(&self, now: DateTime<Utc>) -> Result<usize> {
-        let now_iso = &now.to_rfc3339()[..19];
+        let now_rfc = now.to_rfc3339();
+        let now_iso = falkor_strip_tz(&now_rfc);
         let query = format!(
             "MATCH ()-[r:RELATION]-() \
              WHERE r.invalid_at IS NULL \
@@ -816,10 +818,9 @@ impl GraphClient {
         now: DateTime<Utc>,
     ) -> Result<usize> {
         let stale_before_iso = stale_before.to_rfc3339();
-        let now_iso = now.to_rfc3339();
-        // FalkorDB localdatetime() needs no timezone offset — strip to "YYYY-MM-DDTHH:MM:SS"
-        let now_no_tz = &now_iso[..19];
-        // FalkorDB doesn't support duration.between(); compute approx days from date components
+        let now_rfc = now.to_rfc3339();
+        let now_no_tz = falkor_strip_tz(&now_rfc);
+        let days_stale_expr = falkor_approx_days_clause("accessed_dt", "now_dt", "days_stale");
         let query = format!(
             "MATCH ()-[r:RELATION]-() \
              WHERE r.invalid_at IS NULL \
@@ -828,9 +829,7 @@ impl GraphClient {
                localdatetime(substring(r.last_accessed_at, 0, 19)) AS accessed_dt, \
                localdatetime('{now_no_tz}') AS now_dt \
              WITH r, \
-               toFloat((now_dt.year - accessed_dt.year) * 365 \
-                     + (now_dt.month - accessed_dt.month) * 30 \
-                     + (now_dt.day - accessed_dt.day)) AS days_stale \
+               {days_stale_expr} \
              SET r.decayed_confidence = CASE \
                WHEN days_stale > 30 THEN r.confidence * (0.995 ^ (days_stale - 30)) \
                ELSE r.confidence \
@@ -1326,6 +1325,34 @@ fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(not(target_arch = "wasm32"))]
 fn sanitise(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+// --- FalkorDB datetime helpers ---
+//
+// FalkorDB's Cypher dialect does not support `datetime()` arithmetic or
+// `duration.between()`.  These helpers paper over the gaps by working
+// with ISO-8601 strings and Cypher's `localdatetime()` constructor.
+
+/// Strip the timezone suffix from an RFC 3339 timestamp so it can be
+/// used with FalkorDB's `localdatetime()` or plain string comparison.
+/// Returns the first 19 characters: `YYYY-MM-DDTHH:MM:SS`.
+#[cfg(not(target_arch = "wasm32"))]
+fn falkor_strip_tz(rfc3339: &str) -> &str {
+    &rfc3339[..19]
+}
+
+/// Build a Cypher `WITH` clause that computes an approximate number of
+/// days between two `localdatetime` expressions.
+///
+/// FalkorDB lacks `duration.between()`, so we approximate using year,
+/// month, and day components.  The result is bound to `{alias}`.
+#[cfg(not(target_arch = "wasm32"))]
+fn falkor_approx_days_clause(accessed_expr: &str, now_expr: &str, alias: &str) -> String {
+    format!(
+        "toFloat(({now_expr}.year - {accessed_expr}.year) * 365 \
+              + ({now_expr}.month - {accessed_expr}.month) * 30 \
+              + ({now_expr}.day - {accessed_expr}.day)) AS {alias}"
+    )
 }
 
 // --- Value parsing helpers ---

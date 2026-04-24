@@ -104,7 +104,7 @@ fn delete_auth(uri: &str, key: &str) -> Request<Body> {
 #[tokio::test]
 async fn no_auth_header_returns_401() {
     let (state, _) = test_state_with_auth().await;
-    let req = json_post("/remember", r#"{"statement":"hello","source_agent":"t"}"#);
+    let req = json_post("/api/remember", r#"{"statement":"hello","source_agent":"t"}"#);
     let (status, body) = send(state, req).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(body.contains("missing or invalid Authorization header"));
@@ -114,7 +114,7 @@ async fn no_auth_header_returns_401() {
 async fn invalid_key_returns_401() {
     let (state, _) = test_state_with_auth().await;
     let req = json_post_auth(
-        "/remember",
+        "/api/remember",
         r#"{"statement":"hello","source_agent":"t"}"#,
         "hippo_bogus",
     );
@@ -128,7 +128,7 @@ async fn malformed_auth_header_returns_401() {
     let (state, _) = test_state_with_auth().await;
     let req = Request::builder()
         .method("POST")
-        .uri("/remember")
+        .uri("/api/remember")
         .header("content-type", "application/json")
         .header("authorization", "Basic dXNlcjpwYXNz") // Basic auth, not Bearer
         .body(Body::from(r#"{"statement":"hello","source_agent":"t"}"#))
@@ -143,7 +143,7 @@ async fn malformed_auth_header_returns_401() {
 async fn valid_admin_key_returns_200() {
     let (state, admin_key) = test_state_with_auth().await;
     let req = json_post_auth(
-        "/remember",
+        "/api/remember",
         r#"{"statement":"Alice is great","source_agent":"t"}"#,
         &admin_key,
     );
@@ -170,7 +170,7 @@ async fn metrics_does_not_require_auth() {
     let (state, _) = test_state_with_auth().await;
     let req = Request::builder()
         .method("GET")
-        .uri("/metrics")
+        .uri("/api/metrics")
         .body(Body::empty())
         .unwrap();
     let (status, _) = send(state, req).await;
@@ -185,7 +185,7 @@ async fn non_admin_cannot_create_users() {
 
     // Create a regular user
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"bob","display_name":"Bob","role":"user","graphs":["test"]}"#,
         &admin_key,
     );
@@ -196,7 +196,7 @@ async fn non_admin_cannot_create_users() {
 
     // Bob tries to create another user → 403
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"eve","display_name":"Eve","role":"user","graphs":[]}"#,
         bob_key,
     );
@@ -211,7 +211,7 @@ async fn non_admin_cannot_list_users() {
 
     // Create bob
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"bob","display_name":"Bob","role":"user","graphs":["test"]}"#,
         &admin_key,
     );
@@ -220,7 +220,7 @@ async fn non_admin_cannot_list_users() {
     let bob_key = bob_key["api_key"].as_str().unwrap();
 
     // Bob lists users → 403
-    let req = get_auth("/admin/users", bob_key);
+    let req = get_auth("/api/admin/users", bob_key);
     let (status, _) = send(Arc::clone(&state), req).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
@@ -231,7 +231,7 @@ async fn non_admin_cannot_delete_users() {
 
     // Create bob
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"bob","display_name":"Bob","role":"user","graphs":["test"]}"#,
         &admin_key,
     );
@@ -240,7 +240,7 @@ async fn non_admin_cannot_delete_users() {
     let bob_key = bob_key["api_key"].as_str().unwrap();
 
     // Bob tries to delete admin → 403
-    let req = delete_auth("/admin/users/admin", bob_key);
+    let req = delete_auth("/api/admin/users/admin", bob_key);
     let (status, _) = send(Arc::clone(&state), req).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
@@ -249,7 +249,7 @@ async fn non_admin_cannot_delete_users() {
 async fn admin_can_list_users() {
     let (state, admin_key) = test_state_with_auth().await;
 
-    let req = get_auth("/admin/users", &admin_key);
+    let req = get_auth("/api/admin/users", &admin_key);
     let (status, body) = send(state, req).await;
     assert_eq!(status, StatusCode::OK);
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -265,7 +265,7 @@ async fn admin_key_lifecycle() {
 
     // Create bob
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"bob","display_name":"Bob","role":"user","graphs":["test"]}"#,
         &admin_key,
     );
@@ -274,7 +274,7 @@ async fn admin_key_lifecycle() {
 
     // Create a second key for bob
     let req = json_post_auth(
-        "/admin/users/bob/keys",
+        "/api/admin/users/bob/keys",
         r#"{"label":"ci"}"#,
         &admin_key,
     );
@@ -285,19 +285,19 @@ async fn admin_key_lifecycle() {
     assert!(ci_key["api_key"].as_str().unwrap().starts_with("hippo_"));
 
     // List keys for bob → 2 keys
-    let req = get_auth("/admin/users/bob/keys", &admin_key);
+    let req = get_auth("/api/admin/users/bob/keys", &admin_key);
     let (status, body) = send(Arc::clone(&state), req).await;
     assert_eq!(status, StatusCode::OK);
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed["keys"].as_array().unwrap().len(), 2);
 
     // Revoke the ci key
-    let req = delete_auth("/admin/users/bob/keys/ci", &admin_key);
+    let req = delete_auth("/api/admin/users/bob/keys/ci", &admin_key);
     let (status, _) = send(Arc::clone(&state), req).await;
     assert_eq!(status, StatusCode::OK);
 
     // List keys → only 1 remaining
-    let req = get_auth("/admin/users/bob/keys", &admin_key);
+    let req = get_auth("/api/admin/users/bob/keys", &admin_key);
     let (status, body) = send(Arc::clone(&state), req).await;
     assert_eq!(status, StatusCode::OK);
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -312,7 +312,7 @@ async fn non_admin_blocked_from_system_graph() {
 
     // Create bob with access to "test" only
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"bob","display_name":"Bob","role":"user","graphs":["test"]}"#,
         &admin_key,
     );
@@ -322,7 +322,7 @@ async fn non_admin_blocked_from_system_graph() {
 
     // Bob tries to query hippo-users graph → 403
     let req = json_post_auth(
-        "/context",
+        "/api/context",
         r#"{"query":"users","graph":"hippo-users"}"#,
         bob_key,
     );
@@ -332,7 +332,7 @@ async fn non_admin_blocked_from_system_graph() {
 
     // Bob tries admin-* graph → 403
     let req = json_post_auth(
-        "/context",
+        "/api/context",
         r#"{"query":"test","graph":"admin-config"}"#,
         bob_key,
     );
@@ -348,7 +348,7 @@ async fn user_blocked_from_unauthorized_graph() {
 
     // Create bob with access only to "mydb"
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"bob","display_name":"Bob","role":"user","graphs":["mydb"]}"#,
         &admin_key,
     );
@@ -358,7 +358,7 @@ async fn user_blocked_from_unauthorized_graph() {
 
     // Bob can access default graph "test" → 403 (not in his ACL)
     let req = json_post_auth(
-        "/remember",
+        "/api/remember",
         r#"{"statement":"hello","source_agent":"t"}"#,
         bob_key,
     );
@@ -367,7 +367,7 @@ async fn user_blocked_from_unauthorized_graph() {
 
     // Bob can access "mydb" → 200
     let req = json_post_auth(
-        "/remember",
+        "/api/remember",
         r#"{"statement":"hello","source_agent":"t","graph":"mydb"}"#,
         bob_key,
     );
@@ -414,7 +414,7 @@ async fn insecure_mode_bypasses_auth() {
     });
 
     // No auth header at all → still 200 (insecure mode)
-    let req = json_post("/remember", r#"{"statement":"hello","source_agent":"t"}"#);
+    let req = json_post("/api/remember", r#"{"statement":"hello","source_agent":"t"}"#);
     let (status, _) = send(state, req).await;
     assert_eq!(status, StatusCode::OK);
 }
@@ -427,7 +427,7 @@ async fn create_duplicate_user_returns_400() {
 
     // admin already exists from bootstrap
     let req = json_post_auth(
-        "/admin/users",
+        "/api/admin/users",
         r#"{"user_id":"admin","display_name":"Admin2","role":"user","graphs":[]}"#,
         &admin_key,
     );

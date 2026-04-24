@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
+use crate::error::GraphConnectError;
 use crate::graph_backend::GraphBackend;
 use crate::models::{
     EdgeRow, Entity, EntityRow, MemoryTier, ProvenanceResponse, Relation, SupersessionRecord,
@@ -44,7 +45,7 @@ impl PostgresGraph {
             .max_connections(10)
             .connect(connection_string)
             .await
-            .with_context(|| format!("failed to connect to PostgreSQL at {connection_string}"))?;
+            .map_err(|e| GraphConnectError::new(format!("failed to connect to PostgreSQL at {connection_string}: {e}")))?;
         Ok(Self {
             pool,
             graph_name: graph_name.to_string(),

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use crate::error::GraphConnectError;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, Distance, Filter, PointId, PointStruct,
     ScrollPointsBuilder, SearchPointsBuilder, SetPayloadPointsBuilder, UpsertPointsBuilder,
@@ -170,7 +171,7 @@ impl QdrantGraph {
     pub async fn new(url: &str, graph_name: &str) -> Result<Self> {
         let client = Qdrant::from_url(url)
             .build()
-            .context("failed to connect to Qdrant")?;
+            .map_err(|e| GraphConnectError::new(format!("failed to connect to Qdrant: {e}")))?;
 
         let graph = Self {
             client,

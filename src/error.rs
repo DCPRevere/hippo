@@ -101,7 +101,7 @@ impl IntoResponse for AppError {
 }
 
 /// Converts an `anyhow::Error` into an `AppError`, inspecting the error chain
-/// for known categories to select the appropriate HTTP status code.
+/// for known types to select the appropriate HTTP status code.
 impl From<anyhow::Error> for AppError {
     fn from(err: anyhow::Error) -> Self {
         // If someone already wrapped an AppError, unwrap it.
@@ -110,25 +110,14 @@ impl From<anyhow::Error> for AppError {
         }
 
         let msg = err.to_string();
-        let chain = format!("{err:#}");
 
         // LLM upstream failures → 502
-        if chain.contains("failed to call Anthropic API")
-            || chain.contains("failed to call OpenAI API")
-            || chain.contains("Anthropic API error")
-            || chain.contains("OpenAI API error")
-        {
+        #[cfg(not(target_arch = "wasm32"))]
+        if err.downcast_ref::<crate::llm::LlmError>().is_some() {
             return Self::bad_gateway(msg);
         }
 
-        // Graph backend connectivity → 503
-        if chain.contains("ping failed")
-            || chain.contains("failed to connect to FalkorDB")
-        {
-            return Self::unavailable(msg);
-        }
-
-        // Request timeout (reqwest) → 504
+        // Request timeout / connection failure (reqwest) → 504 / 503
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
             if reqwest_err.is_timeout() {
@@ -139,6 +128,27 @@ impl From<anyhow::Error> for AppError {
             }
         }
 
+        // Graph backend connectivity → 503
+        if err.downcast_ref::<GraphConnectError>().is_some() {
+            return Self::unavailable(msg);
+        }
+
         Self::internal(msg)
+    }
+}
+
+/// Typed error for graph backend connectivity failures.
+///
+/// Used instead of bare `.context("failed to connect to ...")` strings so that
+/// `AppError` can downcast to this type for 503 classification.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct GraphConnectError {
+    pub message: String,
+}
+
+impl GraphConnectError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
     }
 }

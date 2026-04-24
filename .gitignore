@@ -10,3 +10,10 @@ __pycache__/
 dist/
 node_modules/
 hippo.toml
+evals/locomo/locomo10.json
+evals/locomo/results.json
+evals/longmemeval/longmemeval_*.json
+evals/longmemeval/results_*.json
+evals/longmemeval/hypotheses_*.jsonl
+hippo-api/Cargo.lock
+sdks/rust/Cargo.lock

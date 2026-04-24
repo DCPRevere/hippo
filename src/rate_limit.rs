@@ -22,7 +22,7 @@ impl RateLimiter {
 
     /// Returns Ok(()) if allowed, Err(()) if rate limited.
     pub fn check(&self, user_id: &str) -> Result<(), ()> {
-        let mut buckets = self.buckets.lock().unwrap();
+        let mut buckets = self.buckets.lock().expect("rate limiter lock poisoned");
         let cap = self.capacity as f64;
         let rate_per_sec = cap / 60.0;
 

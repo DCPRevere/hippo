@@ -13,6 +13,23 @@ use crate::models::{
     EdgeClassification, EntityRow, ExtractedEntity, EMBEDDING_DIM,
 };
 
+/// Typed error for LLM provider failures.
+///
+/// Returned by `LlmClient` when an upstream API call fails.  `AppError`
+/// downcasts to this type to choose the right HTTP status code instead of
+/// matching on error-message strings.
+#[derive(Debug, thiserror::Error)]
+pub enum LlmError {
+    #[error("Anthropic API error {status}: {body}")]
+    AnthropicApi { status: u16, body: String },
+
+    #[error("OpenAI API error {status}: {body}")]
+    OpenAiApi { status: u16, body: String },
+
+    #[error("Anthropic tool response contained no tool_use block")]
+    MissingToolUse,
+}
+
 /// Canonical relation pairs: (forward, inverse).
 /// For symmetric relations, forward == inverse.
 pub const RELATION_PAIRS: &[(&str, &str)] = &[
@@ -908,9 +925,9 @@ Use the same JSON format: {{"operations": [...]}}"#
             .context("failed to call Anthropic API")?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
+            let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {status}: {body}");
+            return Err(LlmError::AnthropicApi { status, body }.into());
         }
 
         let r: AnthropicResponse = resp.json().await.context("failed to parse Anthropic response")?;
@@ -989,9 +1006,9 @@ Use the same JSON format: {{"operations": [...]}}"#
             .context("failed to call Anthropic API (tool use)")?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
+            let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {status}: {body}");
+            return Err(LlmError::AnthropicApi { status, body }.into());
         }
 
         let r: AnthropicResponse = resp.json().await.context("failed to parse Anthropic tool response")?;
@@ -1004,7 +1021,7 @@ Use the same JSON format: {{"operations": [...]}}"#
                 }
             }
         }
-        anyhow::bail!("Anthropic tool response contained no tool_use block")
+        Err(LlmError::MissingToolUse.into())
     }
 
     async fn call_openai(&self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
@@ -1037,9 +1054,9 @@ Use the same JSON format: {{"operations": [...]}}"#
             .context("failed to call OpenAI API")?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
+            let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI API error {status}: {body}");
+            return Err(LlmError::OpenAiApi { status, body }.into());
         }
 
         let r: OpenAIResponse = resp.json().await.context("failed to parse OpenAI response")?;

@@ -1,0 +1,4 @@
+hippo-sdk
+httpx>=0.27
+openai>=1.0
+nltk>=3.8

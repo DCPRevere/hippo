@@ -73,6 +73,13 @@ impl HippoClient {
         }
 
         let code = status.as_u16();
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_secs);
+
         let body = resp.text().await.unwrap_or_default();
         let message = serde_json::from_str::<ErrorResponse>(&body)
             .map(|e| e.error)
@@ -87,14 +94,11 @@ impl HippoClient {
                 message,
                 status: code,
             }),
-            429 => {
-                // TODO: parse Retry-After header
-                Err(Error::RateLimit {
-                    message,
-                    status: code,
-                    retry_after: None,
-                })
-            }
+            429 => Err(Error::RateLimit {
+                message,
+                status: code,
+                retry_after,
+            }),
             _ => Err(Error::Api {
                 message,
                 status: code,
@@ -111,7 +115,10 @@ impl HippoClient {
         let url = self.url(path);
         let attempts = self.max_retries + 1;
 
-        let mut last_err: Option<Error> = None;
+        let mut last_err: Error = Error::Api {
+            message: "no attempts made".into(),
+            status: 0,
+        };
 
         for attempt in 0..attempts {
             let mut req = self.http.request(method.clone(), &url);
@@ -130,7 +137,7 @@ impl HippoClient {
                     return Self::raise_for_status(resp).await;
                 }
                 Err(e) if (e.is_timeout() || e.is_connect()) && attempt < attempts - 1 => {
-                    last_err = Some(e.into());
+                    last_err = e.into();
                     let delay = backoff_delay(attempt);
                     tokio::time::sleep(delay).await;
                 }
@@ -138,7 +145,7 @@ impl HippoClient {
             }
         }
 
-        Err(last_err.unwrap())
+        Err(last_err)
     }
 
     async fn post<T: serde::de::DeserializeOwned>(

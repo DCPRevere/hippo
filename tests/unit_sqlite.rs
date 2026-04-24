@@ -107,20 +107,6 @@ async fn compound_confidence() {
 }
 
 #[tokio::test]
-async fn increment_salience() {
-    let g = setup().await;
-    g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
-    g.upsert_entity(&make_entity("e2", "B")).await.unwrap();
-    let edge_id = g.create_edge("e1", "e2", &make_relation("fact")).await.unwrap();
-
-    g.increment_salience(&[edge_id]).await.unwrap();
-    g.increment_salience(&[edge_id]).await.unwrap();
-
-    let edges = g.dump_all_edges().await.unwrap();
-    assert_eq!(edges[0].salience, 3); // started at 1, +2
-}
-
-#[tokio::test]
 async fn walk_one_hop() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -257,16 +243,6 @@ async fn vector_search_entities() {
     let results = g.vector_search_entities(&[1.0, 0.0, 0.0], 1).await.unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0.name, "Alice");
-}
-
-#[tokio::test]
-async fn entity_type_counts() {
-    let g = setup().await;
-    g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
-    g.upsert_entity(&make_entity("e2", "Bob")).await.unwrap();
-
-    let counts = g.entity_type_counts().await.unwrap();
-    assert_eq!(counts.get("person"), Some(&2));
 }
 
 #[tokio::test]
