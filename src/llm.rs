@@ -143,6 +143,7 @@ struct AnthropicContent {
 #[derive(Serialize)]
 struct OpenAIRequest {
     model: String,
+    #[serde(rename = "max_completion_tokens")]
     max_tokens: u32,
     messages: Vec<ChatMessage>,
 }
