@@ -96,6 +96,7 @@ impl Hippo {
             limit: None,
             graph: None,
             verbose: false,
+            max_iterations: 1,
         };
 
         let result =
