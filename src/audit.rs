@@ -132,7 +132,7 @@ pub async fn query_audit_log(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::in_memory_graph::InMemoryGraph;
+    use crate::backends::InMemoryGraph;
 
     #[tokio::test]
     async fn audit_worker_writes_and_drains() {

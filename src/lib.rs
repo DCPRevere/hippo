@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod audit;
 pub mod auth;
+pub mod backends;
 pub mod config;
 pub mod credibility;
 pub mod error;
@@ -13,7 +14,6 @@ pub mod graph;
 pub mod graph_backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http;
-pub mod in_memory_graph;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod llm;
 pub mod llm_service;
@@ -25,12 +25,6 @@ pub mod models;
 pub mod openapi;
 pub mod pipeline;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod postgres_graph;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod qdrant_graph;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod rate_limit;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod sqlite_graph;
 pub mod state;
 pub mod testing;

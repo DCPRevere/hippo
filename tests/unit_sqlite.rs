@@ -1,7 +1,7 @@
 use chrono::Utc;
 use hippo::graph_backend::GraphBackend;
 use hippo::models::{Entity, MemoryTier, Relation};
-use hippo::sqlite_graph::SqliteGraph;
+use hippo::backends::SqliteGraph;
 
 async fn setup() -> SqliteGraph {
     let graph = SqliteGraph::in_memory("test").expect("open in-memory sqlite");
@@ -38,13 +38,13 @@ fn make_relation(fact: &str) -> Relation {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn ping_works() {
     let g = setup().await;
     g.ping().await.expect("ping");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn upsert_and_get_entity() {
     let g = setup().await;
     let entity = make_entity("e1", "Alice");
@@ -55,7 +55,7 @@ async fn upsert_and_get_entity() {
     assert_eq!(found.unwrap().name, "Alice");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn fulltext_search_entities() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -66,7 +66,7 @@ async fn fulltext_search_entities() {
     assert_eq!(results[0].name, "Alice");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn create_edge_and_search() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -84,7 +84,7 @@ async fn create_edge_and_search() {
     assert_eq!(edges[0].object_name, "Bob");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn invalidate_edge() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -100,7 +100,7 @@ async fn invalidate_edge() {
     assert!(edges.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn compound_confidence() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -118,7 +118,7 @@ async fn compound_confidence() {
     assert!((combined - 0.98).abs() < 0.01);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn walk_one_hop() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -140,7 +140,7 @@ async fn walk_one_hop() {
     assert_eq!(hops[0].fact, "A-B");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn walk_n_hops() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -162,7 +162,7 @@ async fn walk_n_hops() {
     assert_eq!(results[1].1, 2); // second hop
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn graph_stats() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -177,7 +177,7 @@ async fn graph_stats() {
     assert!((stats.avg_confidence - 0.9).abs() < 0.01);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn memory_tier_stats() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -191,7 +191,7 @@ async fn memory_tier_stats() {
     assert_eq!(tier.long_term_count, 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn rename_entity() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -201,7 +201,7 @@ async fn rename_entity() {
     assert_eq!(found.name, "Alicia");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn entity_properties() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -214,7 +214,7 @@ async fn entity_properties() {
     assert_eq!(found.unwrap().id, "e1");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn drop_and_reinitialise() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -224,7 +224,7 @@ async fn drop_and_reinitialise() {
     assert!(entities.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn supersession_and_provenance() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "A")).await.unwrap();
@@ -250,7 +250,7 @@ async fn supersession_and_provenance() {
     assert_eq!(prov.supersedes.len(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn source_credibility_round_trip() {
     use hippo::credibility::SourceCredibility;
 
@@ -269,7 +269,7 @@ async fn source_credibility_round_trip() {
     assert!((all[0].credibility - 0.95).abs() < 0.001);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn vector_search_entities() {
     let g = setup().await;
     let mut alice = make_entity("e1", "Alice");
@@ -285,7 +285,7 @@ async fn vector_search_entities() {
     assert_eq!(results[0].0.name, "Alice");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn list_entities_by_recency() {
     let g = setup().await;
     g.upsert_entity(&make_entity("e1", "Alice")).await.unwrap();
@@ -298,7 +298,7 @@ async fn list_entities_by_recency() {
     assert_eq!(all.len(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn merge_placeholder() {
     let g = setup().await;
     let mut placeholder = make_entity("p1", "Unknown");

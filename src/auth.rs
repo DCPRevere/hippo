@@ -376,15 +376,57 @@ impl UserStore for GraphUserStore {
     async fn authenticate(&self, raw_key: &str) -> Option<AuthenticatedUser> {
         let argon2 = Argon2::default();
         let cache = self.cache.read().await;
-        for ck in cache.iter() {
-            if let Ok(hash) = PasswordHash::new(&ck.hash) {
-                if argon2.verify_password(raw_key.as_bytes(), &hash).is_ok() {
-                    return Some(ck.user.clone());
-                }
-            }
-        }
-        None
+        find_match_constant_time(cache.iter(), |ck| {
+            PasswordHash::new(&ck.hash)
+                .ok()
+                .is_some_and(|hash| argon2.verify_password(raw_key.as_bytes(), &hash).is_ok())
+        })
+        .map(|ck| ck.user.clone())
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn warn_once_insecure_mode() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            "AUTH BYPASS: hippo is running with auth.insecure = true. \
+             All requests are treated as admin. Do not deploy in this state."
+        );
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn warn_once_no_user_store() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            "AUTH BYPASS: no user store configured. \
+             All requests are treated as admin. Configure HIPPO_AUTH_FILE or run hippo-cli to create a user."
+        );
+    });
+}
+
+/// Walks every entry in `entries` exactly once, returning the first match
+/// without early exit. This guarantees auth time does not depend on the
+/// position of a matching key in the cache.
+///
+/// Note: argon2 itself is constant-time per call, so the protection applies
+/// across cache entries — not within a single hash verify.
+fn find_match_constant_time<'a, T, I, F>(entries: I, verify: F) -> Option<&'a T>
+where
+    I: IntoIterator<Item = &'a T>,
+    F: Fn(&T) -> bool,
+{
+    let mut found: Option<&T> = None;
+    for entry in entries {
+        if verify(entry) && found.is_none() {
+            found = Some(entry);
+        }
+    }
+    found
 }
 
 fn parse_graphs_property(s: &str) -> GraphAcl {
@@ -478,12 +520,16 @@ impl FromRequestParts<Arc<AppState>> for Auth {
     ) -> Result<Self, Self::Rejection> {
         // --insecure mode: bypass auth entirely
         if state.config.auth.insecure {
+            warn_once_insecure_mode();
             return Ok(Auth(AuthenticatedUser::anonymous()));
         }
 
         let store = match &state.user_store {
             Some(s) => s,
-            None => return Ok(Auth(AuthenticatedUser::anonymous())),
+            None => {
+                warn_once_no_user_store();
+                return Ok(Auth(AuthenticatedUser::anonymous()));
+            }
         };
 
         let auth_header = parts
@@ -528,7 +574,7 @@ impl FromRequestParts<Arc<AppState>> for Auth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::in_memory_graph::InMemoryGraph;
+    use crate::backends::InMemoryGraph;
 
     #[test]
     fn can_access_graph_checks() {
@@ -731,5 +777,188 @@ mod tests {
         // "default" label already exists from create_user
         let result = store.create_api_key("alice", "default").await;
         assert!(result.is_err());
+    }
+
+    // ---- Added coverage ----
+
+    #[test]
+    fn anonymous_user_is_admin_with_all_graphs() {
+        let u = AuthenticatedUser::anonymous();
+        assert!(u.is_admin());
+        assert!(u.can_access_graph("anything"));
+        assert!(u.can_access_graph("hippo-users"));
+    }
+
+    #[test]
+    fn graph_acl_all_grants_every_graph() {
+        let u = AuthenticatedUser {
+            user_id: "x".into(),
+            display_name: "X".into(),
+            role: UserRole::User,
+            allowed_graphs: GraphAcl::All,
+        };
+        assert!(u.can_access_graph(""));
+        assert!(u.can_access_graph("totally-unrelated"));
+    }
+
+    #[test]
+    fn graph_acl_specific_empty_set_denies_all() {
+        let u = AuthenticatedUser {
+            user_id: "x".into(),
+            display_name: "X".into(),
+            role: UserRole::User,
+            allowed_graphs: GraphAcl::Specific(HashSet::new()),
+        };
+        assert!(!u.can_access_graph("any"));
+    }
+
+    #[test]
+    fn parse_graphs_with_star_anywhere_grants_all() {
+        // `*` mixed with named graphs still resolves to All — documents
+        // current behaviour so a stricter parse regresses loudly.
+        let acl = parse_graphs_property("a, b, *");
+        assert!(matches!(acl, GraphAcl::All));
+    }
+
+    #[test]
+    fn parse_graphs_trims_whitespace() {
+        if let GraphAcl::Specific(s) = parse_graphs_property("  a , b  , c") {
+            assert!(s.contains("a"));
+            assert!(s.contains("b"));
+            assert!(s.contains("c"));
+            assert!(!s.contains(" a "));
+        } else {
+            panic!("expected Specific");
+        }
+    }
+
+    #[test]
+    fn user_role_admin_only_when_role_is_admin() {
+        let admin = AuthenticatedUser {
+            user_id: "a".into(),
+            display_name: "A".into(),
+            role: UserRole::Admin,
+            allowed_graphs: GraphAcl::All,
+        };
+        let user = AuthenticatedUser {
+            user_id: "b".into(),
+            display_name: "B".into(),
+            role: UserRole::User,
+            allowed_graphs: GraphAcl::All,
+        };
+        assert!(admin.is_admin());
+        assert!(!user.is_admin());
+    }
+
+    #[test]
+    fn generate_api_key_returns_unique_keys() {
+        // 8 samples is enough to assert uniqueness without paying argon2 cost
+        // many times (argon2id is intentionally ~10ms per call).
+        let mut keys = std::collections::HashSet::new();
+        for _ in 0..8 {
+            let (k, _) = generate_api_key().unwrap();
+            assert!(keys.insert(k), "duplicate key generated");
+        }
+    }
+
+    #[test]
+    fn generate_api_key_hash_is_argon2_format() {
+        let (_, hash) = generate_api_key().unwrap();
+        // argon2 PHC format: $argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>
+        assert!(hash.starts_with("$argon2"), "hash = {}", hash);
+        assert_eq!(hash.matches('$').count(), 5);
+    }
+
+    #[test]
+    fn generate_api_key_raw_does_not_appear_in_hash() {
+        // Sanity: even a substring of the raw key should not leak into the hash.
+        let (raw, hash) = generate_api_key().unwrap();
+        let body = raw.trim_start_matches("hippo_");
+        assert!(!hash.contains(body));
+    }
+
+    #[tokio::test]
+    async fn in_memory_store_returns_none_for_unknown_key() {
+        let store = InMemoryUserStore::new();
+        assert!(store.authenticate("nonexistent").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn graph_store_unknown_role_string_defaults_to_user() {
+        // create_user with a role string the parser doesn't recognise should
+        // fall back to UserRole::User, not crash. Documents current behaviour.
+        let graph = Arc::new(InMemoryGraph::new(USERS_GRAPH));
+        let store = GraphUserStore::new(graph).await.unwrap();
+
+        let raw = store
+            .create_user("z", "Z", "wizard", &["*".to_string()])
+            .await
+            .unwrap();
+        let user = store.authenticate(&raw).await.unwrap();
+        assert_eq!(user.role, UserRole::User);
+    }
+
+    #[test]
+    fn find_match_constant_time_visits_every_entry_when_first_matches() {
+        let entries = vec!["a", "b", "c", "d"];
+        let calls = std::cell::Cell::new(0);
+        let m = find_match_constant_time(entries.iter(), |e| {
+            calls.set(calls.get() + 1);
+            *e == "a"
+        });
+        assert_eq!(m, Some(&"a"));
+        assert_eq!(calls.get(), 4, "expected all entries visited, got {}", calls.get());
+    }
+
+    #[test]
+    fn find_match_constant_time_visits_every_entry_when_last_matches() {
+        let entries = vec!["a", "b", "c", "d"];
+        let calls = std::cell::Cell::new(0);
+        let m = find_match_constant_time(entries.iter(), |e| {
+            calls.set(calls.get() + 1);
+            *e == "d"
+        });
+        assert_eq!(m, Some(&"d"));
+        assert_eq!(calls.get(), 4);
+    }
+
+    #[test]
+    fn find_match_constant_time_returns_none_when_nothing_matches() {
+        let entries = vec!["a", "b", "c"];
+        let calls = std::cell::Cell::new(0);
+        let m = find_match_constant_time(entries.iter(), |_| {
+            calls.set(calls.get() + 1);
+            false
+        });
+        assert!(m.is_none());
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
+    fn warn_once_helpers_do_not_panic_when_called_repeatedly() {
+        // Both helpers use std::sync::Once and must be safe across calls.
+        for _ in 0..3 {
+            warn_once_insecure_mode();
+            warn_once_no_user_store();
+        }
+    }
+
+    #[test]
+    fn find_match_constant_time_returns_first_when_multiple_match() {
+        let entries = vec!["a", "b", "c"];
+        let m = find_match_constant_time(entries.iter(), |e| *e == "b" || *e == "c");
+        assert_eq!(m, Some(&"b"));
+    }
+
+    #[tokio::test]
+    async fn revoking_only_key_disables_user() {
+        let graph = Arc::new(InMemoryGraph::new(USERS_GRAPH));
+        let store = GraphUserStore::new(graph).await.unwrap();
+        let raw = store
+            .create_user("solo", "Solo", "user", &["*".to_string()])
+            .await
+            .unwrap();
+        store.revoke_api_key("solo", "default").await.unwrap();
+        assert!(store.authenticate(&raw).await.is_none());
     }
 }

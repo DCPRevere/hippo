@@ -2,7 +2,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::models::ScoringParams;
+use crate::models::{PipelineTuning, ScoringParams};
 
 #[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_CONFIG_PATH: &str = "hippo.toml";
@@ -227,6 +227,7 @@ pub struct PipelineConfig {
     pub infer_enrichment: bool,
     pub infer_maintenance: bool,
     pub scoring: ScoringParams,
+    pub tuning: PipelineTuning,
 }
 
 impl Default for PipelineConfig {
@@ -239,6 +240,7 @@ impl Default for PipelineConfig {
             infer_enrichment: false,
             infer_maintenance: false,
             scoring: ScoringParams::default(),
+            tuning: PipelineTuning::default(),
         }
     }
 }
@@ -573,6 +575,167 @@ impl Config {
             eval: EvalConfig::default(),
             anthropic_auth: Some(AnthropicAuth::ApiKey("test-key".to_string())),
             openai_api_key: None,
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    // ---- Defaults ----
+
+    #[test]
+    fn default_port_matches_published_value() {
+        assert_eq!(Config::default().port, 21693);
+    }
+
+    #[test]
+    fn default_graph_is_memory_named_hippo() {
+        let cfg = Config::default();
+        assert_eq!(cfg.graph.backend, GraphBackendType::Memory);
+        assert_eq!(cfg.graph.name, "hippo");
+    }
+
+    #[test]
+    fn default_llm_provider_is_anthropic_no_mock() {
+        let cfg = Config::default();
+        assert_eq!(cfg.llm.provider, LlmProvider::Anthropic);
+        assert!(!cfg.llm.mock_llm);
+    }
+
+    #[test]
+    fn default_secrets_are_unset() {
+        let cfg = Config::default();
+        assert!(cfg.anthropic_auth.is_none());
+        assert!(cfg.openai_api_key.is_none());
+    }
+
+    #[test]
+    fn default_rate_limit_disabled_with_120_rpm() {
+        let cfg = Config::default();
+        assert!(!cfg.rate_limit.enabled);
+        assert_eq!(cfg.rate_limit.requests_per_minute, 120);
+    }
+
+    #[test]
+    fn falkordb_connection_string_swaps_scheme() {
+        let cfg = GraphConfig {
+            falkordb: FalkorDbConfig {
+                url: "redis://h:6379".to_string(),
+            },
+            ..Default::default()
+        };
+        assert_eq!(cfg.falkordb_connection_string(), "falkor://h:6379");
+    }
+
+    // ---- test_default and for_wasm constructors ----
+
+    #[test]
+    fn test_default_has_admin_allowed_and_mock_anthropic_auth() {
+        let cfg = Config::test_default();
+        assert!(cfg.auth.allow_admin);
+        assert!(matches!(
+            cfg.anthropic_auth,
+            Some(AnthropicAuth::ApiKey(_))
+        ));
+        // Long maintenance interval so the bg loop is effectively disabled in unit tests.
+        assert_eq!(cfg.pipeline.maintenance_interval_secs, 3600);
+    }
+
+    #[test]
+    fn for_wasm_uses_in_memory_graph_and_openai_provider() {
+        let cfg = Config::for_wasm("sk-x".into(), None, None);
+        assert_eq!(cfg.graph.backend, GraphBackendType::Memory);
+        assert_eq!(cfg.llm.provider, LlmProvider::OpenAI);
+        assert_eq!(cfg.openai_api_key.as_deref(), Some("sk-x"));
+        assert!(cfg.pipeline.infer_pre_context);
+    }
+
+    #[test]
+    fn for_wasm_uses_supplied_models_when_present() {
+        let cfg = Config::for_wasm(
+            "sk-x".into(),
+            Some("gpt-x".into()),
+            Some("emb-x".into()),
+        );
+        assert_eq!(cfg.llm.openai.model, "gpt-x");
+        assert_eq!(cfg.llm.openai.embedding_model.as_deref(), Some("emb-x"));
+    }
+
+    // ---- TOML parsing ----
+
+    #[test]
+    fn empty_toml_yields_defaults() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.port, 21693);
+        assert_eq!(cfg.graph.backend, GraphBackendType::Memory);
+    }
+
+    #[test]
+    fn toml_partial_override_only_changes_named_fields() {
+        let toml_src = r#"
+            port = 9000
+            [graph]
+            backend = "sqlite"
+            name = "test-graph"
+        "#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        assert_eq!(cfg.port, 9000);
+        assert_eq!(cfg.graph.backend, GraphBackendType::Sqlite);
+        assert_eq!(cfg.graph.name, "test-graph");
+        assert!(!cfg.llm.mock_llm);
+        assert_eq!(cfg.rate_limit.requests_per_minute, 120);
+    }
+
+    #[test]
+    fn toml_secrets_field_is_skipped_on_deserialise() {
+        let cfg: Config = toml::from_str("port = 1234").unwrap();
+        assert!(cfg.anthropic_auth.is_none());
+    }
+
+    #[test]
+    fn toml_invalid_value_returns_error() {
+        let result: std::result::Result<Config, _> =
+            toml::from_str(r#"port = "not-a-number""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn graph_backend_type_parses_each_known_value() {
+        for (s, expected) in [
+            ("falkordb", GraphBackendType::FalkorDB),
+            ("memory", GraphBackendType::Memory),
+            ("postgres", GraphBackendType::Postgres),
+            ("qdrant", GraphBackendType::Qdrant),
+            ("sqlite", GraphBackendType::Sqlite),
+        ] {
+            let toml_src = format!("[graph]\nbackend = \"{}\"", s);
+            let cfg: Config = toml::from_str(&toml_src).unwrap();
+            assert_eq!(cfg.graph.backend, expected, "for {}", s);
+        }
+    }
+
+    // ---- AnthropicAuth secret hygiene ----
+
+    #[test]
+    fn anthropic_auth_debug_does_not_leak_secret() {
+        let dbg = format!("{:?}", AnthropicAuth::ApiKey("sk-secret-123".into()));
+        assert!(!dbg.contains("sk-secret-123"));
+        assert!(dbg.contains("****"));
+
+        let dbg2 = format!("{:?}", AnthropicAuth::OAuthToken("oauth-secret".into()));
+        assert!(!dbg2.contains("oauth-secret"));
+        assert!(dbg2.contains("****"));
+    }
+
+    #[test]
+    fn anthropic_auth_clone_preserves_variant_and_value() {
+        let original = AnthropicAuth::ApiKey("k".into());
+        let cloned = original.clone();
+        match cloned {
+            AnthropicAuth::ApiKey(v) => assert_eq!(v, "k"),
+            _ => panic!("variant changed"),
         }
     }
 }

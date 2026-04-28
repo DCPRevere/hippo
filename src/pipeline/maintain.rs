@@ -124,9 +124,10 @@ pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<()> 
         }
 
         // Search by embedding similarity
+        let link_threshold = state.config.pipeline.tuning.link_discovery_cosine_threshold;
         let similar = graph.vector_search_entities(&entity.embedding, 5).await?;
         for (candidate, score) in &similar {
-            if candidate.id == entity.id || *score < 0.85 {
+            if candidate.id == entity.id || *score < link_threshold {
                 continue;
             }
             let pair_key = if entity.id < candidate.id {
@@ -161,9 +162,10 @@ pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<()> 
         );
 
         let results = state.llm.resolve_entities_batch(&duplicate_pairs).await?;
+        let cls_threshold = state.config.pipeline.tuning.classification_confidence_threshold;
 
         for (index, same, confidence) in &results {
-            if *same && *confidence > 0.85 {
+            if *same && *confidence > cls_threshold {
                 if let Some((from_id, to_id)) = pair_ids.get(*index) {
                     let (a_name, _, b_name, _, _) = &duplicate_pairs[*index];
                     tracing::info!(
@@ -219,7 +221,11 @@ async fn link_discovery(
         };
 
         let close_nodes = graph
-            .find_close_unlinked(node_id, &node_entity.embedding, 0.85)
+            .find_close_unlinked(
+                node_id,
+                &node_entity.embedding,
+                state.config.pipeline.tuning.link_discovery_cosine_threshold,
+            )
             .await?;
 
         for (candidate, _score) in close_nodes {
@@ -272,10 +278,12 @@ async fn link_discovery(
             }
 
             // Mark pair as checked, prune if too large
+            let cache_max = state.config.pipeline.tuning.link_pair_cache_max;
+            let cache_evict = state.config.pipeline.tuning.link_pair_cache_evict;
             let mut checked = state.checked_pairs.write().await;
             checked.insert(pair);
-            if checked.len() > 10_000 {
-                let to_remove: Vec<_> = checked.iter().take(5_000).cloned().collect();
+            if checked.len() > cache_max {
+                let to_remove: Vec<_> = checked.iter().take(cache_evict).cloned().collect();
                 for pair in to_remove {
                     checked.remove(&pair);
                 }
@@ -394,11 +402,12 @@ async fn inference_scan(
             // Check for duplicate via embedding similarity
             let embedding = state.llm.embed(&fact_text).await?;
             let existing = graph.find_all_active_edges_from(node_id).await?;
+            let dup_threshold = state.config.pipeline.tuning.duplicate_cosine_threshold;
             let is_duplicate = existing.iter().any(|e| {
                 if e.embedding.is_empty() {
                     return false;
                 }
-                cosine_similarity(&embedding, &e.embedding) > 0.9
+                cosine_similarity(&embedding, &e.embedding) > dup_threshold
             });
             if is_duplicate {
                 tracing::debug!("inference_scan: duplicate edge, skipping: {}", fact_text);
@@ -413,7 +422,7 @@ async fn inference_scan(
                 source_agents: vec!["maintenance/inference".to_string()],
                 valid_at: now,
                 invalid_at: None,
-                confidence: confidence * 0.8, // Discount for being inferred
+                confidence: confidence * state.config.pipeline.tuning.inferred_fact_discount,
                 salience: 0,
                 created_at: now,
                 memory_tier: crate::models::MemoryTier::Working,
@@ -463,7 +472,9 @@ async fn placeholder_resolution(state: &AppState, graph: &dyn GraphBackend) -> R
                 .llm
                 .resolve_entities(&extracted, &candidate, &candidate_facts)
                 .await?;
-            if same && confidence > 0.85 {
+            if same
+                && confidence > state.config.pipeline.tuning.classification_confidence_threshold
+            {
                 tracing::info!(
                     "Resolving placeholder '{}' -> '{}' (confidence: {:.2})",
                     placeholder.name,

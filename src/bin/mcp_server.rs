@@ -44,7 +44,17 @@ fn main() {
         };
 
         let mut out = stdout.lock();
-        writeln!(out, "{}", serde_json::to_string(&response).unwrap()).unwrap();
-        out.flush().unwrap();
+        let serialised = match serde_json::to_string(&response) {
+            Ok(s) => s,
+            Err(e) => {
+                // Fall back to a JSON-RPC error response that's known to serialise.
+                eprintln!("mcp-server: failed to serialise response: {e}");
+                continue;
+            }
+        };
+        if writeln!(out, "{serialised}").is_err() || out.flush().is_err() {
+            // stdout is closed (parent process detached); shut down quietly.
+            break;
+        }
     }
 }

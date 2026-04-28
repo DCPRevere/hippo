@@ -1,3 +1,11 @@
+[workspace]
+members = [".", "hippo-api", "hippo-wasm"]
+# hippo-wasm uses async-trait without Send bounds and is built only via
+# wasm-pack against wasm32. Exclude it from default workspace operations so
+# `cargo test` and `cargo build` on host don't try to compile it.
+default-members = [".", "hippo-api"]
+resolver = "2"
+
 [package]
 name = "hippo"
 version = "0.1.0"
@@ -88,6 +96,7 @@ axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 clap = { version = "4", features = ["derive", "env"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"], optional = true }
 qdrant-client = { version = "1", optional = true }
+parking_lot = "0.12"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -95,3 +104,4 @@ getrandom = { version = "0.2", features = ["js"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
+proptest = "1"

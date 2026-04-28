@@ -121,7 +121,10 @@ async fn main() -> anyhow::Result<()> {
         );
         Some(Arc::new(store))
     } else {
-        tracing::info!("Auth disabled (set auth.enabled = true to enable)");
+        tracing::warn!(
+            "AUTH BYPASS: auth disabled. All requests are treated as admin. \
+             Set auth.enabled = true to enable."
+        );
         None
     };
 

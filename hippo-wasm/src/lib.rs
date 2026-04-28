@@ -4,7 +4,7 @@ use wasm_bindgen::prelude::*;
 
 use hippo::config::Config;
 use hippo::graph_backend::GraphBackend;
-use hippo::in_memory_graph::InMemoryGraph;
+use hippo::backends::InMemoryGraph;
 use hippo::models::{AskRequest, RememberRequest};
 use hippo::state::AppState;
 

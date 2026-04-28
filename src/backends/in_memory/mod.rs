@@ -8,22 +8,10 @@ use tokio::sync::RwLock;
 
 use crate::credibility::SourceCredibility;
 use crate::graph_backend::GraphBackend;
+use crate::math::{compound_confidence, cosine_similarity};
 use crate::models::{
     EdgeRow, Entity, EntityRow, MemoryTier, ProvenanceResponse, Relation, SupersessionRecord,
 };
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
-}
 
 fn tier_string(tier: &MemoryTier) -> String {
     match tier {
@@ -186,7 +174,7 @@ impl GraphBackend for InMemoryGraph {
                 (e.clone(), score)
             })
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored.truncate(k);
         Ok(scored)
     }
@@ -240,7 +228,7 @@ impl GraphBackend for InMemoryGraph {
                 (e.to_row(&entities), score)
             })
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored.truncate(k);
         Ok(scored)
     }
@@ -545,7 +533,7 @@ impl GraphBackend for InMemoryGraph {
             .filter(|(_, score)| *score >= threshold)
             .collect();
 
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| b.1.total_cmp(&a.1));
         Ok(results)
     }
 
@@ -602,7 +590,7 @@ impl InMemoryGraph {
             if !e.source_agents.contains(&new_agent.to_string()) {
                 e.source_agents.push(new_agent.to_string());
             }
-            let combined = 1.0 - (1.0 - e.confidence) * (1.0 - new_confidence);
+            let combined = compound_confidence(e.confidence, new_confidence);
             e.confidence = combined;
             e.decayed_confidence = combined;
             Ok(combined)
@@ -650,5 +638,416 @@ impl InMemoryGraph {
 
     pub async fn load_all_source_credibility(&self) -> Result<Vec<SourceCredibility>> {
         Ok(self.source_credibility.read().await.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn entity(id: &str, name: &str, kind: &str) -> Entity {
+        Entity {
+            id: id.into(),
+            name: name.into(),
+            entity_type: kind.into(),
+            resolved: true,
+            hint: None,
+            content: None,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            embedding: vec![0.1, 0.2, 0.3],
+        }
+    }
+
+    fn relation(fact: &str, rel: &str, valid_at: DateTime<Utc>) -> Relation {
+        Relation {
+            fact: fact.into(),
+            relation_type: rel.into(),
+            embedding: vec![0.1, 0.2, 0.3],
+            source_agents: vec!["test".into()],
+            valid_at,
+            invalid_at: None,
+            confidence: 0.9,
+            salience: 1,
+            created_at: valid_at,
+            memory_tier: MemoryTier::Working,
+            expires_at: None,
+        }
+    }
+
+    async fn populated_graph() -> InMemoryGraph {
+        let g = InMemoryGraph::new("test");
+        g.upsert_entity(&entity("a", "Alice", "person")).await.unwrap();
+        g.upsert_entity(&entity("b", "Bob", "person")).await.unwrap();
+        g.upsert_entity(&entity("c", "Acme", "org")).await.unwrap();
+        g
+    }
+
+    // ---- Identity & lifecycle ----
+
+    #[tokio::test]
+    async fn graph_name_returns_constructor_value() {
+        let g = InMemoryGraph::new("hippo-test");
+        assert_eq!(g.graph_name(), "hippo-test");
+    }
+
+    #[tokio::test]
+    async fn ping_succeeds_on_fresh_graph() {
+        let g = InMemoryGraph::new("x");
+        g.ping().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drop_and_reinitialise_clears_all_state() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        g.create_edge(
+            "a",
+            "b",
+            &relation("Alice knows Bob", "KNOWS", now),
+        )
+        .await
+        .unwrap();
+        g.drop_and_reinitialise().await.unwrap();
+        assert!(g.dump_all_entities().await.unwrap().is_empty());
+        assert!(g.dump_all_edges().await.unwrap().is_empty());
+    }
+
+    // ---- Entity CRUD ----
+
+    #[tokio::test]
+    async fn upsert_then_get_entity_round_trips_fields() {
+        let g = InMemoryGraph::new("x");
+        g.upsert_entity(&entity("a", "Alice", "person"))
+            .await
+            .unwrap();
+        let row = g.get_entity_by_id("a").await.unwrap().unwrap();
+        assert_eq!(row.name, "Alice");
+        assert_eq!(row.entity_type, "person");
+    }
+
+    #[tokio::test]
+    async fn get_entity_by_id_returns_none_for_missing() {
+        let g = InMemoryGraph::new("x");
+        assert!(g.get_entity_by_id("nope").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn upsert_overwrites_existing_entity() {
+        let g = InMemoryGraph::new("x");
+        g.upsert_entity(&entity("a", "Alice", "person"))
+            .await
+            .unwrap();
+        let mut updated = entity("a", "Alice2", "person");
+        updated.hint = Some("note".into());
+        g.upsert_entity(&updated).await.unwrap();
+        let row = g.get_entity_by_id("a").await.unwrap().unwrap();
+        assert_eq!(row.name, "Alice2");
+        assert_eq!(row.hint.as_deref(), Some("note"));
+    }
+
+    #[tokio::test]
+    async fn rename_entity_updates_name_only() {
+        let g = populated_graph().await;
+        g.rename_entity("a", "Alicia").await.unwrap();
+        let row = g.get_entity_by_id("a").await.unwrap().unwrap();
+        assert_eq!(row.name, "Alicia");
+        assert_eq!(row.entity_type, "person");
+    }
+
+    #[tokio::test]
+    async fn rename_missing_entity_is_silent_noop() {
+        let g = InMemoryGraph::new("x");
+        // Documents current behaviour: rename of a missing id does not error.
+        g.rename_entity("ghost", "Whatever").await.unwrap();
+    }
+
+    // ---- Edge creation & traversal ----
+
+    #[tokio::test]
+    async fn create_edge_assigns_unique_increasing_ids() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        let id1 = g
+            .create_edge("a", "b", &relation("f1", "KNOWS", now))
+            .await
+            .unwrap();
+        let id2 = g
+            .create_edge("a", "c", &relation("f2", "WORKS_AT", now))
+            .await
+            .unwrap();
+        assert_ne!(id1, id2);
+        assert!(id2 > id1);
+    }
+
+    #[tokio::test]
+    async fn fulltext_search_edges_matches_fact_substring_case_insensitive() {
+        let g = populated_graph().await;
+        g.create_edge(
+            "a",
+            "c",
+            &relation("Alice works at Acme", "WORKS_AT", Utc::now()),
+        )
+        .await
+        .unwrap();
+        let hits = g.fulltext_search_edges("ACME", None).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].subject_name, "Alice");
+        assert_eq!(hits[0].object_name, "Acme");
+    }
+
+    #[tokio::test]
+    async fn fulltext_search_excludes_invalidated_edges() {
+        let g = populated_graph().await;
+        let id = g
+            .create_edge("a", "c", &relation("Alice works at Acme", "WORKS_AT", Utc::now()))
+            .await
+            .unwrap();
+        g.invalidate_edge(id, Utc::now()).await.unwrap();
+        assert!(g.fulltext_search_edges("acme", None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn walk_n_hops_finds_two_hop_path() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        g.create_edge("a", "b", &relation("Alice knows Bob", "KNOWS", now))
+            .await
+            .unwrap();
+        g.create_edge("b", "c", &relation("Bob works at Acme", "WORKS_AT", now))
+            .await
+            .unwrap();
+
+        let hops = g
+            .walk_n_hops(&["a".to_string()], 2, 100, None)
+            .await
+            .unwrap();
+        let depths: std::collections::HashSet<usize> = hops.iter().map(|(_, h)| *h).collect();
+        assert!(depths.contains(&1));
+        assert!(depths.contains(&2));
+        assert_eq!(hops.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn walk_n_hops_respects_max_hops_limit() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        g.create_edge("a", "b", &relation("ab", "KNOWS", now)).await.unwrap();
+        g.create_edge("b", "c", &relation("bc", "KNOWS", now)).await.unwrap();
+        let hops = g
+            .walk_n_hops(&["a".to_string()], 1, 100, None)
+            .await
+            .unwrap();
+        assert_eq!(hops.len(), 1);
+    }
+
+    // ---- Temporal filtering ----
+
+    #[tokio::test]
+    async fn fulltext_search_at_t_excludes_future_edges() {
+        let g = populated_graph().await;
+        let past = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let future = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap();
+        g.create_edge("a", "b", &relation("Alice knows Bob", "KNOWS", future))
+            .await
+            .unwrap();
+        // At a past time, the edge isn't yet valid.
+        assert!(g
+            .fulltext_search_edges("alice", Some(past))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn fulltext_search_at_t_excludes_invalidated_edges_by_then() {
+        let g = populated_graph().await;
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap();
+        let id = g
+            .create_edge("a", "b", &relation("Alice knows Bob", "KNOWS", t0))
+            .await
+            .unwrap();
+        g.invalidate_edge(id, t1).await.unwrap();
+        // At t2 the edge is invalidated.
+        assert!(g
+            .fulltext_search_edges("alice", Some(t2))
+            .await
+            .unwrap()
+            .is_empty());
+        // Querying without `at` falls back to "currently active" — also empty.
+        assert!(g.fulltext_search_edges("alice", None).await.unwrap().is_empty());
+    }
+
+    // ---- Vector search ----
+
+    #[tokio::test]
+    async fn vector_search_entities_returns_top_k_sorted() {
+        let g = InMemoryGraph::new("x");
+        let mut e1 = entity("e1", "exact", "thing");
+        e1.embedding = vec![1.0, 0.0, 0.0];
+        let mut e2 = entity("e2", "near", "thing");
+        e2.embedding = vec![0.9, 0.1, 0.0];
+        let mut e3 = entity("e3", "far", "thing");
+        e3.embedding = vec![0.0, 1.0, 0.0];
+        g.upsert_entity(&e1).await.unwrap();
+        g.upsert_entity(&e2).await.unwrap();
+        g.upsert_entity(&e3).await.unwrap();
+
+        let hits = g
+            .vector_search_entities(&[1.0, 0.0, 0.0], 2)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].0.id, "e1");
+        assert_eq!(hits[1].0.id, "e2");
+        // Scores monotonically descending.
+        assert!(hits[0].1 >= hits[1].1);
+    }
+
+    // ---- Invalidation & deletion ----
+
+    #[tokio::test]
+    async fn invalidate_unknown_edge_id_is_silent() {
+        let g = InMemoryGraph::new("x");
+        // Documents current behaviour: invalid id is a no-op, not an error.
+        g.invalidate_edge(9999, Utc::now()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_entity_invalidates_incident_edges() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        g.create_edge("a", "b", &relation("Alice knows Bob", "KNOWS", now))
+            .await
+            .unwrap();
+        g.create_edge("a", "c", &relation("Alice at Acme", "WORKS_AT", now))
+            .await
+            .unwrap();
+        let invalidated = g.delete_entity("a").await.unwrap();
+        assert_eq!(invalidated, 2);
+        assert!(g.get_entity_by_id("a").await.unwrap().is_none());
+        // No active edges remain referring to a.
+        assert!(g.find_all_active_edges_from("a").await.unwrap().is_empty());
+    }
+
+    // ---- TTL & memory tier ----
+
+    #[tokio::test]
+    async fn expire_ttl_edges_invalidates_edges_past_expiry() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        let mut rel = relation("Alice knows Bob", "KNOWS", now);
+        rel.expires_at = Some(now - Duration::seconds(1));
+        let id = g.create_edge("a", "b", &rel).await.unwrap();
+        let n = g.expire_ttl_edges(now).await.unwrap();
+        assert_eq!(n, 1);
+        // Edge is now invalidated.
+        let edges = g.dump_all_edges().await.unwrap();
+        let row = edges.iter().find(|e| e.edge_id == id).unwrap();
+        assert!(row.invalid_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn memory_tier_stats_counts_only_active_edges() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        let id = g
+            .create_edge("a", "b", &relation("ab1", "KNOWS", now))
+            .await
+            .unwrap();
+        g.create_edge("a", "c", &relation("ab2", "KNOWS", now)).await.unwrap();
+        g.invalidate_edge(id, now).await.unwrap();
+        let stats = g.memory_tier_stats().await.unwrap();
+        assert_eq!(stats.working_count, 1);
+        assert_eq!(stats.long_term_count, 0);
+    }
+
+    // ---- Properties ----
+
+    #[tokio::test]
+    async fn set_and_find_entity_by_property() {
+        let g = populated_graph().await;
+        g.set_entity_property("a", "email", "alice@example.com").await.unwrap();
+        let found = g
+            .find_entity_by_property("email", "alice@example.com")
+            .await
+            .unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, "a");
+    }
+
+    #[tokio::test]
+    async fn find_entity_by_property_returns_none_when_absent() {
+        let g = populated_graph().await;
+        assert!(g
+            .find_entity_by_property("email", "nobody@example.com")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    // ---- Compounding & supersession ----
+
+    #[tokio::test]
+    async fn compound_edge_confidence_updates_and_caps() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        let id = g
+            .create_edge("a", "b", &relation("Alice knows Bob", "KNOWS", now))
+            .await
+            .unwrap();
+        let r1 = g.compound_edge_confidence(id, "agentX", 0.9).await.unwrap();
+        // 1 - (1 - 0.9)*(1 - 0.9) = 0.99.
+        assert!((r1 - 0.99).abs() < 1e-3);
+        // New agent recorded.
+        let edges = g.dump_all_edges().await.unwrap();
+        let row = edges.iter().find(|e| e.edge_id == id).unwrap();
+        assert!(row.source_agents.contains("agentX"));
+    }
+
+    #[tokio::test]
+    async fn compound_edge_confidence_caps_at_0_99() {
+        // Regression: previously the in-memory and SQL backends omitted the 0.99
+        // cap that the FalkorDB backend applies. After centralising on
+        // math::compound_confidence, all backends share the cap.
+        let g = populated_graph().await;
+        let now = Utc::now();
+        let mut rel = relation("Alice knows Bob", "KNOWS", now);
+        rel.confidence = 0.95;
+        let id = g.create_edge("a", "b", &rel).await.unwrap();
+        let r = g.compound_edge_confidence(id, "agentX", 0.95).await.unwrap();
+        assert!(r <= 0.99 + 1e-6, "compounded confidence {} exceeded cap", r);
+    }
+
+    #[tokio::test]
+    async fn compound_unknown_edge_returns_new_confidence() {
+        let g = InMemoryGraph::new("x");
+        let r = g.compound_edge_confidence(9999, "agent", 0.4).await.unwrap();
+        assert!((r - 0.4).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn supersession_chain_round_trip() {
+        let g = InMemoryGraph::new("x");
+        let now = Utc::now();
+        g.create_supersession(1, 2, now, "old", "new").await.unwrap();
+        let chain = g.get_supersession_chain(1).await.unwrap();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].old_edge_id, 1);
+        assert_eq!(chain[0].new_edge_id, 2);
+    }
+
+    // ---- Stats ----
+
+    #[tokio::test]
+    async fn graph_stats_counts_entities_and_active_edges() {
+        let g = populated_graph().await;
+        let now = Utc::now();
+        g.create_edge("a", "b", &relation("ab", "KNOWS", now)).await.unwrap();
+        let stats = g.graph_stats().await.unwrap();
+        assert_eq!(stats.entity_count, 3);
+        assert_eq!(stats.edge_count, 1);
     }
 }

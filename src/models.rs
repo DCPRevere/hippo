@@ -6,8 +6,8 @@ use std::collections::HashMap;
 pub use hippo_api::{
     ApiKeyInfo, AskRequest, AskResponse, BatchRememberRequest, BatchRememberResponse,
     BatchRememberResult, ContextFact, ContextRequest, ContextResponse, ErrorResponse, GraphOp,
-    HealthResponse, LlmUsage, MemoryTier, OpExecutionTrace, OperationsResult, RememberRequest,
-    RememberResponse, RememberTrace, ScoringParams, UserInfo,
+    HealthResponse, LlmUsage, MemoryTier, OpExecutionTrace, OperationsResult, PipelineTuning,
+    RememberRequest, RememberResponse, RememberTrace, ScoringParams, UserInfo,
 };
 
 pub const EMBEDDING_DIM: usize = 768;

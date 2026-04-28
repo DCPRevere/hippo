@@ -160,3 +160,102 @@ impl GraphConnectError {
         }
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn constructors_set_expected_status_codes() {
+        assert_eq!(AppError::bad_request("x").status, StatusCode::BAD_REQUEST);
+        assert_eq!(AppError::not_found("x").status, StatusCode::NOT_FOUND);
+        assert_eq!(AppError::bad_gateway("x").status, StatusCode::BAD_GATEWAY);
+        assert_eq!(AppError::unauthorized("x").status, StatusCode::UNAUTHORIZED);
+        assert_eq!(AppError::forbidden("x").status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            AppError::too_many_requests("x").status,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            AppError::unavailable("x").status,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            AppError::internal("x").status,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn display_format_is_status_colon_message() {
+        let err = AppError::bad_request("missing field");
+        assert_eq!(err.to_string(), "400: missing field");
+    }
+
+    #[test]
+    fn anyhow_default_maps_to_internal() {
+        let app: AppError = anyhow!("boom").into();
+        assert_eq!(app.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(app.message.contains("boom"));
+    }
+
+    #[test]
+    fn anyhow_unwraps_existing_app_error() {
+        let original = AppError::not_found("entity 'Alice'");
+        let wrapped: anyhow::Error = anyhow!(original);
+        let app: AppError = wrapped.into();
+        assert_eq!(app.status, StatusCode::NOT_FOUND);
+        assert_eq!(app.message, "entity 'Alice'");
+    }
+
+    #[test]
+    fn anyhow_with_llm_error_maps_to_bad_gateway() {
+        let llm = crate::llm::LlmError::AnthropicApi {
+            status: 500,
+            body: "upstream blew up".into(),
+        };
+        let app: AppError = anyhow::Error::new(llm).into();
+        assert_eq!(app.status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn anyhow_with_graph_connect_error_maps_to_unavailable() {
+        let gc = GraphConnectError::new("falkordb unreachable");
+        let app: AppError = anyhow::Error::new(gc).into();
+        assert_eq!(app.status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn graph_connect_error_display_contains_message() {
+        let gc = GraphConnectError::new("redis://localhost: refused");
+        assert!(gc.to_string().contains("redis://localhost: refused"));
+    }
+
+    #[tokio::test]
+    async fn into_response_sets_status_and_json_body() {
+        use axum::body::to_bytes;
+        let resp = AppError::not_found("missing").into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"], "missing");
+    }
+
+    /// Regression: the body must be the JSON `ErrorResponse`, not the raw
+    /// message — clients parse `.error`. If anyone replaces the serialiser,
+    /// this test catches it.
+    #[tokio::test]
+    async fn into_response_body_is_error_response_envelope() {
+        use axum::body::to_bytes;
+        let resp = AppError::bad_request("no field foo").into_response();
+        let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let s = std::str::from_utf8(&bytes).unwrap();
+        assert!(s.contains(r#""error""#));
+        assert!(s.contains("no field foo"));
+    }
+}

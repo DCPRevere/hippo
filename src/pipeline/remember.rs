@@ -313,9 +313,10 @@ pub async fn remember(
                 let embedding = state.llm.embed(fact).await?;
                 usage.embed_calls += 1;
                 let existing = graph.find_all_active_edges_from(&from_id).await?;
+                let dup_threshold = state.config.pipeline.tuning.duplicate_cosine_threshold;
                 let is_dup = existing
                     .iter()
-                    .any(|e| cosine_similarity(&embedding, &e.embedding) > 0.9);
+                    .any(|e| cosine_similarity(&embedding, &e.embedding) > dup_threshold);
 
                 if is_dup {
                     tracing::info!(fact = %fact, "remember: duplicate edge (by embedding), skipping");
@@ -386,8 +387,10 @@ pub async fn remember(
                     let candidates = graph
                         .vector_search_edges_scored(&embedding, 5, None)
                         .await?;
+                    let same_fact_threshold =
+                        state.config.pipeline.tuning.same_fact_cosine_threshold;
                     for (edge, score) in &candidates {
-                        if *score > 0.85 && edge.invalid_at.is_none() {
+                        if *score > same_fact_threshold && edge.invalid_at.is_none() {
                             graph.invalidate_edge(edge.edge_id, now).await?;
                             tracing::info!(fact = %edge.fact, reason = %reason, "remember: invalidated edge by similarity");
                             let _ = state.event_tx.send(GraphEvent::EdgeInvalidated {

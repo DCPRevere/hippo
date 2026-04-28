@@ -4,7 +4,7 @@ use chrono::{Duration, Utc};
 
 use hippo::config::Config;
 use hippo::graph_backend::GraphBackend;
-use hippo::in_memory_graph::InMemoryGraph;
+use hippo::backends::InMemoryGraph;
 use hippo::llm;
 use hippo::models::{Entity, MemoryTier, Relation};
 use hippo::pipeline::maintain;

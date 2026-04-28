@@ -6,22 +6,10 @@ use sqlx::{PgPool, Row};
 
 use crate::error::GraphConnectError;
 use crate::graph_backend::GraphBackend;
+use crate::math::{compound_confidence, cosine_similarity};
 use crate::models::{
     EdgeRow, Entity, EntityRow, MemoryTier, ProvenanceResponse, Relation, SupersessionRecord,
 };
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
-}
 
 fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
@@ -322,7 +310,7 @@ impl GraphBackend for PostgresGraph {
                 (e, score)
             })
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored.truncate(k);
         Ok(scored)
     }
@@ -443,7 +431,7 @@ impl GraphBackend for PostgresGraph {
                 (e, score)
             })
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored.truncate(k);
         Ok(scored)
     }
@@ -461,15 +449,12 @@ impl GraphBackend for PostgresGraph {
             return Ok(vec![]);
         }
 
-        // Use recursive CTE for graph traversal
-        let temporal_filter = if let Some(at) = &at {
-            format!(
-                "AND e.valid_at <= '{}' AND (e.invalid_at IS NULL OR e.invalid_at > '{}')",
-                at.to_rfc3339(),
-                at.to_rfc3339()
-            )
+        // Use recursive CTE for graph traversal. Temporal filter binds the
+        // timestamp via $5 / $6 instead of interpolating it into the SQL.
+        let temporal_filter = if at.is_some() {
+            "AND e.valid_at <= $5 AND (e.invalid_at IS NULL OR e.invalid_at > $5)"
         } else {
-            "AND e.invalid_at IS NULL".to_string()
+            "AND e.invalid_at IS NULL"
         };
 
         let cte_sql = format!(
@@ -490,13 +475,15 @@ impl GraphBackend for PostgresGraph {
             SELECT DISTINCT edge_id, depth + 1 AS hop FROM hops LIMIT $4"
         );
 
-        let hop_rows = sqlx::query(&cte_sql)
+        let mut q = sqlx::query(&cte_sql)
             .bind(&self.graph_name)
             .bind(seed_entity_ids)
             .bind(max_hops as i64)
-            .bind((limit_per_hop * max_hops) as i64)
-            .fetch_all(&self.pool)
-            .await?;
+            .bind((limit_per_hop * max_hops) as i64);
+        if let Some(at) = at {
+            q = q.bind(at.to_rfc3339());
+        }
+        let hop_rows = q.fetch_all(&self.pool).await?;
 
         let mut results = Vec::new();
         for hop_row in &hop_rows {
@@ -917,7 +904,7 @@ impl GraphBackend for PostgresGraph {
             })
             .filter(|(_, score)| *score >= threshold)
             .collect();
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| b.1.total_cmp(&a.1));
         Ok(results)
     }
 
@@ -1048,7 +1035,7 @@ impl PostgresGraph {
         if let Some(row) = row {
             let old_conf: f32 = row.get("confidence");
             let agents_str: String = row.get("source_agents");
-            let combined = 1.0 - (1.0 - old_conf) * (1.0 - new_confidence);
+            let combined = compound_confidence(old_conf, new_confidence);
             let new_agents = if agents_str.split(',').any(|a| a == new_agent) {
                 agents_str
             } else if agents_str.is_empty() {
