@@ -85,6 +85,7 @@ pub struct InMemoryGraph {
     supersessions: RwLock<Vec<SupersessionRecord>>,
     source_credibility: RwLock<Vec<SourceCredibility>>,
     properties: RwLock<HashMap<(String, String), String>>,
+    last_visited: RwLock<HashMap<String, DateTime<Utc>>>,
 }
 
 impl InMemoryGraph {
@@ -97,7 +98,98 @@ impl InMemoryGraph {
             supersessions: RwLock::new(Vec::new()),
             source_credibility: RwLock::new(Vec::new()),
             properties: RwLock::new(HashMap::new()),
+            last_visited: RwLock::new(HashMap::new()),
         }
+    }
+
+    // ---- Dreamer support: salience, supersession, last-visited ----
+    //
+    // These methods support the architecture described in docs/DREAMS.md.
+    // They are implemented here as inherent methods on InMemoryGraph; the
+    // GraphBackend trait will gain them once the SQLite/Postgres/Qdrant
+    // backends grow parity.
+
+    /// Increment salience by 1 on each named edge. Used by retrieval to
+    /// implement reactivation-strengthens: when a fact is fetched and used,
+    /// it becomes more retrievable next time.
+    pub async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        let mut edges = self.edges.write().await;
+        for edge in edges.iter_mut() {
+            if edge_ids.contains(&edge.edge_id) {
+                edge.salience = edge.salience.saturating_add(1);
+            }
+        }
+        Ok(())
+    }
+
+    /// Append-only supersession: record that `new_edge_id` supersedes
+    /// `old_edge_id`. Both edges remain active in the graph; the supersession
+    /// itself is the new fact. Idempotent: calling twice with the same pair
+    /// is a no-op.
+    pub async fn supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
+        let mut sups = self.supersessions.write().await;
+        if sups
+            .iter()
+            .any(|s| s.old_edge_id == old_edge_id && s.new_edge_id == new_edge_id)
+        {
+            return Ok(());
+        }
+        let edges = self.edges.read().await;
+        let old_fact = edges
+            .iter()
+            .find(|e| e.edge_id == old_edge_id)
+            .map(|e| e.fact.clone())
+            .unwrap_or_default();
+        let new_fact = edges
+            .iter()
+            .find(|e| e.edge_id == new_edge_id)
+            .map(|e| e.fact.clone())
+            .unwrap_or_default();
+        sups.push(SupersessionRecord {
+            old_edge_id,
+            new_edge_id,
+            superseded_at: Utc::now(),
+            old_fact,
+            new_fact,
+        });
+        Ok(())
+    }
+
+    /// Record that the Dreamer visited the named entity at `at`. Used by the
+    /// revisit-window filter so workers don't immediately re-process the same
+    /// entity.
+    pub async fn mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
+        self.last_visited
+            .write()
+            .await
+            .insert(entity_id.to_string(), at);
+        Ok(())
+    }
+
+    /// Return the most recent visit timestamp for the entity, if any.
+    pub async fn last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        Ok(self.last_visited.read().await.get(entity_id).copied())
+    }
+
+    /// Return entities whose last_visited is older than `cutoff` (or has never
+    /// been visited). The Dreamer's work query.
+    pub async fn entities_unvisited_since(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<EntityRow>> {
+        let entities = self.entities.read().await;
+        let visited = self.last_visited.read().await;
+        let mut out = Vec::new();
+        for (id, row) in entities.iter() {
+            let eligible = match visited.get(id) {
+                Some(ts) => *ts < cutoff,
+                None => true,
+            };
+            if eligible {
+                out.push(row.clone());
+            }
+        }
+        Ok(out)
     }
 
     async fn walk_one_hop_inner(
@@ -214,6 +306,21 @@ impl GraphBackend for InMemoryGraph {
     ) -> Result<Vec<(EdgeRow, f32)>> {
         let edges = self.edges.read().await;
         let entities = self.entities.read().await;
+        let supersessions = self.supersessions.read().await;
+        let credibility = self.source_credibility.read().await;
+
+        // Build a set of edge_ids that have been superseded by another fact.
+        // Append-only dreaming writes a `supersedes` relationship instead of
+        // mutating `invalid_at`; retrieval is responsible for filtering them
+        // from active search results.
+        let superseded: std::collections::HashSet<i64> =
+            supersessions.iter().map(|s| s.old_edge_id).collect();
+
+        let cred_lookup: HashMap<&str, f32> = credibility
+            .iter()
+            .map(|c| (c.agent_id.as_str(), c.credibility))
+            .collect();
+
         let mut scored: Vec<(EdgeRow, f32)> = edges
             .iter()
             .filter(|e| {
@@ -221,10 +328,29 @@ impl GraphBackend for InMemoryGraph {
                     Some(t) => e.is_active_at(t),
                     None => e.is_active(),
                 };
-                active && !e.embedding.is_empty()
+                active && !e.embedding.is_empty() && !superseded.contains(&e.edge_id)
             })
             .map(|e| {
-                let score = cosine_similarity(embedding, &e.embedding);
+                let similarity = cosine_similarity(embedding, &e.embedding);
+                // Salience boost: log1p damps so a few uses don't dominate
+                // similarity, but compounding bumps are visible. Weight is
+                // small (~0.01 per natural-log unit) so similarity remains
+                // primary signal.
+                let salience_boost = (e.salience as f32).max(0.0).ln_1p() * 0.01;
+                // Credibility multiplier: defaults to 0.8 for unknown sources
+                // (matches CredibilityRegistry default). Average across all
+                // listed source agents on the edge.
+                let cred = if e.source_agents.is_empty() {
+                    0.8
+                } else {
+                    let total: f32 = e
+                        .source_agents
+                        .iter()
+                        .map(|s| cred_lookup.get(s.as_str()).copied().unwrap_or(0.8))
+                        .sum();
+                    total / e.source_agents.len() as f32
+                };
+                let score = (similarity + salience_boost) * cred;
                 (e.to_row(&entities), score)
             })
             .collect();
