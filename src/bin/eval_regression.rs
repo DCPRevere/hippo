@@ -5,6 +5,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+fn falkor_container() -> String {
+    std::env::var("HIPPO_FALKORDB_CONTAINER").unwrap_or_else(|_| "hippo-falkordb-1".to_string())
+}
+
 // ---- Stored result types ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,10 +43,11 @@ impl Drop for AgentProcess {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let container = falkor_container();
         let _ = Command::new("docker")
             .args([
                 "exec",
-                "hippo-falkordb-1",
+                &container,
                 "redis-cli",
                 "GRAPH.DELETE",
                 &self.graph_name,
@@ -62,14 +67,9 @@ fn start_agent_process() -> AgentProcess {
     let graph_name = format!("hippo_evalreg_{port}");
 
     // Clear graph before starting
+    let container = falkor_container();
     let _ = Command::new("docker")
-        .args([
-            "exec",
-            "hippo-falkordb-1",
-            "redis-cli",
-            "GRAPH.DELETE",
-            &graph_name,
-        ])
+        .args(["exec", &container, "redis-cli", "GRAPH.DELETE", &graph_name])
         .output();
 
     let oauth = std::env::var("ANTHROPIC_OAUTH_TOKEN")

@@ -1,0 +1,36 @@
+name: Evals (scheduled)
+
+# Eval tests are gated with #[ignore] in the regular CI job because they
+# spawn the hippo binary and (some of them) call a real LLM. They run
+# nightly here, and on demand via workflow_dispatch.
+
+on:
+  schedule:
+    # Every day at 02:30 UTC
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ignored-tests:
+    name: Ignored / eval suite
+    runs-on: ubuntu-latest
+    # Be generous: spawning the binary + LLM calls per test is slow.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build hippo (needed by tests that spawn it)
+        run: cargo build --bin hippo
+      - name: Run ignored tests
+        env:
+          # Use a deterministic mock LLM unless an API key is provided as
+          # a repository secret.
+          ANTHROPIC_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # `cargo test -- --ignored` runs only the #[ignore]'d tests.
+          cargo test --tests -- --ignored --nocapture

@@ -10,6 +10,12 @@ use futures::future::join_all;
 use reqwest::Client;
 use serde_json::Value;
 
+/// Container name for the FalkorDB redis-cli exec, overridable via
+/// `HIPPO_FALKORDB_CONTAINER` for non-default docker setups.
+fn falkor_container() -> String {
+    std::env::var("HIPPO_FALKORDB_CONTAINER").unwrap_or_else(|_| "hippo-falkordb-1".to_string())
+}
+
 /// A running hippo process. Killed on drop.
 pub struct TestAgent {
     child: Child,
@@ -25,10 +31,11 @@ impl Drop for TestAgent {
         let _ = self.child.kill();
         let _ = self.child.wait();
         if self.use_falkordb {
+            let container = falkor_container();
             let _ = Command::new("docker")
                 .args([
                     "exec",
-                    "hippo-falkordb-1",
+                    &container,
                     "redis-cli",
                     "GRAPH.DELETE",
                     &self.graph_name,
@@ -81,15 +88,10 @@ async fn start_agent_inner_opts(allow_admin: bool, force_mock: bool) -> TestAgen
     let use_falkordb = std::env::var("GRAPH_BACKEND").as_deref() == Ok("falkordb");
 
     if use_falkordb {
+        let container = falkor_container();
         // Clear the FalkorDB graph before starting
         let _ = Command::new("docker")
-            .args([
-                "exec",
-                "hippo-falkordb-1",
-                "redis-cli",
-                "GRAPH.DELETE",
-                &graph_name,
-            ])
+            .args(["exec", &container, "redis-cli", "GRAPH.DELETE", &graph_name])
             .output();
     }
 

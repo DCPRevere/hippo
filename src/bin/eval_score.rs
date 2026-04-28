@@ -5,6 +5,10 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde_json::Value;
 
+fn falkor_container() -> String {
+    std::env::var("HIPPO_FALKORDB_CONTAINER").unwrap_or_else(|_| "hippo-falkordb-1".to_string())
+}
+
 struct EvalResult {
     name: &'static str,
     passed: bool,
@@ -24,10 +28,11 @@ impl Drop for TestAgent {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let container = falkor_container();
         let _ = Command::new("docker")
             .args([
                 "exec",
-                "hippo-falkordb-1",
+                &container,
                 "redis-cli",
                 "GRAPH.DELETE",
                 &self.graph_name,
@@ -46,14 +51,9 @@ async fn start_agent() -> TestAgent {
     let base_url = format!("http://localhost:{port}");
     let graph_name = format!("hippo_eval_{port}");
 
+    let container = falkor_container();
     let _ = Command::new("docker")
-        .args([
-            "exec",
-            "hippo-falkordb-1",
-            "redis-cli",
-            "GRAPH.DELETE",
-            &graph_name,
-        ])
+        .args(["exec", &container, "redis-cli", "GRAPH.DELETE", &graph_name])
         .output();
 
     let bin = std::env::current_exe()
