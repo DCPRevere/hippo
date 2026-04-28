@@ -1,446 +1,288 @@
-# Hippo
-
-> Graph-native episodic memory for AI agents
-
-> ⭐ **40 commits, 6 eval modes, 15 API endpoints, working/long-term memory tiers, MCP server**
-
-## What is this?
-
-A production-grade memory layer for AI agents. Unlike vector-only solutions (RAG), this uses a knowledge graph ([FalkorDB](https://www.falkordb.com/)) backed by three retrieval modes: fulltext, vector similarity, and graph traversal. Facts are explicitly versioned, contradictions are detected automatically, and knowledge decays realistically over time.
-
-## Why not just a vector database?
-
-Vector databases retrieve by semantic similarity alone. They lose the structural relationships between entities — you can't traverse from "Alice" to "Alice's doctor" to "the doctor's office" in a vector store. They also can't detect contradictions ("Alice works at Google" vs "Alice works at Meta") because similar embeddings don't imply conflict. Graph structure makes multi-hop reasoning, temporal queries, and contradiction detection possible without re-encoding context into prompts.
-
-## Key features
-
-- Entity extraction and resolution (deduplication via fulltext + vector + LLM)
-- Three-mode retrieval: fulltext + vector + graph walk
-- Automatic contradiction detection (batch-classified, pre-filtered by cosine similarity)
-- Temporal queries: "what did the system know on date X?"
-- Multi-hop traversal with relevance decay per hop (0.6^(hop-1))
-- Confidence decay over time (stale facts lose confidence after 30 days)
-- Contradiction history: supersession chain preserved, not deleted
-- Multi-source confidence compounding (Bayesian: `1 - (1 - old) * (1 - new)`, capped at 0.99)
-- Salience tracking: frequently retrieved facts rank higher
-- Introspective reflection: knowledge gaps, suggested questions, memory stats
-- Background maintenance: link discovery, contradiction scanning, placeholder resolution
-- Per-test graph isolation for parallel test runs
-
-## API Reference
-
-### POST /remember
-
-Ingest a natural language statement. Extracts entities and facts via LLM, resolves entities against existing graph nodes, detects duplicates/contradictions, and writes new edges.
-
-**Request:**
-```json
-{
-  "statement": "Alice works at Google as a software engineer",
-  "source_agent": "user-facing-chat"
-}
-```
-
-`source_agent` is optional (defaults to `"unknown"`). Used for multi-source confidence compounding.
-
-**Response:**
-```json
-{
-  "entities_created": 2,
-  "entities_resolved": 0,
-  "facts_written": 1,
-  "contradictions_invalidated": 0,
-  "trace": {
-    "extraction": {
-      "entities": [
-        { "name": "Alice", "entity_type": "person", "resolved": true, "hint": null }
-      ],
-      "explicit_facts": [
-        {
-          "subject": "Alice",
-          "relation_type": "WORKS_AT",
-          "object": "Google",
-          "fact": "Alice works at Google as a software engineer",
-          "confidence": 0.9
-        }
-      ],
-      "implied_facts": []
-    },
-    "entity_resolutions": [
-      {
-        "extracted_name": "Alice",
-        "extracted_type": "person",
-        "outcome": "exact_match",
-        "resolved_to": "Alice",
-        "candidates_considered": ["Alice"]
-      }
-    ],
-    "fact_processing": [
-      {
-        "fact": "Alice works at Google as a software engineer",
-        "subject": "Alice",
-        "object": "Google",
-        "relation_type": "WORKS_AT",
-        "outcome": "written",
-        "details": null
-      }
-    ]
-  }
-}
-```
-
-### POST /context
-
-Retrieve relevant facts for a query. Combines fulltext search, entity-centric N-hop graph walks, and vector similarity. Results are scored and ranked.
-
-**Request:**
-```json
-{
-  "query": "What do I know about Alice?",
-  "limit": 10,
-  "max_hops": 2
-}
-```
-
-- `limit`: max facts to return (default: 10)
-- `max_hops`: graph traversal depth from matched entities (default: 2, max: 3)
-
-**Response:**
-```json
-{
-  "facts": [
-    {
-      "fact": "Alice works at Google",
-      "subject": "Alice",
-      "relation_type": "WORKS_AT",
-      "object": "Google",
-      "confidence": 0.9,
-      "salience": 3,
-      "valid_at": "2025-01-15T10:00:00Z",
-      "edge_id": 42,
-      "hops": 1,
-      "source_agents": ["user-facing-chat"]
-    }
-  ]
-}
-```
-
-### POST /context/temporal
-
-Query what the system knew at a specific point in time. Only returns facts that were valid at the given timestamp (created before `at`, not yet invalidated at `at`).
-
-**Request:**
-```json
-{
-  "query": "Alice",
-  "at": "2025-06-01T00:00:00Z",
-  "limit": 10
-}
-```
-
-**Response:** Same shape as `/context`.
-
-### GET /timeline/:entity_name
-
-Full chronological history of an entity, including superseded facts.
-
-**Response:**
-```json
-{
-  "entity": "Alice",
-  "events": [
-    {
-      "fact": "Alice works at Google",
-      "relation_type": "WORKS_AT",
-      "valid_at": "2025-01-15T10:00:00Z",
-      "invalid_at": "2025-07-01T10:00:00Z",
-      "superseded": true
-    },
-    {
-      "fact": "Alice works at Meta",
-      "relation_type": "WORKS_AT",
-      "valid_at": "2025-07-01T10:00:00Z",
-      "invalid_at": null,
-      "superseded": false
-    }
-  ]
-}
-```
-
-### POST /reflect
-
-Introspective analysis of what the system knows (and doesn't know). With `about`, analyzes a specific entity. Without it, returns global memory stats.
-
-**Request:**
-```json
-{
-  "about": "Alice",
-  "suggest_questions": true
-}
-```
-
-**Response (entity-scoped):**
-```json
-{
-  "entity": "Alice",
-  "known": [ ... ],
-  "uncertain": [ ... ],
-  "gaps": ["LIVES_IN", "ATTENDED"],
-  "suggested_questions": ["Where does Alice live?", "What school did Alice attend?"],
-  "stats": null
-}
-```
-
-- `known`: facts with decayed confidence >= 0.6
-- `uncertain`: facts with decayed confidence < 0.6
-- `gaps`: relation types that exist in the graph but are missing for this entity
-- `suggested_questions`: LLM-generated questions to fill the gaps
-
-**Response (global, `about` omitted):**
-```json
-{
-  "entity": null,
-  "known": [],
-  "uncertain": [],
-  "gaps": ["Alice (person) — 1 fact(s)", "..."],
-  "suggested_questions": [],
-  "stats": {
-    "total_entities": 12,
-    "total_facts": 25,
-    "oldest_fact": "2025-01-15T10:00:00Z",
-    "newest_fact": "2025-07-01T10:00:00Z",
-    "avg_confidence": 0.87,
-    "entities_by_type": { "person": 5, "organization": 4, "place": 3 }
-  }
-}
-```
-
-### GET /provenance/:edge_id
-
-Returns the supersession chain for a fact edge — what it replaced and what replaced it.
-
-**Response:**
-```json
-{
-  "edge_id": 42,
-  "superseded_by": {
-    "old_edge_id": 42,
-    "new_edge_id": 57,
-    "superseded_at": "2025-07-01T10:00:00Z",
-    "old_fact": "Alice works at Google",
-    "new_fact": "Alice works at Meta"
-  },
-  "supersedes": []
-}
-```
-
-### POST /diagnose
-
-Debug the retrieval pipeline. Returns the same results as `/context` but includes detailed step-by-step traces showing what each stage found and how scores were assigned.
-
-**Request:** Same as `/context`.
-
-**Response:**
-```json
-{
-  "query": "Alice",
-  "steps": [
-    { "step": "fulltext_facts", "description": "...", "results": [...] },
-    { "step": "fulltext_entities", "description": "...", "results": [...] },
-    { "step": "exact_entity_hop", "description": "...", "results": [...] },
-    { "step": "vector_fallback", "description": "...", "results": [...] },
-    { "step": "invalidation_filter", "description": "...", "results": [] },
-    { "step": "scoring", "description": "score = relevance*0.6 + recency*0.25 + salience_norm*0.15", "results": [...] }
-  ],
-  "final_facts": [...]
-}
-```
-
-### POST /maintain
-
-Trigger a maintenance cycle manually (normally runs on a background timer). Performs: confidence/salience decay, link discovery between nearby entities, contradiction scanning, and placeholder entity resolution.
-
-**Response:**
-```json
-{ "status": "maintenance complete" }
-```
-
-### GET /graph
-
-Dump the entire graph. Returns all entities and edges, split into active and invalidated.
-
-**Response:**
-```json
-{
-  "entities": [
-    { "name": "Alice", "entity_type": "person", "resolved": true }
-  ],
-  "active_edges": [
-    {
-      "subject": "Alice", "relation_type": "WORKS_AT", "object": "Meta",
-      "fact": "Alice works at Meta", "salience": 3, "confidence": 0.9,
-      "valid_at": "2025-07-01T10:00:00Z", "invalid_at": null
-    }
-  ],
-  "invalidated_edges": [...]
-}
-```
-
-### GET /health
-
-**Response:**
-```json
-{ "status": "ok", "graph": "hippo" }
-```
-
-## Architecture
+<div align="center">
 
 ```
-Statement
-  → LLM: extract entities + facts
-  → For each entity: fulltext + vector search → LLM resolve (dedup) → upsert
-  → For each fact: embed → cosine prefilter (>0.3) → batch classify → write / skip / invalidate
-  → On contradiction: invalidate old edge, record supersession, write new edge
-  → On duplicate: Bayesian confidence compounding, merge source_agents
-
-Background maintenance (periodic):
-  → Confidence decay (0.995^days after 30 days stale)
-  → Salience decay (decrement by 1 if stale >7 days)
-  → Link discovery between vector-similar unlinked entities
-  → Contradiction scan across same-pair edges
-  → Placeholder entity resolution (unresolved → resolved match)
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓███████▓▒░░▒▓███████▓▒░ ░▒▓██████▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓████████▓▒░▒▓█▓▒░▒▓███████▓▒░░▒▓███████▓▒░░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░       ░▒▓██████▓▒░
 ```
 
-## Retrieval pipeline
+### **The memory layer that dreams.**
+
+*A self-improving memory graph for AI agents — runs on your server, in your browser, or anywhere in between.*
+
+</div>
+
+---
+
+## What it is
+
+Hippo is a memory database for AI agents. It extracts entities and relationships from natural language, stores them in a typed graph, and **continuously processes itself between conversations** — finding new connections, resolving contradictions, learning which sources to trust.
+
+Most memory layers are passive: write once, read forever. Hippo is active. The graph you have on Friday is genuinely smarter than the one you had Monday, without you doing anything.
 
 ```
-Query
-  → embed query
-  → fulltext search on fact text (relevance: 0.95)
-  → fulltext search on entity names:
-      → exact token matches: N-hop walk (relevance: 0.9 × 0.6^(hop-1))
-      → partial matches: N-hop walk (relevance: 0.6 × 0.6^(hop-1))
-  → vector search on edge embeddings (blended: score × 0.3, additive)
-  → filter invalidated edges
-  → score = relevance × 0.5 + confidence × 0.1 + recency × 0.25 + salience × 0.15
-  → increment salience on returned edges
+        write something                         ┌──────────────┐
+              │                                 │   Dreamer    │
+              ▼                                 │  (background)│
+       ┌─────────────┐                          │              │
+       │  /remember  │                          │  • Linker    │
+       └──────┬──────┘                          │  • Inferrer  │
+              │                                 │  • Reconciler│
+              ▼                                 │  • Consolid. │
+       ┌─────────────┐ ◄────── reads ────────── └──────┬───────┘
+       │  the graph  │ ─────── writes ─────────────────┘
+       └──────┬──────┘
+              │
+              ▼
+       ┌─────────────┐
+       │    /ask     │   ranking by salience + credibility,
+       │             │   filtered by supersession
+       └─────────────┘
 ```
 
-## Comparison vs alternatives
+## Why hippo
 
-| Feature | This | MemGPT | Zep | ChromaDB |
-|---------|------|--------|-----|----------|
-| Graph traversal | ✅ | ❌ | ⚠️ | ❌ |
-| Contradiction detection | ✅ | ⚠️ | ✅ | ❌ |
-| Temporal queries | ✅ | ❌ | ❌ | ❌ |
-| Confidence decay | ✅ | ❌ | ❌ | ❌ |
-| Working/long-term tiers | ✅ | ✅ | ❌ | ❌ |
-| Introspection/reflect | ✅ | ❌ | ❌ | ❌ |
-| Provenance chain | ✅ | ❌ | ❌ | ❌ |
-| Multi-source compounding | ✅ | ❌ | ❌ | ❌ |
-| Source credibility | ✅ | ❌ | ❌ | ❌ |
-| MCP server | ✅ | ❌ | ❌ | ❌ |
-| Prometheus metrics | ✅ | ❌ | ❌ | ❌ |
-| SSE streaming ingest | ✅ | ❌ | ❌ | ❌ |
-| Eval regression tracking | ✅ | ❌ | ❌ | ❌ |
-| Fixture record/replay | ✅ | ❌ | ❌ | ❌ |
+**It dreams.** Between conversations, the Dreamer walks the graph and takes append-only actions: discovers links between unconnected entities, infers implied facts from existing structure, writes `supersedes` relationships when sources disagree, consolidates episodic facts into semantic patterns. See [`docs/DREAMS.md`](docs/DREAMS.md).
 
-## Running locally
+**Append-only by design.** The Dreamer never deletes. Contradictions become `supersedes` edges with full provenance; the original fact stays queryable for audit. Users and agents can still explicitly `retract` or `correct` when something is genuinely wrong.
 
-Start dependencies:
+**Sources are weighted.** Hippo tracks each source's accuracy across contradictions and weights future facts accordingly. Trusted CRMs outrank casual chat.
+
+**Salience compounds.** Every retrieval bumps the salience of the edges it surfaces. The facts you actually use rank higher next time.
+
+**Runs anywhere.** Native server, embedded SQLite, Postgres, FalkorDB, or compiled to WebAssembly for in-browser memory that never leaves the device.
+
+## Architecture in one diagram
+
+```
+                  ┌───────────────────────────────────────────┐
+                  │              GraphBackend                 │
+                  │  (trait — implemented by 5 backends)      │
+                  ├───────────────┬───────────┬───────────────┤
+                  │ InMemory      │ SQLite    │ Postgres      │
+                  │ (test, WASM)  │ (default) │ (multi-node)  │
+                  ├───────────────┼───────────┼───────────────┤
+                  │ FalkorDB (Cypher)         │ Qdrant (vec)  │
+                  └───────────────────────────┴───────────────┘
+                              ▲
+                              │
+       ┌──────────────────────┼──────────────────────┐
+       │                      │                      │
+   pipeline::             pipeline::             pipeline::
+   remember               ask                    dreamer
+   (write)                (read)                 (background)
+       │                      │                      │
+       │                      ▼                      ▼
+       │              iterative LLM loop      WorkerPool drives
+       │              over the subgraph       Linker/Inferrer/
+       │                                      Reconciler/Consolid.
+       ▼
+   plan → enrich → execute
+   (LLM extracts ops; graph
+    enriches; ops applied)
+```
+
+## Quick start
+
+### As a server
 
 ```sh
-docker compose up -d falkordb ollama ollama-init
+# 1. Set credentials
+export ANTHROPIC_OAUTH_TOKEN=...      # or ANTHROPIC_API_KEY
+
+# 2. Choose a backend (default: in-memory)
+export GRAPH_BACKEND=sqlite
+export SQLITE_PATH=./hippo.sqlite
+
+# 3. Enable production safety
+export HIPPO_AUTH=true
+export HIPPO_RATE_LIMIT=true
+
+# 4. Run
+cargo run --release --bin hippo
 ```
 
-Wait for the Ollama model pull to finish, then either run with Docker:
+### Using the TypeScript SDK
 
-```sh
-docker compose up hippo
+```ts
+import { HippoClient } from "@dcprevere/hippo-sdk";
+
+const hippo = new HippoClient({
+  baseUrl: "http://localhost:21693",
+  apiKey: process.env.HIPPO_API_KEY,
+});
+
+// Write
+await hippo.observe({ statement: "Alice works at Acme as a lawyer" });
+
+// Read
+const { answer } = await hippo.recall({ question: "Where does Alice work?" });
+
+// Trigger one dream pass and inspect what changed
+const report = await hippo.dream();
+console.log(report); // { facts_visited, links_written, supersessions_written, ... }
+
+// Explicitly correct an error
+await hippo.correct({
+  edge_id: 42,
+  statement: "Alice works at Acme as a doctor",
+  reason: "extraction error — original transcript said doctor",
+});
 ```
 
-Or run directly (requires Rust toolchain):
+### In the browser (WASM)
 
-```sh
-export ANTHROPIC_API_KEY="sk-..."
-export FALKORDB_URL="redis://localhost:6379"
-export OLLAMA_URL="http://localhost:11434"
-cargo run --release
+```ts
+import init, { Hippo } from "@dcprevere/hippo-wasm";
+
+await init();
+const hippo = new Hippo(JSON.stringify({
+  api_key: localStorage.getItem("openai_key"),
+  model: "gpt-5.4",
+}));
+
+await hippo.remember("I prefer cycling to driving");
+const answer = await hippo.ask("How do I get around?");
 ```
 
-Verify:
+## API surface
 
-```sh
-curl http://localhost:21693/health
-```
+### Core verbs
 
-## Running
+| Verb | HTTP | What it does |
+|---|---|---|
+| `observe` / `remember` | `POST /remember` | Extract entities and facts from a natural-language statement; resolve against existing entities; write append-only edges. |
+| `recall` / `ask` | `POST /ask` | Iteratively gather context from the graph, return an LLM answer plus the supporting facts. |
+| `context` | `POST /context` | Raw subgraph for a query, no LLM synthesis. |
+| `dream` | `POST /maintain` | Trigger one dream pass; returns a `DreamReport` with counts. Runs continuously in the background by default. |
+| `retract` | `POST /retract` | Explicit user/agent destructive removal of an edge with audit reason. Distinct from autonomous supersession. |
+| `correct` | `POST /correct` | Convenience: `retract` + `observe` in one call. |
 
-```bash
-# Start the server
-cargo run --
+### Auxiliary
 
-# Run correctness evals (requires LLM API key)
-cargo test eval_ -- --nocapture --test-threads=4
+| Verb | HTTP | What it does |
+|---|---|---|
+| Provenance | `GET /edges/:id/provenance` | Supersession chain for an edge — what it replaced, what replaced it. |
+| Graph dump | `GET /graph` | Full graph (entities + active edges + invalidated edges). |
+| Events | `GET /events` | Server-sent events stream of graph mutations. |
+| Health | `GET /health` | Liveness check. |
+| Metrics | `GET /metrics` | Prometheus exposition. |
 
-# Run scenario integration tests
-cargo test scenario_ -- --nocapture --test-threads=1
+Full schemas: see [`docs/openapi.yaml`](docs/openapi.yaml).
 
-# Run eval score (7 evals with partial scoring)
-cargo run --bin eval-score
+## Backend support
 
-# Run with mock LLM (fast, no API key)
-MOCK_LLM=1 cargo test -- --test-threads=4
+| Backend | Status | Best for | Dreamer support |
+|---|---|---|---|
+| **SQLite** | ✅ Stable | Single-node, embedded, dev | Full (reference impl + parity tests) |
+| **Postgres** | ✅ Stable | Multi-node, managed cloud | Full (additive `CREATE TABLE IF NOT EXISTS` migrations) |
+| **In-memory** | ✅ Stable | Tests, WASM | Full |
+| **FalkorDB** | ⚠️ Experimental | Cypher graph queries | Implemented; parity tests not yet automated |
+| **Qdrant** | ⚠️ Limited | Vector-first deployments | Partial (revisit-window is a no-op) — **not recommended for production Dreamer use** |
 
-# Record LLM fixtures for replay
-EVAL_RECORD=1 cargo test eval_ -- --test-threads=1
+See [`docs/CONFIG.md#backend-readiness-matrix`](docs/CONFIG.md) for details.
 
-# Replay from fixtures (deterministic, free)
-EVAL_REPLAY=1 cargo test eval_ -- --test-threads=4
+## Distinctive features
 
-# Track eval regression
-cargo run --bin eval-regression
+These are the things hippo does that competing memory layers (Mem0, Zep, Supermemory, Letta) don't, or don't do as well:
 
-# Benchmark
-cargo run --bin benchmark
-
-# MCP server (Claude Desktop integration)
-HIPPO_URL=http://localhost:21693 cargo run --bin mcp-server
-```
-
-### Eval suite
-
-The eval suite measures correctness of all major features:
-- eval_contradiction_detection: Old fact invalidated when new fact contradicts
-- eval_temporal_query: Correct time-slice returned by /context/temporal
-- eval_multi_hop_retrieval: 2-hop graph traversal works
-- eval_entity_resolution: Duplicate entity mentions deduplicated
-- eval_reflect_gap_analysis: Knowledge gaps correctly identified
-- eval_timeline_history: Supersession chain visible in /timeline
-- eval_confidence_compounding: Multi-source Bayesian update works
-
-### Scenario tests
-
-Integration scenarios that test real-world memory patterns:
-- `scenario_career_journey` — Multi-phase career with salary contradictions + temporal queries
-- `scenario_medical_knowledge` — Patient record updates with medication contradictions + multi-hop
-- `scenario_multi_agent_knowledge` — 3 agents collaborate, confidence compounds, sources tracked
+- **Continuous background processing.** The Dreamer runs between conversations, not just on writes. It finds links you didn't ask for, infers facts implied by structure, and resolves contradictions with delayed evidence.
+- **Append-only contradiction handling.** When two facts disagree, hippo writes a `supersedes` edge tagged with source credibility. Both originals stay in the graph; retrieval filters by supersession at read time. Full audit trail by construction.
+- **Source credibility that compounds.** Each source's accuracy is tracked across contradictions and fed back into ranking. Sources that have been wrong before get less weight on future facts.
+- **Iterative read path.** `/ask` doesn't retrieve once and synthesise. It asks the LLM what's missing, fetches more, and loops — closer to how thinking actually works.
+- **WASM-native.** The same Rust core that runs the server compiles to `wasm32-unknown-unknown` and runs in the browser. Your memory never has to leave the device.
+- **Retry on transient LLM failures.** Built-in jittered exponential backoff on 429 / 5xx / connection errors.
 
 ## Configuration
 
-| Env var | Default | Description |
-|---|---|---|
-| `PORT` | `21693` | HTTP listen port |
-| `GRAPH_BACKEND` | `falkordb` | Graph backend: `falkordb` or `memory` |
-| `FALKORDB_URL` | `redis://localhost:6379` | FalkorDB connection (ignored when `GRAPH_BACKEND=memory`) |
-| `ANTHROPIC_API_KEY` | (required) | Or use `ANTHROPIC_OAUTH_TOKEN` |
-| `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Model for all LLM calls |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama for embeddings (nomic-embed-text) |
-| `GRAPH_NAME` | `hippo` | Graph name in FalkorDB |
-| `MAINTENANCE_INTERVAL_SECS` | `10` | Background maintenance frequency |
-| `MOCK_LLM` | `0` | Set to `1` to use heuristic mocks instead of real LLM calls |
-| `RUST_LOG` | `hippo=info` | Log level filter |
+Environment variables and `hippo.toml` cover the same surface. See [`docs/CONFIG.md`](docs/CONFIG.md) for the full matrix.
 
-## Eval Regression Tracking
+Quick prod template:
 
-Results are stored in `~/.hippo-evals/` with git SHA. Each run compares against the previous run.
+```toml
+[graph]
+backend = "postgres"
+name = "hippo_prod"
+
+[graph.postgres]
+url = "postgres://hippo:secret@db.internal:5432/hippo"
+
+[auth]
+enabled = true
+
+[rate_limit]
+enabled = true
+requests_per_minute = 60
+
+[pipeline.tuning]
+dreamer_worker_count = 2
+dreamer_max_units = 200
+dreamer_max_tokens = 100000
+```
+
+## Production checklist
+
+- [ ] Backend is SQLite or Postgres (not Qdrant for Dreamer use).
+- [ ] `HIPPO_AUTH=true`; `HIPPO_INSECURE` and `ALLOW_ADMIN` are unset.
+- [ ] `HIPPO_RATE_LIMIT=true` with a sensible `HIPPO_RPM`.
+- [ ] TLS terminated either by hippo (`HIPPO_TLS=true`) or a fronting proxy.
+- [ ] Dreamer cost ceilings set in `hippo.toml`.
+- [ ] LLM credentials set via `*_OAUTH_TOKEN` or `*_API_KEY`.
+- [ ] Container runs as non-root (the bundled Dockerfile already does this).
+
+## Project layout
+
+```
+hippo/
+├── src/
+│   ├── backends/           # GraphBackend impls (in_memory, sqlite, postgres, qdrant, falkor)
+│   ├── pipeline/
+│   │   ├── ask.rs          # iterative read path
+│   │   ├── remember.rs     # plan → enrich → execute
+│   │   ├── maintain.rs     # housekeeping + drives the Dreamer
+│   │   └── dreamer/        # Dreamer trait, WorkerPool, Linker/Inferrer/Reconciler/Consolidator
+│   ├── llm/                # LlmClient + RetryingLlm decorator
+│   ├── http/               # axum router + handlers
+│   └── ...
+├── hippo-api/              # shared request/response types (used by SDKs and server)
+├── hippo-wasm/             # wasm-bindgen wrapper for in-browser use
+├── sdks/typescript/        # @dcprevere/hippo-sdk
+├── docs/
+│   ├── DREAMS.md           # the Dreamer architecture
+│   └── CONFIG.md           # full config reference + backend matrix
+└── tests/                  # 267 unit + contract + idempotency tests
+```
+
+## Building & testing
+
+```sh
+# Native build + unit tests
+cargo build --release
+cargo test --tests              # 267 tests, ~3s, no network needed
+
+# WASM build
+cargo check --target wasm32-unknown-unknown --manifest-path hippo-wasm/Cargo.toml
+
+# Lints (CI runs these with -D warnings)
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+
+# Integration / eval tests (require LLM credentials, gated with #[ignore])
+cargo test --tests -- --ignored
+```
+
+CI runs unit tests + clippy + fmt on every PR; the eval suite runs nightly via [`.github/workflows/eval.yml`](.github/workflows/eval.yml).
+
+## Documentation
+
+- [`docs/DREAMS.md`](docs/DREAMS.md) — the Dreamer architecture, design decisions, and shortlist of must-have features.
+- [`docs/CONFIG.md`](docs/CONFIG.md) — full env-var matrix, backend readiness, production checklist.
+- [`docs/openapi.yaml`](docs/openapi.yaml) — HTTP API spec.
+
+## License
+
+MIT.
