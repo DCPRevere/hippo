@@ -6,6 +6,14 @@ members = [".", "hippo-api", "hippo-wasm"]
 default-members = [".", "hippo-api"]
 resolver = "2"
 
+# Workspace-level profiles. Per-package overrides aren't allowed inside a
+# workspace member's Cargo.toml, so the wasm-specific size/LTO settings
+# live here and target only hippo-wasm. The default release profile for
+# the main binary stays cargo-default to keep build times sane.
+
+[profile.release.package.hippo-wasm]
+opt-level = "z"
+
 [package]
 name = "hippo"
 version = "0.1.0"

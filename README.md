@@ -22,7 +22,7 @@
 
 Hippo is a memory database for AI agents. It extracts entities and relationships from natural language, stores them in a typed graph, and **continuously processes itself between conversations** — finding new connections, resolving contradictions, learning which sources to trust.
 
-Most memory layers are passive: write once, read forever. Hippo is active. The graph you have on Friday is genuinely smarter than the one you had Monday, without you doing anything.
+Most memory layers are passive: write once, read forever. Hippo is active. In the morning, the graph is genuinely better than you left it the night before — without you doing anything.
 
 ```
         write something                         ┌──────────────┐
@@ -196,6 +196,28 @@ These are the things hippo does that competing memory layers (Mem0, Zep, Superme
 - **Iterative read path.** `/ask` doesn't retrieve once and synthesise. It asks the LLM what's missing, fetches more, and loops — closer to how thinking actually works.
 - **WASM-native.** The same Rust core that runs the server compiles to `wasm32-unknown-unknown` and runs in the browser. Your memory never has to leave the device.
 - **Retry on transient LLM failures.** Built-in jittered exponential backoff on 429 / 5xx / connection errors.
+
+## Comparison
+
+|                                       | **Hippo**       | Mem0 v3       | Zep / Graphiti  | Supermemory      | Letta           |
+|---------------------------------------|-----------------|---------------|-----------------|------------------|-----------------|
+| **Data model**                        | Typed graph + supersession edges | Vector + entity sidecar | Temporal knowledge graph | Atomic memories with `Updates` edges | Stateful agent OS |
+| **Contradiction handling**            | Background, append-only `supersedes` | None (ADD-only) | Write-time, sets `invalid_at` | Write-time, flips `isLatest` | App-defined |
+| **Background graph processing**       | ✅ Linker / Inferrer / Reconciler / Consolidator | ❌ | ⚠️ community detection only | ⚠️ claimed `Derives`, unverifiable | ❌ |
+| **Inference of new edges**            | ✅ from existing structure | ❌ | ❌ | ⚠️ documented but opaque | ❌ |
+| **Source-credibility weighting**      | ✅ compounds across contradictions | ❌ | ❌ | ❌ | ❌ |
+| **Salience-on-use ranking**           | ✅ retrievals bump salience | ❌ | ❌ | ❌ | ❌ |
+| **Append-only by default**            | ✅ user `retract` is the only escape valve | n/a (no contradictions) | ❌ mutates `invalid_at` | ❌ flips `isLatest` flag | ❌ |
+| **Embedded / in-process**             | ✅ Rust crate, no server needed | ❌ Python service | ❌ JVM/Go service | ❌ hosted only | ❌ Python service |
+| **Runs in the browser (WASM)**        | ✅ first-class | ❌ | ❌ | ❌ | ❌ |
+| **Retry on 429/5xx**                  | ✅ jittered exponential backoff | ❌ | ❌ | ❌ | ❌ |
+| **Iterative read with LLM-requested context** | ✅ | ❌ retrieve-then-answer | ❌ | ❌ | ⚠️ via agent loop |
+| **Open source**                       | ✅ MIT | ✅ Apache 2 | ✅ (Graphiti) | ❌ closed core | ✅ Apache 2 |
+
+Two notes on this table:
+
+- "Mem0 v3" reflects the April 2026 release, which deliberately removed the v2 graph backend in favour of a pure vector + entity-sidecar model. Earlier versions had different shape.
+- Supermemory's `Derives` (claimed background inference) and `Automatic Forgetting` are documented but not in any open source we could verify — the ⚠️ reflects that uncertainty, not malice.
 
 ## Configuration
 

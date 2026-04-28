@@ -60,7 +60,7 @@ pub struct PipelineTuning {
     /// are pruned.
     pub link_pair_cache_max: usize,
 
-    /// Number of pair cache entries to drop when [`link_pair_cache_max`] is hit.
+    /// Number of pair cache entries to drop when `link_pair_cache_max` is hit.
     pub link_pair_cache_evict: usize,
 
     /// Consolidator: minimum number of episodic facts about an entity

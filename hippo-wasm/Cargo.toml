@@ -21,6 +21,6 @@ async-trait = "0.1"
 tracing = "0.1"
 getrandom = { version = "0.2", features = ["js"] }
 
-[profile.release]
-lto = true
-opt-level = 'z'
+# Per-package profile customisation lives in the workspace root Cargo.toml
+# under [profile.release.package.hippo-wasm]. Workspace members cannot
+# define [profile.*] tables themselves.

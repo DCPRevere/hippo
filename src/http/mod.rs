@@ -1,8 +1,8 @@
 //! Axum HTTP layer.
 //!
 //! This module exposes [`router`] which builds the full `Router` over an
-//! `AppState`. The handlers themselves live in [`handlers`], grouped by
-//! surface area (core / observability / graphs / admin).
+//! `AppState`. The handlers themselves live in the private `handlers`
+//! module, grouped by surface area (core / observability / graphs / admin).
 
 use std::sync::Arc;
 
