@@ -20,7 +20,6 @@
 <p align="center">
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-edition%202021-orange?logo=rust" alt="Rust edition 2021" /></a>
   <a href="https://github.com/dcprevere/hippo"><img src="https://img.shields.io/badge/hippo-v0.1.0-blue" alt="hippo v0.1.0" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licence" /></a>
 </p>
 
 ---
@@ -198,30 +197,24 @@ See [`docs/CONFIG.md#backend-readiness-matrix`](docs/CONFIG.md) for details.
 These are the things hippo does that competing memory layers (Mem0, Zep, Supermemory, Letta) don't, or don't do as well:
 
 - **Continuous background processing.** The Dreamer runs between conversations, not just on writes. It finds links you didn't ask for, infers facts implied by structure, and resolves contradictions with delayed evidence.
-- **Append-only contradiction handling.** When two facts disagree, hippo writes a `supersedes` edge tagged with source credibility. Both originals stay in the graph; retrieval filters by supersession at read time. Full audit trail by construction.
-- **Source credibility that compounds.** Each source's accuracy is tracked across contradictions and fed back into ranking. Sources that have been wrong before get less weight on future facts.
+- **Append-only contradiction handling.** When two facts disagree, hippo writes a `supersedes` edge. Both originals stay in the graph; retrieval filters by supersession at read time. Full audit trail by construction.
+- **Salience-on-use ranking.** Every retrieval bumps the salience of the edges it surfaces. The facts you actually use rank higher next time — without you doing anything.
 - **Iterative read path.** `/ask` doesn't retrieve once and synthesise. It asks the LLM what's missing, fetches more, and loops — closer to how thinking actually works.
 - **WASM-native.** The same Rust core that runs the server compiles to `wasm32-unknown-unknown` and runs in the browser. Your memory never has to leave the device.
-- **Retry on transient LLM failures.** Built-in jittered exponential backoff on 429 / 5xx / connection errors.
 
 ## Comparison
 
 |                                       | **Hippo**       | Mem0 v3       | Zep / Graphiti  | Supermemory      | Letta           |
 |---------------------------------------|-----------------|---------------|-----------------|------------------|-----------------|
-| **Data model**                        | Typed graph + supersession edges | Vector + entity sidecar | Temporal knowledge graph | Atomic memories with `Updates` edges | Stateful agent OS |
 | **Contradiction handling**            | Background, append-only `supersedes` | None (ADD-only) | Write-time, sets `invalid_at` | Write-time, flips `isLatest` | App-defined |
-| **Background graph processing**       | ✅ Linker / Inferrer / Reconciler / Consolidator | ❌ | ⚠️ community detection only | ⚠️ claimed `Derives`, unverifiable | ❌ |
+| **Background graph processing**       | ✅ Linker / Inferrer / Reconciler / Consolidator | ❌ | ⚠️ ingest-time community detection only | ⚠️ claimed `Derives`, unverifiable | ❌ |
 | **Inference of new edges**            | ✅ from existing structure | ❌ | ❌ | ⚠️ documented but opaque | ❌ |
-| **Source-credibility weighting**      | ✅ compounds across contradictions | ❌ | ❌ | ❌ | ❌ |
 | **Salience-on-use ranking**           | ✅ retrievals bump salience | ❌ | ❌ | ❌ | ❌ |
-| **Append-only by default**            | ✅ user `retract` is the only escape valve | n/a (no contradictions) | ❌ mutates `invalid_at` | ❌ flips `isLatest` flag | ❌ |
-| **Embedded / in-process**             | ✅ Rust crate, no server needed | ❌ Python service | ❌ JVM/Go service | ❌ hosted only | ❌ Python service |
+| **Append-only by default**            | ✅ `retract` is the only escape valve | n/a (no contradictions) | ❌ mutates `invalid_at` | ❌ flips `isLatest` flag | ❌ |
 | **Runs in the browser (WASM)**        | ✅ first-class | ❌ | ❌ | ❌ | ❌ |
-| **Retry on 429/5xx**                  | ✅ jittered exponential backoff | ❌ | ❌ | ❌ | ❌ |
 | **Iterative read with LLM-requested context** | ✅ | ❌ retrieve-then-answer | ❌ | ❌ | ⚠️ via agent loop |
-| **Open source**                       | ✅ MIT | ✅ Apache 2 | ✅ (Graphiti) | ❌ closed core | ✅ Apache 2 |
 
-Two notes on this table:
+Notes on this table:
 
 - "Mem0 v3" reflects the April 2026 release, which deliberately removed the v2 graph backend in favour of a pure vector + entity-sidecar model. Earlier versions had different shape.
 - Supermemory's `Derives` (claimed background inference) and `Automatic Forgetting` are documented but not in any open source we could verify — the ⚠️ reflects that uncertainty, not malice.
@@ -312,6 +305,11 @@ CI runs unit tests + clippy + fmt on every PR; the eval suite runs nightly via [
 - [`docs/CONFIG.md`](docs/CONFIG.md) — full env-var matrix, backend readiness, production checklist.
 - [`docs/openapi.yaml`](docs/openapi.yaml) — HTTP API spec.
 
-## License
+## Licence
 
-MIT.
+Hippo is **not open source**. The repository is published source-available so
+the implementation can be read, audited, and reasoned about, but there is no
+permissive licence — you may not redistribute, modify, or use the code in
+your own projects without an explicit written agreement.
+
+If you'd like to use hippo in a product, get in touch.
