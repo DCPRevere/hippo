@@ -15,6 +15,7 @@ use helpers::{
 // ---- Retrieval Precision ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test eval_test -- --ignored`"]
 async fn test_eval_retrieval_precision() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -82,6 +83,7 @@ async fn test_eval_retrieval_precision() {
 // ---- Contradiction Handling ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test eval_test -- --ignored`"]
 async fn test_eval_contradiction() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -187,6 +189,7 @@ async fn test_eval_contradiction() {
 // ---- Entity Resolution ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test eval_test -- --ignored`"]
 async fn test_eval_entity_resolution() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -315,6 +318,7 @@ async fn test_eval_entity_resolution() {
 // ---- Graph Quality ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test eval_test -- --ignored`"]
 async fn test_eval_graph_quality() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());

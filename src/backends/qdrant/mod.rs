@@ -1386,9 +1386,9 @@ impl GraphBackend for QdrantGraph {
             self.client
                 .set_payload(
                     SetPayloadPointsBuilder::new(&collection, payload)
-                        .points_selector(PointsIdsList::from(vec![PointId::from(
-                            edge_point_id(edge_id),
-                        )]))
+                        .points_selector(PointsIdsList::from(vec![PointId::from(edge_point_id(
+                            edge_id,
+                        ))]))
                         .wait(true),
                 )
                 .await?;

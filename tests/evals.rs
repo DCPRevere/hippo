@@ -14,6 +14,7 @@ use std::time::Duration;
 // ---- Eval 1: Contradiction Detection ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_contradiction_detection() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -70,6 +71,7 @@ async fn eval_contradiction_detection() {
 // ---- Eval 2: Temporal Query ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_temporal_query() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -129,6 +131,7 @@ async fn eval_temporal_query() {
 // ---- Eval 3: Multi-hop Retrieval ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_multi_hop_retrieval() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -191,6 +194,7 @@ async fn eval_multi_hop_retrieval() {
 // ---- Eval 4: Entity Resolution ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_entity_resolution() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -262,6 +266,7 @@ async fn eval_entity_resolution() {
 // ---- Eval 5: Reflect Gap Analysis ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_reflect_gap_analysis() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -331,6 +336,7 @@ async fn eval_reflect_gap_analysis() {
 // ---- Eval 6: Timeline History ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_timeline_history() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -405,6 +411,7 @@ async fn eval_timeline_history() {
 // ---- Eval 7: Confidence Compounding ----
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test evals -- --ignored`"]
 async fn eval_confidence_compounding() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());

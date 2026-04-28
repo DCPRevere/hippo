@@ -1465,11 +1465,7 @@ impl GraphClient {
     /// Append-only supersession: stored as a Supersession node connecting
     /// `old_edge_id` and `new_edge_id`. Idempotent: re-issuing the same pair
     /// is a no-op via MERGE.
-    pub async fn dreamer_supersede_edge(
-        &self,
-        old_edge_id: i64,
-        new_edge_id: i64,
-    ) -> Result<()> {
+    pub async fn dreamer_supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
         let now = sanitise(&Utc::now().to_rfc3339());
         let q = format!(
             "MERGE (s:Supersession {{old_edge_id: {old_edge_id}, new_edge_id: {new_edge_id}}}) \
@@ -1484,11 +1480,7 @@ impl GraphClient {
         Ok(())
     }
 
-    pub async fn dreamer_retract_edge(
-        &self,
-        edge_id: i64,
-        reason: Option<&str>,
-    ) -> Result<()> {
+    pub async fn dreamer_retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
         let now = sanitise(&Utc::now().to_rfc3339());
         let q = if let Some(r) = reason {
             let r = sanitise(r);
@@ -1511,16 +1503,10 @@ impl GraphClient {
         Ok(())
     }
 
-    pub async fn dreamer_mark_visited(
-        &self,
-        entity_id: &str,
-        at: DateTime<Utc>,
-    ) -> Result<()> {
+    pub async fn dreamer_mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
         let entity_id = sanitise(entity_id);
         let at = sanitise(&at.to_rfc3339());
-        let q = format!(
-            "MATCH (n:Entity {{id: '{entity_id}'}}) SET n.last_visited_at = '{at}'"
-        );
+        let q = format!("MATCH (n:Entity {{id: '{entity_id}'}}) SET n.last_visited_at = '{at}'");
         let mut graph = self.conn().lock().await;
         graph
             .query(&q)
@@ -1530,10 +1516,7 @@ impl GraphClient {
         Ok(())
     }
 
-    pub async fn dreamer_last_visited(
-        &self,
-        entity_id: &str,
-    ) -> Result<Option<DateTime<Utc>>> {
+    pub async fn dreamer_last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
         let entity_id = sanitise(entity_id);
         let q = format!(
             "MATCH (n:Entity {{id: '{entity_id}'}}) \

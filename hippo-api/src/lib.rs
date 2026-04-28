@@ -139,16 +139,11 @@ impl LlmUsage {
 
 // -- Memory tier --------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum MemoryTier {
+    #[default]
     Working,
     LongTerm,
-}
-
-impl Default for MemoryTier {
-    fn default() -> Self {
-        MemoryTier::Working
-    }
 }
 
 impl std::fmt::Display for MemoryTier {

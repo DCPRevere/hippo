@@ -14,6 +14,7 @@ use std::time::Duration;
 // ---- Scenario 1: The Career Journey ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test scenarios -- --ignored`"]
 async fn scenario_career_journey() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -142,6 +143,7 @@ async fn scenario_career_journey() {
 // ---- Scenario 2: The Doctor-Patient Relationship ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test scenarios -- --ignored`"]
 async fn scenario_medical_knowledge() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());
@@ -246,6 +248,7 @@ async fn scenario_medical_knowledge() {
 // ---- Scenario 3: Multi-Agent Knowledge Building ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test scenarios -- --ignored`"]
 async fn scenario_multi_agent_knowledge() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());

@@ -5,6 +5,7 @@ use std::time::Duration;
 use helpers::{fact_strings, load_base_facts, query_facts, remember, start_agent};
 
 #[tokio::test]
+#[ignore = "requires real LLM and network; run with `cargo test --test integration_test -- --ignored`"]
 async fn test_recall_and_contradiction() {
     let agent = start_agent().await;
     let (client, base) = (&agent.client, agent.base_url.as_str());

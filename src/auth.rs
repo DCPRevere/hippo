@@ -900,7 +900,7 @@ mod tests {
 
     #[test]
     fn find_match_constant_time_visits_every_entry_when_first_matches() {
-        let entries = vec!["a", "b", "c", "d"];
+        let entries = ["a", "b", "c", "d"];
         let calls = std::cell::Cell::new(0);
         let m = find_match_constant_time(entries.iter(), |e| {
             calls.set(calls.get() + 1);
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn find_match_constant_time_visits_every_entry_when_last_matches() {
-        let entries = vec!["a", "b", "c", "d"];
+        let entries = ["a", "b", "c", "d"];
         let calls = std::cell::Cell::new(0);
         let m = find_match_constant_time(entries.iter(), |e| {
             calls.set(calls.get() + 1);
@@ -929,7 +929,7 @@ mod tests {
 
     #[test]
     fn find_match_constant_time_returns_none_when_nothing_matches() {
-        let entries = vec!["a", "b", "c"];
+        let entries = ["a", "b", "c"];
         let calls = std::cell::Cell::new(0);
         let m = find_match_constant_time(entries.iter(), |_| {
             calls.set(calls.get() + 1);
@@ -950,7 +950,7 @@ mod tests {
 
     #[test]
     fn find_match_constant_time_returns_first_when_multiple_match() {
-        let entries = vec!["a", "b", "c"];
+        let entries = ["a", "b", "c"];
         let m = find_match_constant_time(entries.iter(), |e| *e == "b" || *e == "c");
         assert_eq!(m, Some(&"b"));
     }

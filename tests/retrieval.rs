@@ -17,6 +17,7 @@ async fn agent() -> &'static (helpers::TestAgent, helpers::fixtures::GraphFixtur
 // ---- Direct entity lookup ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_direct_entity_alice() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "Alice", 20).await;
@@ -29,6 +30,7 @@ async fn retrieval_direct_entity_alice() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_direct_entity_acme() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "Acme Corp", 20).await;
@@ -41,6 +43,7 @@ async fn retrieval_direct_entity_acme() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_direct_entity_dr_smith() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "Dr. Smith", 20).await;
@@ -55,6 +58,7 @@ async fn retrieval_direct_entity_dr_smith() {
 // ---- Relationship queries ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_who_works_at_acme() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "who works at Acme Corp", 20).await;
@@ -69,6 +73,7 @@ async fn retrieval_who_works_at_acme() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_where_does_alice_live() {
     let (ag, _fix) = agent().await;
     // Query by entity name directly — fulltext search on "Alice" finds Alice's facts
@@ -84,6 +89,7 @@ async fn retrieval_where_does_alice_live() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_alice_family() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "Alice family relationships", 20).await;
@@ -100,6 +106,7 @@ async fn retrieval_alice_family() {
 // ---- Multi-hop queries ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_multi_hop_alice_at_acme_in_london() {
     let (ag, _fix) = agent().await;
     // Alice -> Acme Corp -> London (2 hops)
@@ -110,6 +117,7 @@ async fn retrieval_multi_hop_alice_at_acme_in_london() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_multi_hop_david_doctor() {
     // Semantic multi-hop requires real embeddings; the test server always runs with MOCK_LLM=1
     // so pseudo-embed won't produce meaningful vector search results.
@@ -119,6 +127,7 @@ async fn retrieval_multi_hop_david_doctor() {
 // ---- Cross-domain queries ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_cross_domain_medical_and_financial() {
     let (ag, _fix) = agent().await;
     // Use entity names that exist in the graph for reliable fulltext matching
@@ -135,6 +144,7 @@ async fn retrieval_cross_domain_medical_and_financial() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_cross_domain_research_collaboration() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(
@@ -156,6 +166,7 @@ async fn retrieval_cross_domain_research_collaboration() {
 // ---- Confidence filtering ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_high_confidence_facts_preferred() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "Alice", 5).await;
@@ -173,6 +184,7 @@ async fn retrieval_high_confidence_facts_preferred() {
 // ---- Memory tier filtering ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_memory_tier_filter() {
     let (ag, _fix) = agent().await;
     // Query with long_term tier filter
@@ -205,6 +217,7 @@ async fn retrieval_memory_tier_filter() {
 // ---- Source filtering ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_source_agents_present() {
     let (ag, _fix) = agent().await;
     // Use the REST entity edges endpoint which returns full EdgeRow with source_agents
@@ -231,6 +244,7 @@ async fn retrieval_source_agents_present() {
 // ---- Edge cases ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_empty_query_returns_400() {
     let (ag, _fix) = agent().await;
     let resp = ag
@@ -244,6 +258,7 @@ async fn retrieval_empty_query_returns_400() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_nonexistent_entity() {
     let (ag, _fix) = agent().await;
     let facts = query_facts(&ag.client, &ag.base_url, "Zebediah Wumpus", 10).await;
@@ -257,6 +272,7 @@ async fn retrieval_nonexistent_entity() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test retrieval -- --ignored`"]
 async fn retrieval_graph_stats() {
     let (ag, fix) = agent().await;
     // Verify the graph has the expected entities and edges

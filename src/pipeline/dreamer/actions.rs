@@ -58,8 +58,10 @@ impl Dreamer for Linker {
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
-        let mut report = DreamReport::default();
-        report.facts_visited = 1;
+        let mut report = DreamReport {
+            facts_visited: 1,
+            ..DreamReport::default()
+        };
 
         let entity = match graph.get_entity_by_id(&unit.entity_id).await? {
             Some(e) => e,
@@ -171,8 +173,10 @@ impl Dreamer for Reconciler {
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
-        let mut report = DreamReport::default();
-        report.facts_visited = 1;
+        let mut report = DreamReport {
+            facts_visited: 1,
+            ..DreamReport::default()
+        };
 
         let edges = graph.find_all_active_edges_from(&unit.entity_id).await?;
 
@@ -282,8 +286,10 @@ impl Dreamer for Inferrer {
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
-        let mut report = DreamReport::default();
-        report.facts_visited = 1;
+        let mut report = DreamReport {
+            facts_visited: 1,
+            ..DreamReport::default()
+        };
 
         let entity = match graph.get_entity_by_id(&unit.entity_id).await? {
             Some(e) => e,
@@ -411,8 +417,10 @@ impl Dreamer for Consolidator {
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
-        let mut report = DreamReport::default();
-        report.facts_visited = 1;
+        let mut report = DreamReport {
+            facts_visited: 1,
+            ..DreamReport::default()
+        };
 
         let entity = match graph.get_entity_by_id(&unit.entity_id).await? {
             Some(e) => e,

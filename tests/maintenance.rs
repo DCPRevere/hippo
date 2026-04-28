@@ -7,6 +7,7 @@ use uuid::Uuid;
 use helpers::{seed_raw, start_agent_mock_admin};
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test maintenance -- --ignored`"]
 async fn maintenance_decay_stale_edges() {
     let agent = start_agent_mock_admin().await;
 
@@ -71,6 +72,7 @@ async fn maintenance_decay_stale_edges() {
 }
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test maintenance -- --ignored`"]
 async fn maintenance_promote_working_to_long_term() {
     let agent = start_agent_mock_admin().await;
 
@@ -146,6 +148,7 @@ async fn maintenance_promote_working_to_long_term() {
 // maintain_no_ttl_means_no_expiry).
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test maintenance -- --ignored`"]
 async fn maintenance_consolidate_link_discovery() {
     let agent = start_agent_mock_admin().await;
 

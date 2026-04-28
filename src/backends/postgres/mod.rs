@@ -1040,20 +1040,18 @@ impl GraphBackend for PostgresGraph {
         if existing > 0 {
             return Ok(());
         }
-        let old_fact: Option<String> = sqlx::query_scalar(
-            "SELECT fact FROM edges WHERE graph_name = $1 AND edge_id = $2",
-        )
-        .bind(&self.graph_name)
-        .bind(old_edge_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        let new_fact: Option<String> = sqlx::query_scalar(
-            "SELECT fact FROM edges WHERE graph_name = $1 AND edge_id = $2",
-        )
-        .bind(&self.graph_name)
-        .bind(new_edge_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let old_fact: Option<String> =
+            sqlx::query_scalar("SELECT fact FROM edges WHERE graph_name = $1 AND edge_id = $2")
+                .bind(&self.graph_name)
+                .bind(old_edge_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        let new_fact: Option<String> =
+            sqlx::query_scalar("SELECT fact FROM edges WHERE graph_name = $1 AND edge_id = $2")
+                .bind(&self.graph_name)
+                .bind(new_edge_id)
+                .fetch_optional(&self.pool)
+                .await?;
         sqlx::query(
             "INSERT INTO supersessions
              (graph_name, old_edge_id, new_edge_id, superseded_at, old_fact, new_fact)

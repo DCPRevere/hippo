@@ -1,0 +1,45 @@
+# Build artefacts (rebuilt in image)
+target/
+**/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Local SQLite databases — must not leak into images
+*.sqlite
+*.sqlite-journal
+*.db
+data/
+
+# Environment, IDE, VCS
+.env
+.env.*
+.vscode/
+.idea/
+.git/
+.github/
+.gitignore
+
+# Docs and dev assets
+docs/
+*.md
+README*
+LICENSE*
+
+# Tests and fixtures
+tests/
+fixtures/
+**/__pycache__/
+**/.pytest_cache/
+
+# Node / TS SDK build output (not needed in the rust image)
+sdks/typescript/node_modules/
+sdks/typescript/dist/
+sdks/typescript/build/
+
+# WASM build (separate Dockerfile if needed)
+hippo-wasm/pkg/
+
+# Docker meta
+Dockerfile
+.dockerignore
+docker-compose*.yml

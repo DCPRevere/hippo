@@ -12,6 +12,7 @@ fn has_llm_key() -> bool {
 // ---- Test 1: New entity creation ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test memory_creation -- --ignored`"]
 async fn memory_creation_new_entity() {
     let agent = start_agent_mock_admin().await;
 
@@ -40,6 +41,7 @@ async fn memory_creation_new_entity() {
 // ---- Test 2: Contradiction handling ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test memory_creation -- --ignored`"]
 async fn memory_creation_contradiction() {
     let agent = start_agent_mock_admin().await;
 
@@ -96,6 +98,7 @@ async fn memory_creation_contradiction() {
 // ---- Test 3: Confidence compounding ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test memory_creation -- --ignored`"]
 async fn memory_creation_confidence_compounding() {
     let agent = start_agent_mock_admin().await;
 
@@ -146,7 +149,8 @@ async fn memory_creation_confidence_compounding() {
 // ---- Test 4: Entity resolution (requires real LLM) ----
 
 #[tokio::test]
-#[ignore] // Requires real LLM key — run with: cargo test --test memory_creation -- --ignored
+#[ignore = "spawns the hippo binary; run with `cargo test --test memory_creation -- --ignored`"]
+// Requires real LLM key — run with: cargo test --test memory_creation -- --ignored
 async fn memory_creation_entity_resolution() {
     if !has_llm_key() {
         eprintln!("Skipping: no LLM key");
@@ -194,6 +198,7 @@ async fn memory_creation_entity_resolution() {
 // ---- Test 5: Working memory tier ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test memory_creation -- --ignored`"]
 async fn memory_creation_working_tier() {
     let agent = start_agent_mock_admin().await;
 
@@ -220,6 +225,7 @@ async fn memory_creation_working_tier() {
 // ---- Test 6: Source tracking ----
 
 #[tokio::test]
+#[ignore = "spawns the hippo binary; run with `cargo test --test memory_creation -- --ignored`"]
 async fn memory_creation_source_tracking() {
     let agent = start_agent_mock_admin().await;
 
