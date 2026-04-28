@@ -159,6 +159,37 @@ impl Validate for BatchRememberRequest {
     }
 }
 
+impl Validate for crate::models::RetractRequest {
+    fn validate(&self) -> Result<(), String> {
+        if self.edge_id <= 0 {
+            return Err("edge_id must be positive".into());
+        }
+        if let Some(r) = &self.reason {
+            if r.len() > 1024 {
+                return Err("reason must be at most 1024 characters".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Validate for crate::models::CorrectRequest {
+    fn validate(&self) -> Result<(), String> {
+        if self.edge_id <= 0 {
+            return Err("edge_id must be positive".into());
+        }
+        if self.statement.trim().is_empty() {
+            return Err("statement must not be empty".into());
+        }
+        if let Some(r) = &self.reason {
+            if r.len() > 1024 {
+                return Err("reason must be at most 1024 characters".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 // -- Router -------------------------------------------------------------------
 
 #[derive(Debug, serde::Deserialize)]
@@ -184,6 +215,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/entities/{id}/edges", get(core::entity_edges_handler))
         .route("/edges/{id}", get(core::edge_handler))
         .route("/edges/{id}/provenance", get(core::edge_provenance_handler))
+        // User/agent destructive operations (distinct from Dreamer activity)
+        .route("/retract", post(core::retract_handler))
+        .route("/correct", post(core::correct_handler))
         // Operations
         .route("/maintain", post(core::maintain_handler))
         .route("/graph", get(core::graph_handler))

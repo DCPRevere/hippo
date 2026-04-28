@@ -5,9 +5,10 @@ use std::collections::HashMap;
 // Re-export shared API types so existing `use crate::models::X` continues to work.
 pub use hippo_api::{
     ApiKeyInfo, AskRequest, AskResponse, BatchRememberRequest, BatchRememberResponse,
-    BatchRememberResult, ContextFact, ContextRequest, ContextResponse, ErrorResponse, GraphOp,
-    HealthResponse, LlmUsage, MemoryTier, OpExecutionTrace, OperationsResult, PipelineTuning,
-    RememberRequest, RememberResponse, RememberTrace, ScoringParams, UserInfo,
+    BatchRememberResult, ContextFact, ContextRequest, ContextResponse, CorrectRequest,
+    CorrectResponse, ErrorResponse, GraphOp, HealthResponse, LlmUsage, MemoryTier,
+    OpExecutionTrace, OperationsResult, PipelineTuning, RememberRequest, RememberResponse,
+    RememberTrace, RetractRequest, RetractResponse, ScoringParams, UserInfo,
 };
 
 pub const EMBEDDING_DIM: usize = 768;

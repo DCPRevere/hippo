@@ -267,6 +267,113 @@ pub(crate) async fn edge_provenance_handler(
     json_ok(resp)
 }
 
+// -- User/agent destructive operations ---------------------------------------
+//
+// These are the explicit, deliberate destructive ops described in
+// docs/DREAMS.md — distinct from autonomous Dreamer activity. The Dreamer
+// is append-only; users and agents can retract or correct.
+
+pub(crate) async fn retract_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    ValidJson(req): ValidJson<crate::models::RetractRequest>,
+) -> Result<JsonOk, AppError> {
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
+
+    // Confirm the edge exists before retracting.
+    let exists = graph
+        .dump_all_edges()
+        .await?
+        .iter()
+        .any(|e| e.edge_id == req.edge_id);
+    if !exists {
+        return Err(AppError::not_found(format!(
+            "edge {} not found",
+            req.edge_id
+        )));
+    }
+
+    state.emit_audit(
+        &user.user_id,
+        "retract",
+        format!(
+            "edge_id={} reason={}",
+            req.edge_id,
+            req.reason.as_deref().unwrap_or("(none)")
+        ),
+    );
+
+    graph
+        .retract_edge(req.edge_id, req.reason.as_deref())
+        .await
+        .map_err(internal("retract edge"))?;
+
+    json_ok(crate::models::RetractResponse {
+        edge_id: req.edge_id,
+        reason: req.reason,
+    })
+}
+
+pub(crate) async fn correct_handler(
+    State(state): State<Arc<AppState>>,
+    Auth(user): Auth,
+    ValidJson(req): ValidJson<crate::models::CorrectRequest>,
+) -> Result<JsonOk, AppError> {
+    let graph = state
+        .resolve_graph_for_user(req.graph.as_deref(), &user)
+        .await?;
+
+    let exists = graph
+        .dump_all_edges()
+        .await?
+        .iter()
+        .any(|e| e.edge_id == req.edge_id);
+    if !exists {
+        return Err(AppError::not_found(format!(
+            "edge {} not found",
+            req.edge_id
+        )));
+    }
+
+    state.emit_audit(
+        &user.user_id,
+        "correct",
+        format!(
+            "edge_id={} statement={}",
+            req.edge_id,
+            &req.statement[..80.min(req.statement.len())]
+        ),
+    );
+
+    // Retract first, then observe the new fact via the standard remember
+    // pipeline. If remember fails, the retraction stands — same as if the
+    // user had called retract alone. This is intentional: retracting wrong
+    // information is independently valuable even if the corrected version
+    // can't be ingested for some reason.
+    graph
+        .retract_edge(req.edge_id, req.reason.as_deref())
+        .await
+        .map_err(internal("retract edge"))?;
+
+    let remember_req = RememberRequest {
+        statement: req.statement,
+        source_agent: req.source_agent,
+        source_credibility_hint: None,
+        graph: req.graph,
+        ttl_secs: None,
+    };
+    let remember_resp =
+        remember::remember(&state, &*graph, remember_req, None, Some(&user.user_id)).await?;
+
+    json_ok(crate::models::CorrectResponse {
+        retracted_edge_id: req.edge_id,
+        reason: req.reason,
+        remember: remember_resp,
+    })
+}
+
 // -- Operations ---------------------------------------------------------------
 
 pub(crate) async fn maintain_handler(

@@ -228,6 +228,44 @@ fn default_max_iterations() -> usize {
     1
 }
 
+/// Explicit user/agent retraction of a fact. Distinct from supersession,
+/// which the Dreamer writes append-only. See docs/DREAMS.md.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RetractRequest {
+    pub edge_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RetractResponse {
+    pub edge_id: i64,
+    pub reason: Option<String>,
+}
+
+/// Convenience: retract an old fact and observe a new one in a single
+/// operation.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CorrectRequest {
+    pub edge_id: i64,
+    pub statement: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CorrectResponse {
+    pub retracted_edge_id: i64,
+    pub reason: Option<String>,
+    pub remember: RememberResponse,
+}
+
 // -- Response types -----------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -588,5 +626,50 @@ mod tests {
         let v: serde_json::Value = serde_json::to_value(&h).unwrap();
         assert_eq!(v["status"], "ok");
         assert_eq!(v["graph"], "hippo");
+    }
+
+    // ---- RetractRequest / CorrectRequest ----
+
+    #[test]
+    fn retract_request_round_trip() {
+        let req = RetractRequest {
+            edge_id: 42,
+            reason: Some("extraction error".into()),
+            graph: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: RetractRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.edge_id, 42);
+        assert_eq!(back.reason.as_deref(), Some("extraction error"));
+        assert!(back.graph.is_none());
+    }
+
+    #[test]
+    fn retract_request_omits_optionals_when_none() {
+        let req = RetractRequest {
+            edge_id: 7,
+            reason: None,
+            graph: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["edge_id"], 7);
+        assert!(v.get("reason").is_none(), "reason should be omitted");
+        assert!(v.get("graph").is_none(), "graph should be omitted");
+    }
+
+    #[test]
+    fn correct_request_round_trip() {
+        let req = CorrectRequest {
+            edge_id: 99,
+            statement: "Alice is a dentist".into(),
+            reason: Some("user correction".into()),
+            source_agent: Some("user".into()),
+            graph: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: CorrectRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.edge_id, 99);
+        assert_eq!(back.statement, "Alice is a dentist");
+        assert_eq!(back.reason.as_deref(), Some("user correction"));
     }
 }
