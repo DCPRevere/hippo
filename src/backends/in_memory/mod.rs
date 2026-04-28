@@ -86,6 +86,7 @@ pub struct InMemoryGraph {
     source_credibility: RwLock<Vec<SourceCredibility>>,
     properties: RwLock<HashMap<(String, String), String>>,
     last_visited: RwLock<HashMap<String, DateTime<Utc>>>,
+    retraction_reasons: RwLock<HashMap<i64, String>>,
 }
 
 impl InMemoryGraph {
@@ -99,6 +100,7 @@ impl InMemoryGraph {
             source_credibility: RwLock::new(Vec::new()),
             properties: RwLock::new(HashMap::new()),
             last_visited: RwLock::new(HashMap::new()),
+            retraction_reasons: RwLock::new(HashMap::new()),
         }
     }
 
@@ -190,6 +192,51 @@ impl InMemoryGraph {
             }
         }
         Ok(out)
+    }
+
+    /// Explicit user/agent retraction. Marks the edge inactive (sets
+    /// `invalid_at`) and optionally records a reason. The edge stays in the
+    /// graph for audit; active retrieval filters it out via the existing
+    /// `is_active` check. Distinct from supersession: supersession is what
+    /// the Dreamer writes append-only; retraction is what a user/agent does
+    /// when a fact is genuinely wrong.
+    pub async fn retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
+        let now = Utc::now();
+        {
+            let mut edges = self.edges.write().await;
+            for edge in edges.iter_mut() {
+                if edge.edge_id == edge_id && edge.invalid_at.is_none() {
+                    edge.invalid_at = Some(now);
+                }
+            }
+        }
+        if let Some(r) = reason {
+            self.retraction_reasons
+                .write()
+                .await
+                .insert(edge_id, r.to_string());
+        }
+        Ok(())
+    }
+
+    /// Return the recorded retraction reason for an edge, if any.
+    pub async fn retraction_reason(&self, edge_id: i64) -> Result<Option<String>> {
+        Ok(self.retraction_reasons.read().await.get(&edge_id).cloned())
+    }
+
+    /// Convenience: retract the old edge and observe a replacement. Returns
+    /// the new edge id. Atomic-ish (the two writes are sequential, but the
+    /// in-memory backend serialises them deterministically).
+    pub async fn correct_edge(
+        &self,
+        old_edge_id: i64,
+        from_id: &str,
+        to_id: &str,
+        new_rel: &Relation,
+        reason: Option<&str>,
+    ) -> Result<i64> {
+        self.retract_edge(old_edge_id, reason).await?;
+        self.create_edge(from_id, to_id, new_rel).await
     }
 
     async fn walk_one_hop_inner(

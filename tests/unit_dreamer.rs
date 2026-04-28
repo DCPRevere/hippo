@@ -314,6 +314,103 @@ async fn unvisited_entities_are_eligible_for_dreaming() {
     );
 }
 
+// ---- Retract: explicit destructive user/agent operation ----
+
+#[tokio::test]
+async fn retract_marks_edge_inactive_and_preserves_audit_trail() {
+    let graph = InMemoryGraph::new("test");
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    let edge_id = graph
+        .create_edge("a", "b", &make_rel("Alice is a doctor", 0))
+        .await
+        .unwrap();
+
+    graph
+        .retract_edge(edge_id, Some("extraction error"))
+        .await
+        .unwrap();
+
+    // Active retrieval should not see it.
+    let query = llm::pseudo_embed("Alice is a doctor");
+    let results = graph
+        .vector_search_edges_scored(&query, 10, None)
+        .await
+        .unwrap();
+    assert!(
+        !results.iter().any(|(e, _)| e.edge_id == edge_id),
+        "retracted edge should not appear in active search",
+    );
+
+    // The audit trail is preserved: the edge still exists with invalid_at set
+    // and a retraction reason recorded.
+    let edges = graph.dump_all_edges().await.unwrap();
+    let retracted = edges
+        .iter()
+        .find(|e| e.edge_id == edge_id)
+        .expect("retracted edge should still exist for audit");
+    assert!(
+        retracted.invalid_at.is_some(),
+        "retracted edge should be marked inactive",
+    );
+
+    let reason = graph.retraction_reason(edge_id).await.unwrap();
+    assert_eq!(reason.as_deref(), Some("extraction error"));
+}
+
+#[tokio::test]
+async fn retract_is_distinct_from_supersession() {
+    let graph = InMemoryGraph::new("test");
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    let edge_id = graph
+        .create_edge("a", "b", &make_rel("Alice is a doctor", 0))
+        .await
+        .unwrap();
+
+    graph.retract_edge(edge_id, None).await.unwrap();
+
+    // Provenance should show retraction, not supersession.
+    let prov = graph.get_provenance(edge_id).await.unwrap();
+    assert!(
+        prov.superseded_by.is_none(),
+        "retracted edge is not superseded — supersession is a Dreamer-written fact, retraction is a user/agent operation",
+    );
+}
+
+#[tokio::test]
+async fn correct_retracts_old_and_observes_new() {
+    let graph = InMemoryGraph::new("test");
+    seed_entity(&graph, "a", "Alice").await;
+    seed_entity(&graph, "b", "Bob").await;
+
+    let old_edge = graph
+        .create_edge("a", "b", &make_rel("Alice is a doctor", 0))
+        .await
+        .unwrap();
+
+    let new_rel = make_rel("Alice is a dentist", 0);
+    let new_edge = graph
+        .correct_edge(old_edge, "a", "b", &new_rel, Some("user correction"))
+        .await
+        .unwrap();
+
+    assert_ne!(old_edge, new_edge);
+
+    // Old is retracted, new is active.
+    let edges = graph.dump_all_edges().await.unwrap();
+    let old = edges.iter().find(|e| e.edge_id == old_edge).unwrap();
+    let new = edges.iter().find(|e| e.edge_id == new_edge).unwrap();
+    assert!(old.invalid_at.is_some(), "old edge should be retracted");
+    assert!(new.invalid_at.is_none(), "new edge should be active");
+
+    // Reason captured on the retracted edge.
+    let reason = graph.retraction_reason(old_edge).await.unwrap();
+    assert_eq!(reason.as_deref(), Some("user correction"));
+}
+
 // ---- Idempotency: dreaming twice yields the same state ----
 
 #[tokio::test]
