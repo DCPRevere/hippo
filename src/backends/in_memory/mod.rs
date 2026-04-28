@@ -111,22 +111,6 @@ impl InMemoryGraph {
     // GraphBackend trait will gain them once the SQLite/Postgres/Qdrant
     // backends grow parity.
 
-    /// Record that the Dreamer visited the named entity at `at`. Used by the
-    /// revisit-window filter so workers don't immediately re-process the same
-    /// entity.
-    pub async fn mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
-        self.last_visited
-            .write()
-            .await
-            .insert(entity_id.to_string(), at);
-        Ok(())
-    }
-
-    /// Return the most recent visit timestamp for the entity, if any.
-    pub async fn last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
-        Ok(self.last_visited.read().await.get(entity_id).copied())
-    }
-
     /// Return entities whose last_visited is older than `cutoff` (or has never
     /// been visited). The Dreamer's work query.
     pub async fn entities_unvisited_since(
@@ -735,6 +719,18 @@ impl GraphBackend for InMemoryGraph {
                 .insert(edge_id, r.to_string());
         }
         Ok(())
+    }
+
+    async fn mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
+        self.last_visited
+            .write()
+            .await
+            .insert(entity_id.to_string(), at);
+        Ok(())
+    }
+
+    async fn last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        Ok(self.last_visited.read().await.get(entity_id).copied())
     }
 }
 

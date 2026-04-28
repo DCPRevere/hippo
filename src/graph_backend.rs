@@ -113,4 +113,15 @@ pub trait GraphBackend: Send + Sync {
     async fn retract_edge(&self, _edge_id: i64, _reason: Option<&str>) -> Result<()> {
         Ok(())
     }
+
+    /// Record that the Dreamer has just visited the named entity. Used by
+    /// the revisit-window filter so workers don't immediately re-process.
+    async fn mark_visited(&self, _entity_id: &str, _at: DateTime<Utc>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Return the most recent visit timestamp for the entity, if any.
+    async fn last_visited(&self, _entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        Ok(None)
+    }
 }
