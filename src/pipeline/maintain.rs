@@ -115,9 +115,16 @@ pub async fn run_once_arc(
     drain_recent_nodes(&state).await;
     legacy_entity_dedup(&state, &*graph).await?;
 
+    let tuning = &state.config.pipeline.tuning;
+    let dreamer_config = DreamerConfig::bounded(
+        tuning.dreamer_worker_count,
+        tuning.dreamer_max_units,
+        tuning.dreamer_max_tokens,
+    );
+
     let mut total = DreamReport::default();
     for dreamer in dreamers_for_cycle(state.clone(), &state.config) {
-        let pool = WorkerPool::new(DreamerConfig::default());
+        let pool = WorkerPool::new(dreamer_config.clone());
         let report = pool.run_dream(dreamer, graph.clone()).await?;
         total.merge(&report);
     }

@@ -27,6 +27,88 @@ async fn send_progress(
     }
 }
 
+/// Phase 1 of remember: ask the LLM for graph operations from the
+/// statement. Pure-ish — no graph mutations. Counts one LLM call.
+pub(crate) async fn plan_operations(
+    state: &AppState,
+    statement: &str,
+    context: &GraphContext,
+    usage: &mut LlmUsage,
+) -> Result<crate::models::OperationsResult> {
+    tracing::info!(statement = %statement, "remember: planning operations");
+    let result = state.llm.extract_operations(statement, context).await?;
+    usage.llm_calls += 1;
+    tracing::info!(operations = result.operations.len(), "remember: planned");
+    Ok(result)
+}
+
+/// Phase 2 of remember: if the planned operations reference entity names
+/// that already exist with richer context in the graph, fetch that context
+/// and ask the LLM to revise operations against it. Returns `true` if
+/// revision happened. Mutates `ops_result`, `known_ids`, and `usage` in
+/// place to fold the new state back into the orchestrator.
+pub(crate) async fn enrich_operations(
+    state: &AppState,
+    graph: &dyn GraphBackend,
+    ops_result: &mut crate::models::OperationsResult,
+    context: GraphContext,
+    known_ids: &mut HashMap<String, String>,
+    usage: &mut LlmUsage,
+    progress_tx: &Option<tokio::sync::mpsc::Sender<RememberProgress>>,
+) -> Result<bool> {
+    if !state.config.pipeline.infer_enrichment {
+        return Ok(false);
+    }
+
+    let entity_names: Vec<String> = ops_result
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            GraphOp::CreateNode { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    if entity_names.is_empty() {
+        return Ok(false);
+    }
+
+    let additional = gather_context_by_names(graph, &entity_names, &context).await?;
+    if additional.is_empty() {
+        return Ok(false);
+    }
+
+    tracing::info!(
+        new_nodes = additional.node_count(),
+        "remember: found additional context, revising operations"
+    );
+    send_progress(
+        progress_tx,
+        RememberProgress::Revising {
+            new_context_entities: additional.node_count(),
+        },
+    )
+    .await;
+
+    let mut merged = context;
+    let existing_ids: HashSet<String> = merged.nodes.iter().map(|n| n.id.clone()).collect();
+    for node in additional.nodes {
+        if !existing_ids.contains(&node.id) {
+            known_ids.insert(node.name.clone(), node.id.clone());
+            known_ids.insert(node.id.clone(), node.id.clone());
+            merged.nodes.push(node);
+        }
+    }
+    merged.edges.extend(additional.edges);
+
+    *ops_result = state.llm.revise_operations(ops_result, &merged).await?;
+    usage.llm_calls += 1;
+    tracing::info!(
+        operations = ops_result.operations.len(),
+        "remember: revised"
+    );
+    Ok(true)
+}
+
 pub async fn remember(
     state: &AppState,
     graph: &dyn GraphBackend,
@@ -78,19 +160,9 @@ pub async fn remember(
         GraphContext::empty()
     };
 
-    // Step 2: Ask LLM for graph operations
-    tracing::info!(statement = %req.statement, "remember: planning operations");
+    // Step 2: Plan — ask LLM for graph operations from the statement.
     send_progress(&progress_tx, RememberProgress::Planning).await;
-
-    let mut ops_result = state
-        .llm
-        .extract_operations(&req.statement, &context)
-        .await?;
-    usage.llm_calls += 1;
-    tracing::info!(
-        operations = ops_result.operations.len(),
-        "remember: planned"
-    );
+    let mut ops_result = plan_operations(state, &req.statement, &context, &mut usage).await?;
     send_progress(
         &progress_tx,
         RememberProgress::Planned {
@@ -108,56 +180,18 @@ pub async fn remember(
         known_ids.insert(node.id.clone(), node.id.clone());
     }
 
-    // Step 3: If enrichment enabled, search graph by extracted entity names for missed context
-    let mut was_revised = false;
-    if state.config.pipeline.infer_enrichment {
-        let entity_names: Vec<String> = ops_result
-            .operations
-            .iter()
-            .filter_map(|op| match op {
-                GraphOp::CreateNode { name, .. } => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
-
-        if !entity_names.is_empty() {
-            let additional = gather_context_by_names(graph, &entity_names, &context).await?;
-            if !additional.is_empty() {
-                tracing::info!(
-                    new_nodes = additional.node_count(),
-                    "remember: found additional context, revising operations"
-                );
-                send_progress(
-                    &progress_tx,
-                    RememberProgress::Revising {
-                        new_context_entities: additional.node_count(),
-                    },
-                )
-                .await;
-
-                // Merge original + additional context for revision
-                let mut merged = context;
-                let existing_ids: HashSet<String> =
-                    merged.nodes.iter().map(|n| n.id.clone()).collect();
-                for node in additional.nodes {
-                    if !existing_ids.contains(&node.id) {
-                        known_ids.insert(node.name.clone(), node.id.clone());
-                        known_ids.insert(node.id.clone(), node.id.clone());
-                        merged.nodes.push(node);
-                    }
-                }
-                merged.edges.extend(additional.edges);
-
-                ops_result = state.llm.revise_operations(&ops_result, &merged).await?;
-                usage.llm_calls += 1;
-                was_revised = true;
-                tracing::info!(
-                    operations = ops_result.operations.len(),
-                    "remember: revised"
-                );
-            }
-        }
-    }
+    // Step 3: Enrich — if extracted entities have additional context in the
+    // graph, fetch it and ask the LLM to revise operations.
+    let was_revised = enrich_operations(
+        state,
+        graph,
+        &mut ops_result,
+        context,
+        &mut known_ids,
+        &mut usage,
+        &progress_tx,
+    )
+    .await?;
 
     // Step 4: Execute operations
     let mut entities_created = 0usize;

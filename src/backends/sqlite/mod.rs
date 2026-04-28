@@ -278,10 +278,23 @@ impl GraphBackend for SqliteGraph {
                         contradiction_rate REAL NOT NULL
                     );
 
+                    CREATE TABLE IF NOT EXISTS last_visited (
+                        entity_id TEXT PRIMARY KEY,
+                        visited_at TEXT NOT NULL,
+                        FOREIGN KEY (entity_id) REFERENCES entities(id)
+                    );
+
+                    CREATE TABLE IF NOT EXISTS retraction_reasons (
+                        edge_id INTEGER PRIMARY KEY,
+                        reason TEXT NOT NULL,
+                        retracted_at TEXT NOT NULL
+                    );
+
                 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
                 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
                 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name COLLATE NOCASE);
                 CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(relation_type);
+                CREATE INDEX IF NOT EXISTS idx_last_visited_at ON last_visited(visited_at);
                 ",
             )?;
             Ok(())
@@ -297,7 +310,9 @@ impl GraphBackend for SqliteGraph {
                  DELETE FROM entities;
                  DELETE FROM supersessions;
                  DELETE FROM properties;
-                 DELETE FROM source_credibility;",
+                 DELETE FROM source_credibility;
+                 DELETE FROM last_visited;
+                 DELETE FROM retraction_reasons;",
             )?;
             self.next_edge_id.store(1, Ordering::Relaxed);
             Ok(())
@@ -903,10 +918,136 @@ impl GraphBackend for SqliteGraph {
         })
     }
 
+    // --- Dreamer support ---
+
+    async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        if edge_ids.is_empty() {
+            return Ok(());
+        }
+        let edge_ids = edge_ids.to_vec();
+        self.with_conn_blocking(move |conn| {
+            for id in &edge_ids {
+                conn.execute(
+                    "UPDATE edges SET salience = salience + 1 WHERE edge_id = ?1",
+                    params![id],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    async fn supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
+        self.with_conn_blocking(move |conn| {
+            // Idempotency: skip if this exact pair already exists.
+            let existing: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM supersessions
+                 WHERE old_edge_id = ?1 AND new_edge_id = ?2",
+                params![old_edge_id, new_edge_id],
+                |r| r.get(0),
+            )?;
+            if existing > 0 {
+                return Ok(());
+            }
+            let old_fact: String = conn
+                .query_row(
+                    "SELECT fact FROM edges WHERE edge_id = ?1",
+                    params![old_edge_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or_default();
+            let new_fact: String = conn
+                .query_row(
+                    "SELECT fact FROM edges WHERE edge_id = ?1",
+                    params![new_edge_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or_default();
+            conn.execute(
+                "INSERT INTO supersessions
+                 (old_edge_id, new_edge_id, superseded_at, old_fact, new_fact)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    old_edge_id,
+                    new_edge_id,
+                    Utc::now().to_rfc3339(),
+                    old_fact,
+                    new_fact
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    async fn retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let reason = reason.map(str::to_string);
+        self.with_conn_blocking(move |conn| {
+            conn.execute(
+                "UPDATE edges SET invalid_at = ?1
+                 WHERE edge_id = ?2 AND invalid_at IS NULL",
+                params![now, edge_id],
+            )?;
+            if let Some(r) = reason {
+                conn.execute(
+                    "INSERT OR REPLACE INTO retraction_reasons
+                     (edge_id, reason, retracted_at) VALUES (?1, ?2, ?3)",
+                    params![edge_id, r, now],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    async fn mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
+        let entity_id = entity_id.to_string();
+        self.with_conn_blocking(move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO last_visited (entity_id, visited_at)
+                 VALUES (?1, ?2)",
+                params![entity_id, at.to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    async fn last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        let entity_id = entity_id.to_string();
+        self.with_conn_blocking(move |conn| {
+            let result = conn.query_row(
+                "SELECT visited_at FROM last_visited WHERE entity_id = ?1",
+                params![entity_id],
+                |r| r.get::<_, String>(0),
+            );
+            match result {
+                Ok(s) => Ok(DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|t| t.with_timezone(&Utc))),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(e.into()),
+            }
+        })
+    }
+
     // --- Clustering ---
 }
 
 impl SqliteGraph {
+    /// Return the recorded retraction reason for an edge, if any.
+    pub async fn retraction_reason(&self, edge_id: i64) -> Result<Option<String>> {
+        self.with_conn_blocking(move |conn| {
+            let result = conn.query_row(
+                "SELECT reason FROM retraction_reasons WHERE edge_id = ?1",
+                params![edge_id],
+                |r| r.get::<_, String>(0),
+            );
+            match result {
+                Ok(s) => Ok(Some(s)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(e.into()),
+            }
+        })
+    }
+
     pub async fn save_source_credibility(&self, cred: &SourceCredibility) -> Result<()> {
         self.with_conn_blocking(|conn| {
             conn.execute(

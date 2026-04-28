@@ -67,10 +67,36 @@ pub struct PipelineTuning {
     /// before consolidation produces a summary fact.
     #[serde(default = "default_consolidation_min_facts")]
     pub consolidation_min_facts: usize,
+
+    /// Dreamer worker pool: number of concurrent workers per pass.
+    #[serde(default = "default_dreamer_worker_count")]
+    pub dreamer_worker_count: usize,
+
+    /// Dreamer worker pool: hard ceiling on units processed per pass.
+    /// `None` means unbounded — only safe in continuous mode.
+    #[serde(default = "default_dreamer_max_units")]
+    pub dreamer_max_units: Option<usize>,
+
+    /// Dreamer worker pool: hard ceiling on tokens consumed per pass.
+    /// `None` means unbounded.
+    #[serde(default = "default_dreamer_max_tokens")]
+    pub dreamer_max_tokens: Option<u64>,
 }
 
 fn default_consolidation_min_facts() -> usize {
     5
+}
+
+fn default_dreamer_worker_count() -> usize {
+    1
+}
+
+fn default_dreamer_max_units() -> Option<usize> {
+    Some(100)
+}
+
+fn default_dreamer_max_tokens() -> Option<u64> {
+    Some(50_000)
 }
 
 impl Default for PipelineTuning {
@@ -84,6 +110,9 @@ impl Default for PipelineTuning {
             link_pair_cache_max: 10_000,
             link_pair_cache_evict: 5_000,
             consolidation_min_facts: 5,
+            dreamer_worker_count: 1,
+            dreamer_max_units: Some(100),
+            dreamer_max_tokens: Some(50_000),
         }
     }
 }
