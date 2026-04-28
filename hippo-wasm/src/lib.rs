@@ -152,4 +152,49 @@ impl Hippo {
         serde_wasm_bindgen::to_value(&export)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
+
+    // -- Dreamer primitives ---------------------------------------------------
+    //
+    // These are the user/agent-callable destructive operations and the
+    // salience bump primitive. The Dreamer worker pool (continuous,
+    // autonomous) is a separate later piece; this confirms the dreaming
+    // primitives reach the JS surface and the WASM build remains sound for
+    // the embedded local-first story in DREAMS.md.
+
+    /// Mark a fact as wrong and remove it from active retrieval. The edge
+    /// stays in the graph for audit. Distinct from supersession (which the
+    /// Dreamer writes append-only).
+    pub async fn retract(
+        &self,
+        edge_id: i64,
+        reason: Option<String>,
+    ) -> Result<(), JsValue> {
+        self.graph
+            .retract_edge(edge_id, reason.as_deref())
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Increment salience by 1 for each named edge. Reactivation strengthens.
+    pub async fn bump_salience(&self, edge_ids: Vec<i64>) -> Result<(), JsValue> {
+        self.graph
+            .bump_salience(&edge_ids)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Append-only supersession: record that `new_edge_id` supersedes
+    /// `old_edge_id`. Both edges remain active. The Dreamer writes these
+    /// autonomously; exposing the primitive here lets agents do it
+    /// explicitly too.
+    pub async fn supersede(
+        &self,
+        old_edge_id: i64,
+        new_edge_id: i64,
+    ) -> Result<(), JsValue> {
+        self.graph
+            .supersede_edge(old_edge_id, new_edge_id)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
 }
