@@ -1,6 +1,4 @@
-<div align="center">
-
-```
+<pre align="center">
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓███████▓▒░░▒▓███████▓▒░ ░▒▓██████▓▒░
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
@@ -8,13 +6,18 @@
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░       ░▒▓██████▓▒░
-```
+</pre>
 
-### **The memory layer that dreams.**
+<p align="center">
+  <strong>🧠 The memory layer that dreams.</strong><br>
+  A self-improving memory graph for AI agents. Runs on your server, in your browser, or anywhere in between.
+</p>
 
-*A self-improving memory graph for AI agents — runs on your server, in your browser, or anywhere in between.*
-
-</div>
+<p align="center">
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-edition%202021-orange?logo=rust" alt="Rust edition 2021" /></a>
+  <a href="https://github.com/dcprevere/hippo"><img src="https://img.shields.io/badge/hippo-v0.1.0-blue" alt="hippo v0.1.0" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licence" /></a>
+</p>
 
 ---
 
