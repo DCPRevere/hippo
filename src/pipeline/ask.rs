@@ -103,6 +103,13 @@ pub async fn ask(
         .synthesise_answer(&req.question, &facts, user_display_name)
         .await?;
 
+    // Reactivation strengthens: bump salience on every edge the LLM saw.
+    // Backends without dreaming support no-op via the default trait impl.
+    let edge_ids: Vec<i64> = ctx.edges.iter().map(|e| e.id).collect();
+    if !edge_ids.is_empty() {
+        let _ = graph.bump_salience(&edge_ids).await;
+    }
+
     Ok(AskResponse {
         answer,
         facts: if req.verbose { Some(facts) } else { None },

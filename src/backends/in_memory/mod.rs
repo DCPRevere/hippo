@@ -111,52 +111,6 @@ impl InMemoryGraph {
     // GraphBackend trait will gain them once the SQLite/Postgres/Qdrant
     // backends grow parity.
 
-    /// Increment salience by 1 on each named edge. Used by retrieval to
-    /// implement reactivation-strengthens: when a fact is fetched and used,
-    /// it becomes more retrievable next time.
-    pub async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
-        let mut edges = self.edges.write().await;
-        for edge in edges.iter_mut() {
-            if edge_ids.contains(&edge.edge_id) {
-                edge.salience = edge.salience.saturating_add(1);
-            }
-        }
-        Ok(())
-    }
-
-    /// Append-only supersession: record that `new_edge_id` supersedes
-    /// `old_edge_id`. Both edges remain active in the graph; the supersession
-    /// itself is the new fact. Idempotent: calling twice with the same pair
-    /// is a no-op.
-    pub async fn supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
-        let mut sups = self.supersessions.write().await;
-        if sups
-            .iter()
-            .any(|s| s.old_edge_id == old_edge_id && s.new_edge_id == new_edge_id)
-        {
-            return Ok(());
-        }
-        let edges = self.edges.read().await;
-        let old_fact = edges
-            .iter()
-            .find(|e| e.edge_id == old_edge_id)
-            .map(|e| e.fact.clone())
-            .unwrap_or_default();
-        let new_fact = edges
-            .iter()
-            .find(|e| e.edge_id == new_edge_id)
-            .map(|e| e.fact.clone())
-            .unwrap_or_default();
-        sups.push(SupersessionRecord {
-            old_edge_id,
-            new_edge_id,
-            superseded_at: Utc::now(),
-            old_fact,
-            new_fact,
-        });
-        Ok(())
-    }
-
     /// Record that the Dreamer visited the named entity at `at`. Used by the
     /// revisit-window filter so workers don't immediately re-process the same
     /// entity.
@@ -192,31 +146,6 @@ impl InMemoryGraph {
             }
         }
         Ok(out)
-    }
-
-    /// Explicit user/agent retraction. Marks the edge inactive (sets
-    /// `invalid_at`) and optionally records a reason. The edge stays in the
-    /// graph for audit; active retrieval filters it out via the existing
-    /// `is_active` check. Distinct from supersession: supersession is what
-    /// the Dreamer writes append-only; retraction is what a user/agent does
-    /// when a fact is genuinely wrong.
-    pub async fn retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
-        let now = Utc::now();
-        {
-            let mut edges = self.edges.write().await;
-            for edge in edges.iter_mut() {
-                if edge.edge_id == edge_id && edge.invalid_at.is_none() {
-                    edge.invalid_at = Some(now);
-                }
-            }
-        }
-        if let Some(r) = reason {
-            self.retraction_reasons
-                .write()
-                .await
-                .insert(edge_id, r.to_string());
-        }
-        Ok(())
     }
 
     /// Return the recorded retraction reason for an edge, if any.
@@ -748,7 +677,65 @@ impl GraphBackend for InMemoryGraph {
         Ok(None)
     }
 
-    // --- Clustering ---
+    // --- Dreamer support (trait overrides) ---
+
+    async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        let mut edges = self.edges.write().await;
+        for edge in edges.iter_mut() {
+            if edge_ids.contains(&edge.edge_id) {
+                edge.salience = edge.salience.saturating_add(1);
+            }
+        }
+        Ok(())
+    }
+
+    async fn supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
+        let mut sups = self.supersessions.write().await;
+        if sups
+            .iter()
+            .any(|s| s.old_edge_id == old_edge_id && s.new_edge_id == new_edge_id)
+        {
+            return Ok(());
+        }
+        let edges = self.edges.read().await;
+        let old_fact = edges
+            .iter()
+            .find(|e| e.edge_id == old_edge_id)
+            .map(|e| e.fact.clone())
+            .unwrap_or_default();
+        let new_fact = edges
+            .iter()
+            .find(|e| e.edge_id == new_edge_id)
+            .map(|e| e.fact.clone())
+            .unwrap_or_default();
+        sups.push(SupersessionRecord {
+            old_edge_id,
+            new_edge_id,
+            superseded_at: Utc::now(),
+            old_fact,
+            new_fact,
+        });
+        Ok(())
+    }
+
+    async fn retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
+        let now = Utc::now();
+        {
+            let mut edges = self.edges.write().await;
+            for edge in edges.iter_mut() {
+                if edge.edge_id == edge_id && edge.invalid_at.is_none() {
+                    edge.invalid_at = Some(now);
+                }
+            }
+        }
+        if let Some(r) = reason {
+            self.retraction_reasons
+                .write()
+                .await
+                .insert(edge_id, r.to_string());
+        }
+        Ok(())
+    }
 }
 
 impl InMemoryGraph {

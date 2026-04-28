@@ -89,4 +89,28 @@ pub trait GraphBackend: Send + Sync {
     async fn rename_entity(&self, entity_id: &str, new_name: &str) -> Result<()>;
     async fn set_entity_property(&self, entity_id: &str, key: &str, value: &str) -> Result<()>;
     async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>>;
+
+    // --- Dreamer support ---
+    //
+    // Default no-op implementations so backends that haven't grown parity
+    // with the dreaming architecture keep working. InMemoryGraph overrides
+    // these with real behaviour; SQLite/Postgres/Qdrant/Falkor parity is a
+    // follow-up. See docs/DREAMS.md.
+
+    /// Increment salience by 1 on each named edge (reactivation-strengthens).
+    async fn bump_salience(&self, _edge_ids: &[i64]) -> Result<()> {
+        Ok(())
+    }
+
+    /// Append-only supersession: record that `new_edge_id` supersedes
+    /// `old_edge_id`. Both edges remain active.
+    async fn supersede_edge(&self, _old_edge_id: i64, _new_edge_id: i64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Explicit user/agent retraction. Marks the edge inactive and stores an
+    /// optional reason. Distinct from supersession.
+    async fn retract_edge(&self, _edge_id: i64, _reason: Option<&str>) -> Result<()> {
+        Ok(())
+    }
 }
