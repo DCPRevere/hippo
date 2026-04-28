@@ -1,9 +1,11 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use crate::events::GraphEvent;
 use crate::graph_backend::GraphBackend;
-use crate::math::cosine_similarity;
-use crate::models::Relation;
+use crate::pipeline::dreamer::{
+    Consolidator, DreamReport, Dreamer, DreamerConfig, Inferrer, Linker, Reconciler, WorkerPool,
+};
 use crate::state::AppState;
 use anyhow::Result;
 use chrono::Utc;
@@ -29,8 +31,18 @@ pub async fn run_maintenance_loop(
             }
         }
         let graph = state.graph_registry().get_default().await;
-        if let Err(e) = run_once(&state, &*graph).await {
-            tracing::error!("Maintenance error: {e}");
+        match run_once_arc(state.clone(), graph).await {
+            Ok(report) => {
+                tracing::info!(
+                    facts = report.facts_visited,
+                    links = report.links_written,
+                    inferences = report.inferences_written,
+                    supersessions = report.supersessions_written,
+                    consolidations = report.consolidations_written,
+                    "dream complete"
+                );
+            }
+            Err(e) => tracing::error!("Maintenance error: {e}"),
         }
     }
 }
@@ -66,33 +78,90 @@ pub async fn run_housekeeping(state: &AppState, graph: &dyn GraphBackend) -> Res
     Ok(())
 }
 
-pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<()> {
-    tracing::info!("Running maintenance cycle");
+/// Run one maintenance cycle. Runs housekeeping (promote / expire / decay),
+/// the legacy entity-deduplication batch, then drives the Dreamers via the
+/// `WorkerPool`, finally resolving placeholders. Returns the aggregated
+/// dream-report.
+///
+/// Two entry points:
+///   - [`run_once`] takes borrowed `&AppState` + `&dyn GraphBackend`. It
+///     legacy-shape (the maintenance internals do not need ownership), and
+///     skips the Dreamer pool work — useful for tests and contexts that
+///     don't want background-pool overhead.
+///   - [`run_once_arc`] takes `Arc<AppState>` + `Arc<dyn GraphBackend>` and
+///     runs the full Dreamer pipeline. Production callers (the HTTP handler
+///     and the maintenance loop) use this.
+pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<DreamReport> {
+    tracing::info!("Running maintenance cycle (borrowed-state path, no Dreamers)");
 
     run_housekeeping(state, graph).await?;
-
-    // Drain any recently-pushed node IDs (not used for gating anymore, just keep channel clear)
     drain_recent_nodes(state).await;
+    legacy_entity_dedup(state, graph).await?;
+    placeholder_resolution(state, graph).await?;
 
-    // Walk all nodes from most recently created
+    let _ = state.event_tx.send(GraphEvent::MaintenanceComplete {
+        graph: graph.graph_name().to_string(),
+    });
+    Ok(DreamReport::default())
+}
+
+pub async fn run_once_arc(
+    state: Arc<AppState>,
+    graph: Arc<dyn GraphBackend>,
+) -> Result<DreamReport> {
+    tracing::info!("Running maintenance cycle (Dreamer pool)");
+
+    run_housekeeping(&state, &*graph).await?;
+    drain_recent_nodes(&state).await;
+    legacy_entity_dedup(&state, &*graph).await?;
+
+    let mut total = DreamReport::default();
+    for dreamer in dreamers_for_cycle(state.clone(), &state.config) {
+        let pool = WorkerPool::new(DreamerConfig::default());
+        let report = pool.run_dream(dreamer, graph.clone()).await?;
+        total.merge(&report);
+    }
+
+    placeholder_resolution(&state, &*graph).await?;
+
+    let _ = state.event_tx.send(GraphEvent::MaintenanceComplete {
+        graph: graph.graph_name().to_string(),
+    });
+    Ok(total)
+}
+
+/// Build the Dreamer chain that runs each maintenance cycle. Inferrer and
+/// Consolidator are gated by config flags so deployments can opt in.
+fn dreamers_for_cycle(
+    state: Arc<AppState>,
+    config: &crate::config::Config,
+) -> Vec<Arc<dyn Dreamer>> {
+    let mut out: Vec<Arc<dyn Dreamer>> = vec![
+        Arc::new(Linker::new(state.clone())),
+        Arc::new(Reconciler::new(state.clone())),
+    ];
+    if config.pipeline.infer_maintenance {
+        out.push(Arc::new(Inferrer::new(state.clone())));
+    }
+    out.push(Arc::new(Consolidator::new(state)));
+    out
+}
+
+/// The legacy entity-deduplication batch step. Stays here pending a
+/// future port to a dedup-Dreamer.
+async fn legacy_entity_dedup(state: &AppState, graph: &dyn GraphBackend) -> Result<()> {
     const BATCH_SIZE: usize = 20;
     let entities = graph.list_entities_by_recency(0, BATCH_SIZE).await?;
-
     if entities.is_empty() {
-        tracing::debug!("No entities in graph");
         return Ok(());
     }
 
-    tracing::info!(count = entities.len(), "maintenance: processing entities");
-
-    // Phase 1: Collect duplicate candidate pairs with IDs (graph queries only, no LLM)
     let mut duplicate_pairs: Vec<(String, String, String, String, Vec<String>)> = Vec::new();
     let mut pair_ids: Vec<(String, String)> = Vec::new();
     let mut seen_pairs: std::collections::HashSet<(String, String)> =
         std::collections::HashSet::new();
 
     for entity in &entities {
-        // Search by name
         let candidates = graph.fulltext_search_entities(&entity.name).await?;
         for candidate in &candidates {
             if candidate.id == entity.id {
@@ -123,7 +192,6 @@ pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<()> 
             }
         }
 
-        // Search by embedding similarity
         let link_threshold = state.config.pipeline.tuning.link_discovery_cosine_threshold;
         let similar = graph.vector_search_entities(&entity.embedding, 5).await?;
         for (candidate, score) in &similar {
@@ -138,7 +206,6 @@ pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<()> 
             if !seen_pairs.insert(pair_key) {
                 continue;
             }
-
             let b_facts = graph
                 .get_entity_facts(&candidate.id)
                 .await
@@ -154,44 +221,17 @@ pub async fn run_once(state: &AppState, graph: &dyn GraphBackend) -> Result<()> 
         }
     }
 
-    // Phase 2: Single batch LLM call for all duplicate candidates
     if !duplicate_pairs.is_empty() {
-        tracing::info!(
-            pairs = duplicate_pairs.len(),
-            "maintenance: checking entity pairs for duplicates"
-        );
-
         let results = state.llm.resolve_entities_batch(&duplicate_pairs).await?;
         let cls_threshold = state.config.pipeline.tuning.classification_confidence_threshold;
-
         for (index, same, confidence) in &results {
             if *same && *confidence > cls_threshold {
                 if let Some((from_id, to_id)) = pair_ids.get(*index) {
-                    let (a_name, _, b_name, _, _) = &duplicate_pairs[*index];
-                    tracing::info!(
-                        from = %a_name,
-                        to = %b_name,
-                        confidence,
-                        "maintenance: merging duplicate entities"
-                    );
                     graph.merge_placeholder(from_id, to_id).await?;
                 }
             }
         }
     }
-
-    // Phase 3: Link discovery, contradiction scan, inference, placeholder resolution
-    let node_ids: Vec<String> = entities.iter().map(|e| e.id.clone()).collect();
-    link_discovery(state, graph, &node_ids).await?;
-    contradiction_scan(state, graph, &node_ids).await?;
-    if state.config.pipeline.infer_maintenance {
-        inference_scan(state, graph, &node_ids).await?;
-    }
-    placeholder_resolution(state, graph).await?;
-
-    let _ = state.event_tx.send(GraphEvent::MaintenanceComplete {
-        graph: graph.graph_name().to_string(),
-    });
     Ok(())
 }
 
@@ -209,235 +249,6 @@ async fn drain_recent_nodes(state: &AppState) -> Vec<String> {
     ids
 }
 
-async fn link_discovery(
-    state: &AppState,
-    graph: &dyn GraphBackend,
-    node_ids: &[String],
-) -> Result<()> {
-    for node_id in node_ids {
-        let node_entity = match graph.get_entity_by_id(node_id).await? {
-            Some(e) => e,
-            None => continue,
-        };
-
-        let close_nodes = graph
-            .find_close_unlinked(
-                node_id,
-                &node_entity.embedding,
-                state.config.pipeline.tuning.link_discovery_cosine_threshold,
-            )
-            .await?;
-
-        for (candidate, _score) in close_nodes {
-            // Check if we've already evaluated this pair
-            let pair = if node_id < &candidate.id {
-                (node_id.clone(), candidate.id.clone())
-            } else {
-                (candidate.id.clone(), node_id.clone())
-            };
-
-            {
-                let checked = state.checked_pairs.read().await;
-                if checked.contains(&pair) {
-                    continue;
-                }
-            }
-
-            // Get facts for both nodes
-            let a_facts = graph.get_entity_facts(node_id).await?;
-            let b_facts = graph.get_entity_facts(&candidate.id).await?;
-
-            if let Some((rel_type, fact, confidence)) = state
-                .llm
-                .discover_link(&node_entity, &candidate, &a_facts, &b_facts)
-                .await?
-            {
-                tracing::info!(
-                    "Discovered link: '{}' --[{}]--> '{}'",
-                    node_entity.name,
-                    rel_type,
-                    candidate.name
-                );
-
-                let embedding = state.llm.embed(&fact).await?;
-                let now = Utc::now();
-                let relation = Relation {
-                    fact,
-                    relation_type: rel_type,
-                    embedding,
-                    source_agents: vec!["hippo".to_string()],
-                    valid_at: now,
-                    invalid_at: None,
-                    confidence,
-                    salience: 0,
-                    created_at: now,
-                    memory_tier: crate::models::MemoryTier::Working,
-                    expires_at: None,
-                };
-                graph.create_edge(node_id, &candidate.id, &relation).await?;
-            }
-
-            // Mark pair as checked, prune if too large
-            let cache_max = state.config.pipeline.tuning.link_pair_cache_max;
-            let cache_evict = state.config.pipeline.tuning.link_pair_cache_evict;
-            let mut checked = state.checked_pairs.write().await;
-            checked.insert(pair);
-            if checked.len() > cache_max {
-                let to_remove: Vec<_> = checked.iter().take(cache_evict).cloned().collect();
-                for pair in to_remove {
-                    checked.remove(&pair);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn contradiction_scan(
-    state: &AppState,
-    graph: &dyn GraphBackend,
-    node_ids: &[String],
-) -> Result<()> {
-    for node_id in node_ids {
-        let edges = graph.find_all_active_edges_from(node_id).await?;
-
-        // Group by (to_id, relation_type)
-        let mut groups: std::collections::HashMap<(String, String), Vec<_>> =
-            std::collections::HashMap::new();
-        for edge in edges {
-            groups
-                .entry((edge.object_id.clone(), edge.relation_type.clone()))
-                .or_default()
-                .push(edge);
-        }
-
-        for ((_, rel_type), group) in groups {
-            if group.len() < 2 {
-                continue;
-            }
-            // Compare each pair
-            for i in 0..group.len() {
-                for j in (i + 1)..group.len() {
-                    let (classification, _) = state
-                        .llm
-                        .classify_edge(&group[i].fact, &group[j].fact, &rel_type)
-                        .await?;
-
-                    if classification == crate::models::EdgeClassification::Contradiction {
-                        // Invalidate the older one
-                        let older = if group[i].valid_at < group[j].valid_at {
-                            group[i].edge_id
-                        } else {
-                            group[j].edge_id
-                        };
-                        tracing::info!("Contradiction scan: invalidating edge {older}");
-                        graph.invalidate_edge(older, Utc::now()).await?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn inference_scan(
-    state: &AppState,
-    graph: &dyn GraphBackend,
-    node_ids: &[String],
-) -> Result<()> {
-    const MAX_PER_CYCLE: usize = 5;
-
-    for node_id in node_ids.iter().take(MAX_PER_CYCLE) {
-        let entity = match graph.get_entity_by_id(node_id).await? {
-            Some(e) => e,
-            None => continue,
-        };
-
-        let entity_facts = graph.get_entity_facts(node_id).await?;
-        let hop_results = graph
-            .walk_n_hops(std::slice::from_ref(node_id), 1, 20, None)
-            .await?;
-        let hop_edges: Vec<_> = hop_results.into_iter().map(|(e, _)| e).collect();
-
-        // Build neighbour context — group facts by neighbour name
-        let mut neighbour_map: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-        for edge in &hop_edges {
-            let neighbour_name = if edge.subject_id == *node_id {
-                &edge.object_name
-            } else {
-                &edge.subject_name
-            };
-            neighbour_map
-                .entry(neighbour_name.clone())
-                .or_default()
-                .push(edge.fact.clone());
-        }
-        let neighbor_facts: Vec<(String, Vec<String>)> = neighbour_map.into_iter().collect();
-
-        let inferences = state
-            .llm
-            .find_missing_inferences(&entity.name, &entity_facts, &neighbor_facts)
-            .await?;
-
-        for (rel_type, object_name, fact_text, confidence) in inferences {
-            // Resolve the object entity
-            let object_entities = graph.fulltext_search_entities(&object_name).await?;
-            let object_id = object_entities
-                .iter()
-                .find(|e| e.name.to_lowercase() == object_name.to_lowercase())
-                .map(|e| e.id.clone());
-
-            let object_id = match object_id {
-                Some(id) => id,
-                None => {
-                    tracing::debug!(
-                        "inference_scan: object '{}' not found, skipping",
-                        object_name
-                    );
-                    continue;
-                }
-            };
-
-            // Check for duplicate via embedding similarity
-            let embedding = state.llm.embed(&fact_text).await?;
-            let existing = graph.find_all_active_edges_from(node_id).await?;
-            let dup_threshold = state.config.pipeline.tuning.duplicate_cosine_threshold;
-            let is_duplicate = existing.iter().any(|e| {
-                if e.embedding.is_empty() {
-                    return false;
-                }
-                cosine_similarity(&embedding, &e.embedding) > dup_threshold
-            });
-            if is_duplicate {
-                tracing::debug!("inference_scan: duplicate edge, skipping: {}", fact_text);
-                continue;
-            }
-
-            let now = Utc::now();
-            let relation = Relation {
-                fact: fact_text.clone(),
-                relation_type: rel_type,
-                embedding,
-                source_agents: vec!["maintenance/inference".to_string()],
-                valid_at: now,
-                invalid_at: None,
-                confidence: confidence * state.config.pipeline.tuning.inferred_fact_discount,
-                salience: 0,
-                created_at: now,
-                memory_tier: crate::models::MemoryTier::Working,
-                expires_at: None,
-            };
-            graph.create_edge(node_id, &object_id, &relation).await?;
-            tracing::info!(
-                "inference_scan: inferred '{}' for '{}'",
-                fact_text,
-                entity.name
-            );
-        }
-    }
-    Ok(())
-}
 
 async fn placeholder_resolution(state: &AppState, graph: &dyn GraphBackend) -> Result<()> {
     let cutoff = Utc::now() - chrono::Duration::hours(24);

@@ -381,10 +381,8 @@ pub(crate) async fn maintain_handler(
     Auth(_user): Auth,
 ) -> Result<JsonOk, AppError> {
     let graph = state.graph_registry().get_default().await;
-    maintain::run_once(&state, &*graph).await?;
-    json_ok(
-        serde_json::json!({"status": "maintenance complete"}),
-    )
+    let report = maintain::run_once_arc(state.clone(), graph).await?;
+    json_ok(report)
 }
 
 pub(crate) async fn graph_handler(

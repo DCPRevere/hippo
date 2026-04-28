@@ -62,6 +62,15 @@ pub struct PipelineTuning {
 
     /// Number of pair cache entries to drop when [`link_pair_cache_max`] is hit.
     pub link_pair_cache_evict: usize,
+
+    /// Consolidator: minimum number of episodic facts about an entity
+    /// before consolidation produces a summary fact.
+    #[serde(default = "default_consolidation_min_facts")]
+    pub consolidation_min_facts: usize,
+}
+
+fn default_consolidation_min_facts() -> usize {
+    5
 }
 
 impl Default for PipelineTuning {
@@ -74,6 +83,7 @@ impl Default for PipelineTuning {
             inferred_fact_discount: 0.8,
             link_pair_cache_max: 10_000,
             link_pair_cache_evict: 5_000,
+            consolidation_min_facts: 5,
         }
     }
 }

@@ -22,6 +22,9 @@ use async_trait::async_trait;
 
 use crate::graph_backend::GraphBackend;
 
+pub mod actions;
+pub use actions::{Consolidator, Inferrer, Linker, Reconciler};
+
 /// One unit of work for a Dreamer — typically a single entity. The score is
 /// available for selection logic (best-first vs weighted-random) but the
 /// pool itself doesn't interpret it.
