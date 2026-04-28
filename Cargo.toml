@@ -81,7 +81,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], option
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
-rand_chacha = "0.3"
+rand_chacha = "0.9"
 tokio-stream = { version = "0.1", features = ["sync"], optional = true }
 futures = "0.3"
 dirs = { version = "5", optional = true }
