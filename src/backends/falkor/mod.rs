@@ -1417,4 +1417,144 @@ impl GraphBackend for GraphClient {
     async fn find_entity_by_property(&self, key: &str, value: &str) -> Result<Option<EntityRow>> {
         self.find_entity_by_property(key, value).await
     }
+
+    // --- Dreamer support (delegates to inherent helpers below) ---
+
+    async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        self.dreamer_bump_salience(edge_ids).await
+    }
+
+    async fn supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
+        self.dreamer_supersede_edge(old_edge_id, new_edge_id).await
+    }
+
+    async fn retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
+        self.dreamer_retract_edge(edge_id, reason).await
+    }
+
+    async fn mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
+        self.dreamer_mark_visited(entity_id, at).await
+    }
+
+    async fn last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        self.dreamer_last_visited(entity_id).await
+    }
+}
+
+impl GraphClient {
+    /// Increment salience on each edge identified by `edge_id`.
+    pub async fn dreamer_bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        if edge_ids.is_empty() {
+            return Ok(());
+        }
+        let mut graph = self.conn().lock().await;
+        for id in edge_ids {
+            let q = format!(
+                "MATCH ()-[r:RELATION {{edge_id: {id}}}]-() \
+                 SET r.salience = coalesce(r.salience, 0) + 1"
+            );
+            graph
+                .query(&q)
+                .execute()
+                .await
+                .context("bump_salience failed")?;
+        }
+        Ok(())
+    }
+
+    /// Append-only supersession: stored as a Supersession node connecting
+    /// `old_edge_id` and `new_edge_id`. Idempotent: re-issuing the same pair
+    /// is a no-op via MERGE.
+    pub async fn dreamer_supersede_edge(
+        &self,
+        old_edge_id: i64,
+        new_edge_id: i64,
+    ) -> Result<()> {
+        let now = sanitise(&Utc::now().to_rfc3339());
+        let q = format!(
+            "MERGE (s:Supersession {{old_edge_id: {old_edge_id}, new_edge_id: {new_edge_id}}}) \
+             ON CREATE SET s.superseded_at = '{now}'"
+        );
+        let mut graph = self.conn().lock().await;
+        graph
+            .query(&q)
+            .execute()
+            .await
+            .context("supersede_edge failed")?;
+        Ok(())
+    }
+
+    pub async fn dreamer_retract_edge(
+        &self,
+        edge_id: i64,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        let now = sanitise(&Utc::now().to_rfc3339());
+        let q = if let Some(r) = reason {
+            let r = sanitise(r);
+            format!(
+                "MATCH ()-[e:RELATION {{edge_id: {edge_id}}}]-() \
+                 SET e.invalid_at = '{now}', e.retraction_reason = '{r}'"
+            )
+        } else {
+            format!(
+                "MATCH ()-[e:RELATION {{edge_id: {edge_id}}}]-() \
+                 SET e.invalid_at = '{now}'"
+            )
+        };
+        let mut graph = self.conn().lock().await;
+        graph
+            .query(&q)
+            .execute()
+            .await
+            .context("retract_edge failed")?;
+        Ok(())
+    }
+
+    pub async fn dreamer_mark_visited(
+        &self,
+        entity_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        let entity_id = sanitise(entity_id);
+        let at = sanitise(&at.to_rfc3339());
+        let q = format!(
+            "MATCH (n:Entity {{id: '{entity_id}'}}) SET n.last_visited_at = '{at}'"
+        );
+        let mut graph = self.conn().lock().await;
+        graph
+            .query(&q)
+            .execute()
+            .await
+            .context("mark_visited failed")?;
+        Ok(())
+    }
+
+    pub async fn dreamer_last_visited(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let entity_id = sanitise(entity_id);
+        let q = format!(
+            "MATCH (n:Entity {{id: '{entity_id}'}}) \
+             RETURN n.last_visited_at AS visited_at LIMIT 1"
+        );
+        let mut graph = self.conn().lock().await;
+        let mut result = graph
+            .query(&q)
+            .execute()
+            .await
+            .context("last_visited failed")?;
+        if let Some(row) = result.data.next() {
+            if let Some(value) = row.into_iter().next() {
+                let s = crate::backends::falkor::values::extract_string(&value);
+                if !s.is_empty() {
+                    return Ok(DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|t| t.with_timezone(&Utc)));
+                }
+            }
+        }
+        Ok(None)
+    }
 }

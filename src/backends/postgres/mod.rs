@@ -187,6 +187,37 @@ impl GraphBackend for PostgresGraph {
         .execute(&self.pool)
         .await?;
 
+        // Dreamer support: revisit-window and retraction-audit tables.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS last_visited (
+                graph_name TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                visited_at TEXT NOT NULL,
+                PRIMARY KEY (graph_name, entity_id)
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS retraction_reasons (
+                graph_name TEXT NOT NULL,
+                edge_id BIGINT NOT NULL,
+                reason TEXT NOT NULL,
+                retracted_at TEXT NOT NULL,
+                PRIMARY KEY (graph_name, edge_id)
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_last_visited_at
+             ON last_visited(graph_name, visited_at)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Indexes
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_edges_graph_from ON edges(graph_name, from_id)",
@@ -246,6 +277,14 @@ impl GraphBackend for PostgresGraph {
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM source_credibility WHERE graph_name = $1")
+            .bind(g)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM last_visited WHERE graph_name = $1")
+            .bind(g)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM retraction_reasons WHERE graph_name = $1")
             .bind(g)
             .execute(&self.pool)
             .await?;
@@ -970,11 +1009,143 @@ impl GraphBackend for PostgresGraph {
             Ok(None)
         }
     }
+
+    // --- Dreamer support ---
+
+    async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        if edge_ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE edges SET salience = salience + 1
+             WHERE graph_name = $1 AND edge_id = ANY($2)",
+        )
+        .bind(&self.graph_name)
+        .bind(edge_ids)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn supersede_edge(&self, old_edge_id: i64, new_edge_id: i64) -> Result<()> {
+        let existing: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM supersessions
+             WHERE graph_name = $1 AND old_edge_id = $2 AND new_edge_id = $3",
+        )
+        .bind(&self.graph_name)
+        .bind(old_edge_id)
+        .bind(new_edge_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if existing > 0 {
+            return Ok(());
+        }
+        let old_fact: Option<String> = sqlx::query_scalar(
+            "SELECT fact FROM edges WHERE graph_name = $1 AND edge_id = $2",
+        )
+        .bind(&self.graph_name)
+        .bind(old_edge_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let new_fact: Option<String> = sqlx::query_scalar(
+            "SELECT fact FROM edges WHERE graph_name = $1 AND edge_id = $2",
+        )
+        .bind(&self.graph_name)
+        .bind(new_edge_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO supersessions
+             (graph_name, old_edge_id, new_edge_id, superseded_at, old_fact, new_fact)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&self.graph_name)
+        .bind(old_edge_id)
+        .bind(new_edge_id)
+        .bind(Utc::now().to_rfc3339())
+        .bind(old_fact.unwrap_or_default())
+        .bind(new_fact.unwrap_or_default())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn retract_edge(&self, edge_id: i64, reason: Option<&str>) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE edges SET invalid_at = $1
+             WHERE graph_name = $2 AND edge_id = $3 AND invalid_at IS NULL",
+        )
+        .bind(&now)
+        .bind(&self.graph_name)
+        .bind(edge_id)
+        .execute(&self.pool)
+        .await?;
+        if let Some(r) = reason {
+            sqlx::query(
+                "INSERT INTO retraction_reasons (graph_name, edge_id, reason, retracted_at)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (graph_name, edge_id) DO UPDATE SET
+                    reason = EXCLUDED.reason,
+                    retracted_at = EXCLUDED.retracted_at",
+            )
+            .bind(&self.graph_name)
+            .bind(edge_id)
+            .bind(r)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn mark_visited(&self, entity_id: &str, at: DateTime<Utc>) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO last_visited (graph_name, entity_id, visited_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (graph_name, entity_id) DO UPDATE SET
+                visited_at = EXCLUDED.visited_at",
+        )
+        .bind(&self.graph_name)
+        .bind(entity_id)
+        .bind(at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn last_visited(&self, entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT visited_at FROM last_visited
+             WHERE graph_name = $1 AND entity_id = $2",
+        )
+        .bind(&self.graph_name)
+        .bind(entity_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|t| t.with_timezone(&Utc))
+        }))
+    }
 }
 
 // --- Extra methods (mirror SqliteGraph non-trait methods) ---
 
 impl PostgresGraph {
+    pub async fn retraction_reason(&self, edge_id: i64) -> Result<Option<String>> {
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT reason FROM retraction_reasons
+             WHERE graph_name = $1 AND edge_id = $2",
+        )
+        .bind(&self.graph_name)
+        .bind(edge_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     pub async fn save_source_credibility(
         &self,
         cred: &crate::credibility::SourceCredibility,

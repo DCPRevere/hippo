@@ -1352,4 +1352,73 @@ impl GraphBackend for QdrantGraph {
             entity_row_from_payload(&p.payload, emb)
         }))
     }
+
+    // --- Dreamer support ---
+    //
+    // Qdrant is a vector store; the Dreamer schema (last_visited table,
+    // retraction_reasons, append-only supersessions as a separate
+    // collection) is not naturally expressed here. The implementations
+    // below do what's possible against the existing edge/entity
+    // collections and warn on what is not yet supported.
+
+    async fn bump_salience(&self, edge_ids: &[i64]) -> Result<()> {
+        if edge_ids.is_empty() {
+            return Ok(());
+        }
+        let collection = self.edges_collection();
+        if !self.collection_exists(&collection).await? {
+            return Ok(());
+        }
+        // Scroll the edges, find the matching ones, and write back salience+1.
+        // This is O(N) — sufficient for the current scale; an indexed
+        // increment would require Qdrant SetPayloadOps with a server-side
+        // expression, which the rust client doesn't expose cleanly.
+        let id_set: std::collections::HashSet<i64> = edge_ids.iter().copied().collect();
+        let points = self.scroll_all(&collection, None, false).await?;
+        for p in points {
+            let edge_id = payload_i64(&p.payload, "edge_id");
+            if !id_set.contains(&edge_id) {
+                continue;
+            }
+            let new_salience = payload_i64(&p.payload, "salience").saturating_add(1);
+            let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
+            payload.insert("salience".into(), qdrant_value_i64(new_salience));
+            self.client
+                .set_payload(
+                    SetPayloadPointsBuilder::new(&collection, payload)
+                        .points_selector(PointsIdsList::from(vec![PointId::from(
+                            edge_point_id(edge_id),
+                        )]))
+                        .wait(true),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn supersede_edge(&self, _old_edge_id: i64, _new_edge_id: i64) -> Result<()> {
+        tracing::warn!(
+            "qdrant: supersede_edge is not supported on the Qdrant backend; \
+             switch to SQLite or Postgres for full Dreamer support",
+        );
+        Ok(())
+    }
+
+    async fn retract_edge(&self, edge_id: i64, _reason: Option<&str>) -> Result<()> {
+        // Qdrant has no retraction-reason table, but we can still mark the
+        // edge inactive — the user-facing effect of retract — by setting
+        // invalid_at via the existing invalidate_edge path.
+        self.invalidate_edge(edge_id, Utc::now()).await
+    }
+
+    async fn mark_visited(&self, _entity_id: &str, _at: DateTime<Utc>) -> Result<()> {
+        // Without a last_visited collection the revisit-window filter is a
+        // no-op on Qdrant. Dreamers will re-process entities each pass.
+        // Documented in production-readiness notes.
+        Ok(())
+    }
+
+    async fn last_visited(&self, _entity_id: &str) -> Result<Option<DateTime<Utc>>> {
+        Ok(None)
+    }
 }
