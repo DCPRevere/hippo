@@ -1,10 +1,42 @@
 // ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
+export interface ScoringParams {
+  w_relevance: number;
+  w_confidence: number;
+  w_recency: number;
+  w_salience: number;
+  mmr_lambda: number;
+}
+
+export interface LlmUsage {
+  llm_calls: number;
+  embed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface OpExecutionTrace {
+  op: string;
+  outcome: string;
+  details?: string;
+}
+
+export interface RememberTrace {
+  operations: Array<Record<string, unknown>>;
+  revised_operations?: Array<Record<string, unknown>>;
+  execution: OpExecutionTrace[];
+}
+
+// ---------------------------------------------------------------------------
 // Request types
 // ---------------------------------------------------------------------------
 
 export interface RememberRequest {
   statement: string;
   source_agent?: string;
+  source_credibility_hint?: number;
   graph?: string;
   ttl_secs?: number;
 }
@@ -21,7 +53,11 @@ export interface ContextRequest {
   query: string;
   limit?: number;
   max_hops?: number;
+  memory_tier_filter?: string;
   graph?: string;
+  /** ISO 8601 timestamp; the server filters edges valid at this instant. */
+  at?: string;
+  scoring?: ScoringParams;
 }
 
 export interface AskRequest {
@@ -29,6 +65,7 @@ export interface AskRequest {
   limit?: number;
   graph?: string;
   verbose?: boolean;
+  max_iterations?: number;
 }
 
 export interface CreateUserRequest {
@@ -39,7 +76,7 @@ export interface CreateUserRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Dreamer types — see docs/DREAMS.md
+// Dreamer / destructive ops
 // ---------------------------------------------------------------------------
 
 /** Explicit user/agent retraction. Distinct from supersession (which the
@@ -70,8 +107,7 @@ export interface CorrectResponse {
   remember: RememberResponse;
 }
 
-/** Aggregated dream-pass summary. The Dreamer records counts per visit
- * and the pool sums them. See docs/DREAMS.md. */
+/** Aggregated dream-pass summary returned by POST /maintain. */
 export interface DreamReport {
   facts_visited: number;
   links_written: number;
@@ -91,54 +127,52 @@ export interface CreateKeyRequest {
 // Response types
 // ---------------------------------------------------------------------------
 
-export interface UsageInfo {
-  [key: string]: unknown;
-}
-
-export interface TraceInfo {
-  [key: string]: unknown;
-}
-
 export interface RememberResponse {
   entities_created: number;
   entities_resolved: number;
   facts_written: number;
   contradictions_invalidated: number;
-  usage: UsageInfo;
-  trace: TraceInfo;
+  usage: LlmUsage;
+  trace: RememberTrace;
 }
 
-export interface BatchResult {
-  [key: string]: unknown;
+export interface BatchRememberResult {
+  statement: string;
+  ok: boolean;
+  facts_written?: number;
+  entities_created?: number;
+  error?: string;
 }
 
 export interface RememberBatchResponse {
   total: number;
   succeeded: number;
   failed: number;
-  results: BatchResult[];
+  results: BatchRememberResult[];
 }
 
-export interface GraphNode {
-  [key: string]: unknown;
-}
-
-export interface GraphEdge {
-  [key: string]: unknown;
+export interface ContextFact {
+  fact: string;
+  subject: string;
+  relation_type: string;
+  object: string;
+  confidence: number;
+  salience: number;
+  valid_at: string;
+  edge_id: number;
+  hops: number;
+  source_agents: string[];
+  memory_tier: string;
 }
 
 export interface ContextResponse {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-export interface Fact {
-  [key: string]: unknown;
+  facts: ContextFact[];
 }
 
 export interface AskResponse {
   answer: string;
-  facts?: Fact[];
+  facts?: ContextFact[];
+  iterations: number;
 }
 
 export interface CreateUserResponse {
@@ -176,6 +210,23 @@ export interface ListKeysResponse {
 export interface HealthResponse {
   status: string;
   graph: string;
+}
+
+export interface GraphsListResponse {
+  default: string;
+  graphs: string[];
+}
+
+export interface AuditEntry {
+  id: string;
+  user_id: string;
+  action: string;
+  details: string;
+  timestamp: string;
+}
+
+export interface AuditResponse {
+  entries: AuditEntry[];
 }
 
 // ---------------------------------------------------------------------------

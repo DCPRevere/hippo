@@ -7,11 +7,12 @@ import {
   RateLimitError,
 } from "../src/errors.js";
 import {
-  findNode,
+  findSubject,
   factsAbout,
   isDuplicate,
   failures,
 } from "../src/helpers.js";
+import type { ContextFact, ContextResponse, RememberResponse } from "../src/models.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,6 +41,35 @@ function sseResponse(events: Array<{ event?: string; data: string }>): Response 
     status: 200,
     headers: { "Content-Type": "text/event-stream" },
   });
+}
+
+function fact(overrides: Partial<ContextFact> = {}): ContextFact {
+  return {
+    fact: "Alice works at Acme",
+    subject: "Alice",
+    relation_type: "WORKS_AT",
+    object: "Acme",
+    confidence: 0.95,
+    salience: 1,
+    valid_at: "2025-01-01T00:00:00Z",
+    edge_id: 42,
+    hops: 0,
+    source_agents: ["test"],
+    memory_tier: "long_term",
+    ...overrides,
+  };
+}
+
+function rememberBody(over: Partial<RememberResponse> = {}): RememberResponse {
+  return {
+    entities_created: 0,
+    entities_resolved: 0,
+    facts_written: 0,
+    contradictions_invalidated: 0,
+    usage: { llm_calls: 0, embed_calls: 0, input_tokens: 0, output_tokens: 0 },
+    trace: { operations: [], execution: [] },
+    ...over,
+  };
 }
 
 let fetchSpy: ReturnType<typeof vi.fn>;
@@ -107,41 +137,31 @@ describe("Authorization header", () => {
 
 describe("remember", () => {
   it("posts a statement and returns result", async () => {
-    const body = {
-      entities_created: 1,
-      entities_resolved: 0,
-      facts_written: 1,
-      contradictions_invalidated: 0,
-      usage: {},
-      trace: {},
-    };
-    fetchSpy.mockResolvedValue(jsonResponse(body));
+    fetchSpy.mockResolvedValue(jsonResponse(rememberBody({ facts_written: 1, entities_created: 1 })));
     const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
 
     const result = await client.remember({ statement: "Alice likes cats" });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/remember",
+      "http://localhost:3000/api/remember",
       expect.objectContaining({ method: "POST" }),
     );
     expect(result.facts_written).toBe(1);
   });
 
   it("sends optional fields", async () => {
-    fetchSpy.mockResolvedValue(jsonResponse({
-      entities_created: 0, entities_resolved: 0,
-      facts_written: 0, contradictions_invalidated: 0,
-      usage: {}, trace: {},
-    }));
+    fetchSpy.mockResolvedValue(jsonResponse(rememberBody()));
     const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
     await client.remember({
       statement: "x",
       source_agent: "test",
+      source_credibility_hint: 0.7,
       graph: "g",
       ttl_secs: 60,
     });
     const sent = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(sent.source_agent).toBe("test");
+    expect(sent.source_credibility_hint).toBe(0.7);
     expect(sent.graph).toBe("g");
     expect(sent.ttl_secs).toBe(60);
   });
@@ -155,34 +175,175 @@ describe("rememberBatch", () => {
 
     const result = await client.rememberBatch({ statements: ["a", "b"] });
 
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/remember/batch",
+      expect.objectContaining({ method: "POST" }),
+    );
     expect(result.total).toBe(2);
     expect(result.succeeded).toBe(2);
   });
 });
 
 describe("context", () => {
-  it("returns nodes and edges", async () => {
-    const body = { nodes: [{ id: "1" }], edges: [{ from: "1", to: "2" }] };
-    fetchSpy.mockResolvedValue(jsonResponse(body));
+  it("returns a list of facts", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ facts: [fact()] }));
     const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
 
     const result = await client.context({ query: "Alice" });
 
-    expect(result.nodes).toHaveLength(1);
-    expect(result.edges).toHaveLength(1);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/context",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0].subject).toBe("Alice");
+  });
+
+  it("sends advanced fields", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ facts: [] }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.context({
+      query: "q",
+      memory_tier_filter: "working",
+      at: "2025-01-01T00:00:00Z",
+      scoring: {
+        w_relevance: 0.6, w_confidence: 0.1, w_recency: 0.2,
+        w_salience: 0.1, mmr_lambda: 0.5,
+      },
+    });
+    const sent = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(sent.memory_tier_filter).toBe("working");
+    expect(sent.scoring.w_relevance).toBe(0.6);
   });
 });
 
 describe("ask", () => {
-  it("returns an answer", async () => {
-    const body = { answer: "Yes", facts: [{ text: "Alice likes cats" }] };
-    fetchSpy.mockResolvedValue(jsonResponse(body));
+  it("returns an answer with iterations", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ answer: "Yes", facts: [fact()], iterations: 1 }));
     const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
 
     const result = await client.ask({ question: "Does Alice like cats?" });
 
     expect(result.answer).toBe("Yes");
     expect(result.facts).toHaveLength(1);
+    expect(result.iterations).toBe(1);
+  });
+
+  it("sends max_iterations", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ answer: "x", iterations: 3 }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.ask({ question: "q", max_iterations: 3 });
+    const sent = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(sent.max_iterations).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REST resources, retract / correct, maintain
+// ---------------------------------------------------------------------------
+
+describe("REST resources", () => {
+  it("getEntity hits /api/entities/{id}", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ id: "alice" }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.getEntity("alice");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/entities/alice",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("deleteEntity returns the body", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ id: "alice", edges_invalidated: 3 }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    const out = await client.deleteEntity("alice");
+    expect((out as Record<string, unknown>).edges_invalidated).toBe(3);
+  });
+
+  it("entityEdges hits /edges path", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse([]));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.entityEdges("alice", { graph: "g1" });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/entities/alice/edges?graph=g1",
+      expect.anything(),
+    );
+  });
+
+  it("getEdge by numeric id", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ edge_id: 42 }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.getEdge(42);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/edges/42",
+      expect.anything(),
+    );
+  });
+
+  it("edgeProvenance hits provenance subpath", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ edge_id: 42, supersedes: [] }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.edgeProvenance(42);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/edges/42/provenance",
+      expect.anything(),
+    );
+  });
+});
+
+describe("retract / correct / maintain", () => {
+  it("retract POSTs to /api/retract", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ edge_id: 7 }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    const out = await client.retract({ edge_id: 7, reason: "bad" });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/retract",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(out.edge_id).toBe(7);
+  });
+
+  it("correct POSTs to /api/correct", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({
+      retracted_edge_id: 7,
+      remember: rememberBody({ facts_written: 1 }),
+    }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    const out = await client.correct({ edge_id: 7, statement: "Alice is a dentist" });
+    expect(out.retracted_edge_id).toBe(7);
+  });
+
+  it("dream/maintain POSTs to /api/maintain", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({
+      facts_visited: 1, links_written: 0, inferences_written: 0,
+      supersessions_written: 0, contradictions_seen: 0, consolidations_written: 0,
+      tokens_used: 0, duration_ms: 0,
+    }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.dream();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/maintain",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
+describe("graphs", () => {
+  it("listGraphs returns names", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ default: "default", graphs: ["default"] }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    const out = await client.listGraphs();
+    expect(out.default).toBe("default");
+  });
+
+  it("dropGraph DELETE", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.dropGraph("other");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/graphs/drop/other",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });
 
@@ -202,7 +363,7 @@ describe("admin - users", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/admin/users",
+      "http://localhost:3000/api/admin/users",
       expect.objectContaining({ method: "POST" }),
     );
     expect(result.api_key).toBe("key123");
@@ -226,7 +387,7 @@ describe("admin - users", () => {
     await client.deleteUser("u1");
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/admin/users/u1",
+      "http://localhost:3000/api/admin/users/u1",
       expect.objectContaining({ method: "DELETE" }),
     );
   });
@@ -238,7 +399,7 @@ describe("admin - users", () => {
     await client.deleteUser("user with spaces");
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/admin/users/user%20with%20spaces",
+      "http://localhost:3000/api/admin/users/user%20with%20spaces",
       expect.anything(),
     );
   });
@@ -254,7 +415,7 @@ describe("admin - keys", () => {
     const result = await client.createKey("u1", { label: "my-key" });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/admin/users/u1/keys",
+      "http://localhost:3000/api/admin/users/u1/keys",
       expect.objectContaining({ method: "POST" }),
     );
     expect(result.api_key).toBe("sk-new");
@@ -278,8 +439,20 @@ describe("admin - keys", () => {
     await client.deleteKey("u1", "my-key");
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/admin/users/u1/keys/my-key",
+      "http://localhost:3000/api/admin/users/u1/keys/my-key",
       expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+});
+
+describe("audit", () => {
+  it("includes query params", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ entries: [] }));
+    const client = new HippoClient({ apiKey: "k", maxRetries: 0 });
+    await client.audit({ user_id: "alice", limit: 10 });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/audit?user_id=alice&limit=10",
+      expect.anything(),
     );
   });
 });
@@ -297,6 +470,16 @@ describe("health", () => {
 
     expect(result.status).toBe("ok");
     expect(result.graph).toBe("default");
+  });
+
+  it("hits root /health (no /api prefix)", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ status: "ok", graph: "default" }));
+    const client = new HippoClient({ baseUrl: "https://x.test", maxRetries: 0 });
+    await client.health();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://x.test/health",
+      expect.anything(),
+    );
   });
 });
 
@@ -439,7 +622,6 @@ describe("retry with exponential backoff", () => {
       expect((err as HippoError).status).toBe(502);
     }
 
-    // 1 initial + 2 retries = 3 attempts
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
@@ -482,10 +664,6 @@ describe("maxRetries: 0 disables retry", () => {
 
 describe("Retry-After header respect", () => {
   it("uses Retry-After seconds value for delay", async () => {
-    const sleepCalls: number[] = [];
-    const originalSetTimeout = globalThis.setTimeout;
-    // We can verify the Retry-After is used by checking the retry succeeds
-    // and that two calls were made
     fetchSpy
       .mockResolvedValueOnce(
         jsonResponse({ error: "rate limited" }, 429, { "Retry-After": "1" }),
@@ -500,7 +678,6 @@ describe("Retry-After header respect", () => {
   });
 
   it("uses Retry-After HTTP date value", async () => {
-    // Set a date 2 seconds in the future
     const futureDate = new Date(Date.now() + 2000).toUTCString();
     fetchSpy
       .mockResolvedValueOnce(
@@ -524,7 +701,6 @@ describe("timeout", () => {
   it("throws on timeout", async () => {
     fetchSpy.mockImplementation((_url: string, init: RequestInit) => {
       return new Promise((_resolve, reject) => {
-        // Listen for abort signal
         init.signal?.addEventListener("abort", () => {
           const err = new DOMException("The operation was aborted", "AbortError");
           reject(err);
@@ -553,7 +729,6 @@ describe("timeout", () => {
       });
     });
 
-    // Default timeout is long, but per-request is short
     const client = new HippoClient({ apiKey: "k", timeout: 60000, maxRetries: 0 });
 
     try {
@@ -584,18 +759,14 @@ describe("onRequest and onResponse hooks", () => {
 
   it("calls onRequest with body for POST", async () => {
     const onRequest = vi.fn();
-    fetchSpy.mockResolvedValue(jsonResponse({
-      entities_created: 0, entities_resolved: 0,
-      facts_written: 0, contradictions_invalidated: 0,
-      usage: {}, trace: {},
-    }));
+    fetchSpy.mockResolvedValue(jsonResponse(rememberBody()));
     const client = new HippoClient({ apiKey: "k", maxRetries: 0, onRequest });
 
     await client.remember({ statement: "test" });
 
     expect(onRequest).toHaveBeenCalledWith(
       "POST",
-      "http://localhost:3000/remember",
+      "http://localhost:3000/api/remember",
       { statement: "test" },
     );
   });
@@ -639,124 +810,72 @@ describe("onRequest and onResponse hooks", () => {
 // ---------------------------------------------------------------------------
 
 describe("response helpers", () => {
-  describe("findNode", () => {
-    it("finds a node by name", () => {
-      const response = {
-        nodes: [
-          { name: "Alice", type: "person" },
-          { name: "Bob", type: "person" },
-        ],
-        edges: [],
+  describe("findSubject", () => {
+    it("finds a fact by subject", () => {
+      const response: ContextResponse = {
+        facts: [fact({ subject: "Alice" }), fact({ subject: "Bob" })],
       };
-
-      const node = findNode(response, "Alice");
-      expect(node).toEqual({ name: "Alice", type: "person" });
+      const found = findSubject(response, "Alice");
+      expect(found?.subject).toBe("Alice");
     });
 
     it("returns undefined when not found", () => {
-      const response = {
-        nodes: [{ name: "Alice", type: "person" }],
-        edges: [],
-      };
-
-      const node = findNode(response, "Charlie");
-      expect(node).toBeUndefined();
+      const response: ContextResponse = { facts: [fact({ subject: "Alice" })] };
+      expect(findSubject(response, "Charlie")).toBeUndefined();
     });
   });
 
   describe("factsAbout", () => {
-    it("filters edges involving an entity as source", () => {
-      const response = {
-        nodes: [],
-        edges: [
-          { source: "Alice", target: "cats", relation: "likes" },
-          { source: "Bob", target: "dogs", relation: "likes" },
+    it("filters facts where entity is subject or object", () => {
+      const response: ContextResponse = {
+        facts: [
+          fact({ subject: "Alice", object: "Acme", edge_id: 1 }),
+          fact({ subject: "Bob", object: "Alice", edge_id: 2 }),
+          fact({ subject: "Carol", object: "Dave", edge_id: 3 }),
         ],
       };
-
-      const result = factsAbout(response, "Alice");
-      expect(result).toHaveLength(1);
-      expect(result[0]).toEqual({ source: "Alice", target: "cats", relation: "likes" });
-    });
-
-    it("filters edges involving an entity as target", () => {
-      const response = {
-        nodes: [],
-        edges: [
-          { source: "Alice", target: "cats", relation: "likes" },
-          { source: "Bob", target: "cats", relation: "likes" },
-        ],
-      };
-
-      const result = factsAbout(response, "cats");
-      expect(result).toHaveLength(2);
+      const out = factsAbout(response, "alice");
+      expect(out.map((f) => f.edge_id)).toEqual([1, 2]);
     });
 
     it("returns empty array when no matches", () => {
-      const response = {
-        nodes: [],
-        edges: [{ source: "Alice", target: "cats", relation: "likes" }],
-      };
-
+      const response: ContextResponse = { facts: [fact({ subject: "Alice" })] };
       expect(factsAbout(response, "Bob")).toHaveLength(0);
     });
   });
 
   describe("isDuplicate", () => {
     it("returns true when facts_written is 0", () => {
-      const response = {
-        entities_created: 0,
-        entities_resolved: 1,
-        facts_written: 0,
-        contradictions_invalidated: 0,
-        usage: {},
-        trace: {},
-      };
-
-      expect(isDuplicate(response)).toBe(true);
+      expect(isDuplicate(rememberBody({ facts_written: 0 }))).toBe(true);
     });
 
     it("returns false when facts_written is > 0", () => {
-      const response = {
-        entities_created: 1,
-        entities_resolved: 0,
-        facts_written: 2,
-        contradictions_invalidated: 0,
-        usage: {},
-        trace: {},
-      };
-
-      expect(isDuplicate(response)).toBe(false);
+      expect(isDuplicate(rememberBody({ facts_written: 2 }))).toBe(false);
     });
   });
 
   describe("failures", () => {
     it("filters failed results from batch response", () => {
-      const response = {
-        total: 3,
-        succeeded: 2,
-        failed: 1,
+      const failed = failures({
+        total: 3, succeeded: 2, failed: 1,
         results: [
-          { facts_written: 1 },
-          { error: "parse error" },
-          { facts_written: 2 },
+          { statement: "ok1", ok: true },
+          { statement: "bad", ok: false, error: "parse error" },
+          { statement: "ok2", ok: true },
         ],
-      };
-
-      const failed = failures(response);
+      });
       expect(failed).toHaveLength(1);
-      expect(failed[0]).toEqual({ error: "parse error" });
+      expect(failed[0].error).toBe("parse error");
     });
 
     it("returns empty array when no failures", () => {
-      const response = {
-        total: 2,
-        succeeded: 2,
-        failed: 0,
-        results: [{ facts_written: 1 }, { facts_written: 2 }],
-      };
-
-      expect(failures(response)).toHaveLength(0);
+      expect(failures({
+        total: 2, succeeded: 2, failed: 0,
+        results: [
+          { statement: "a", ok: true },
+          { statement: "b", ok: true },
+        ],
+      })).toHaveLength(0);
     });
   });
 });
@@ -804,7 +923,7 @@ describe("events() SSE streaming", () => {
     expect(events[0].event).toBe("message");
   });
 
-  it("passes graph as query parameter", async () => {
+  it("hits /api/events with graph query parameter", async () => {
     fetchSpy.mockResolvedValue(sseResponse([]));
 
     const client = new HippoClient({ apiKey: "k" });
@@ -814,7 +933,7 @@ describe("events() SSE streaming", () => {
     }
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/events?graph=testdb",
+      "http://localhost:3000/api/events?graph=testdb",
       expect.anything(),
     );
   });
@@ -852,7 +971,6 @@ describe("events() SSE streaming", () => {
     const abortCtrl = new AbortController();
     const encoder = new TextEncoder();
 
-    // Create a stream that sends two events, with a delay between them
     const stream = new ReadableStream({
       async start(ctrl) {
         ctrl.enqueue(encoder.encode("event:tick\ndata:{\"n\":1}\n\n"));
@@ -871,7 +989,6 @@ describe("events() SSE streaming", () => {
 
     for await (const event of client.events({ signal: abortCtrl.signal })) {
       events.push(event);
-      // Abort after first event to stop iteration
       abortCtrl.abort();
       break;
     }

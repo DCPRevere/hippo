@@ -8,6 +8,7 @@ import random
 import time
 from email.utils import parsedate_to_datetime
 from typing import Any, AsyncIterator, Iterator
+from urllib.parse import urlencode
 
 import httpx
 
@@ -18,16 +19,25 @@ from hippo.exceptions import (
     RateLimitError,
 )
 from hippo.models import (
+    AskRequest,
     AskResponse,
+    AuditResponse,
+    ContextRequest,
     ContextResponse,
+    CorrectRequest,
+    CorrectResponse,
     CreateKeyResponse,
     CreateUserResponse,
     GraphEvent,
+    GraphsListResponse,
     HealthResponse,
     ListKeysResponse,
     ListUsersResponse,
     RememberBatchResponse,
+    RememberRequest,
     RememberResponse,
+    RetractRequest,
+    RetractResponse,
 )
 
 logger = logging.getLogger("hippo")
@@ -90,6 +100,27 @@ def _backoff_delay(attempt: int) -> float:
     return base + random.uniform(0, base * 0.5)
 
 
+# `/health` is the only endpoint exposed at the server root; everything else
+# lives under `/api`. We prepend it transparently so callers can pass plain
+# paths like `/remember`.
+_ROOT_PATHS = {"/health"}
+
+
+def _api_path(path: str) -> str:
+    if path.startswith("/api/") or path == "/api" or path in _ROOT_PATHS:
+        return path
+    return f"/api{path}"
+
+
+def _qs(params: dict[str, Any]) -> str:
+    pairs = [(k, v) for k, v in params.items() if v is not None]
+    return urlencode(pairs)
+
+
+def _drop_none(body: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in body.items() if v is not None}
+
+
 class HippoClient:
     """Synchronous client for the Hippo REST API."""
 
@@ -137,20 +168,21 @@ class HippoClient:
         json_body: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
+        full_path = _api_path(path)
         effective_timeout = timeout if timeout is not None else self._timeout
         last_exc: Exception | None = None
         attempts = self._max_retries + 1  # 1 initial + retries
 
         for attempt in range(attempts):
             try:
-                logger.debug("%s %s (attempt %d)", method, path, attempt + 1)
+                logger.debug("%s %s (attempt %d)", method, full_path, attempt + 1)
                 resp = self._client.request(
                     method,
-                    path,
+                    full_path,
                     json=json_body,
                     timeout=effective_timeout,
                 )
-                logger.debug("%s %s -> %d", method, path, resp.status_code)
+                logger.debug("%s %s -> %d", method, full_path, resp.status_code)
 
                 if resp.status_code in _RETRYABLE_STATUS_CODES and attempt < attempts - 1:
                     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
@@ -158,13 +190,13 @@ class HippoClient:
                         delay = retry_after
                         logger.warning(
                             "Rate limited on %s %s, retrying after %.1fs (Retry-After)",
-                            method, path, delay,
+                            method, full_path, delay,
                         )
                     else:
                         delay = _backoff_delay(attempt)
                         logger.warning(
                             "Retryable %d on %s %s, backing off %.1fs",
-                            resp.status_code, method, path, delay,
+                            resp.status_code, method, full_path, delay,
                         )
                     time.sleep(delay)
                     continue
@@ -176,7 +208,7 @@ class HippoClient:
                     delay = _backoff_delay(attempt)
                     logger.warning(
                         "Timeout on %s %s, backing off %.1fs",
-                        method, path, delay,
+                        method, full_path, delay,
                     )
                     time.sleep(delay)
                     continue
@@ -191,14 +223,25 @@ class HippoClient:
         _raise_for_status(resp)
         return resp.json()
 
-    def _get(self, path: str, *, timeout: float | None = None) -> dict[str, Any]:
+    def _get(self, path: str, *, timeout: float | None = None) -> Any:
         resp = self._request("GET", path, timeout=timeout)
         _raise_for_status(resp)
         return resp.json()
 
-    def _delete(self, path: str, *, timeout: float | None = None) -> None:
+    def _get_text(self, path: str, *, timeout: float | None = None) -> str:
+        resp = self._request("GET", path, timeout=timeout)
+        _raise_for_status(resp)
+        return resp.text
+
+    def _delete(self, path: str, *, timeout: float | None = None) -> Any:
         resp = self._request("DELETE", path, timeout=timeout)
         _raise_for_status(resp)
+        if not resp.content:
+            return None
+        try:
+            return resp.json()
+        except Exception:
+            return None
 
     # ── Core endpoints ──────────────────────────────────────────
 
@@ -207,17 +250,18 @@ class HippoClient:
         statement: str,
         *,
         source_agent: str | None = None,
+        source_credibility_hint: float | None = None,
         graph: str | None = None,
         ttl_secs: int | None = None,
         timeout: float | None = None,
     ) -> RememberResponse:
-        body: dict[str, Any] = {"statement": statement}
-        if source_agent is not None:
-            body["source_agent"] = source_agent
-        if graph is not None:
-            body["graph"] = graph
-        if ttl_secs is not None:
-            body["ttl_secs"] = ttl_secs
+        body = RememberRequest(
+            statement=statement,
+            source_agent=source_agent,
+            source_credibility_hint=source_credibility_hint,
+            graph=graph,
+            ttl_secs=ttl_secs,
+        ).model_dump(exclude_none=True)
         return RememberResponse.model_validate(self._post("/remember", body, timeout=timeout))
 
     def remember_batch(
@@ -247,16 +291,21 @@ class HippoClient:
         *,
         limit: int | None = None,
         max_hops: int | None = None,
+        memory_tier_filter: str | None = None,
         graph: str | None = None,
+        at: str | None = None,
+        scoring: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> ContextResponse:
-        body: dict[str, Any] = {"query": query}
-        if limit is not None:
-            body["limit"] = limit
-        if max_hops is not None:
-            body["max_hops"] = max_hops
-        if graph is not None:
-            body["graph"] = graph
+        body = _drop_none({
+            "query": query,
+            "limit": limit,
+            "max_hops": max_hops,
+            "memory_tier_filter": memory_tier_filter,
+            "graph": graph,
+            "at": at,
+            "scoring": scoring,
+        })
         return ContextResponse.model_validate(self._post("/context", body, timeout=timeout))
 
     def ask(
@@ -266,16 +315,127 @@ class HippoClient:
         limit: int | None = None,
         graph: str | None = None,
         verbose: bool | None = None,
+        max_iterations: int | None = None,
         timeout: float | None = None,
     ) -> AskResponse:
-        body: dict[str, Any] = {"question": question}
-        if limit is not None:
-            body["limit"] = limit
-        if graph is not None:
-            body["graph"] = graph
-        if verbose is not None:
-            body["verbose"] = verbose
+        body = _drop_none({
+            "question": question,
+            "limit": limit,
+            "graph": graph,
+            "verbose": verbose,
+            "max_iterations": max_iterations,
+        })
         return AskResponse.model_validate(self._post("/ask", body, timeout=timeout))
+
+    # ── REST resources ──────────────────────────────────────────
+
+    def get_entity(self, entity_id: str, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/entities/{entity_id}"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return self._get(path, timeout=timeout)
+
+    def delete_entity(self, entity_id: str, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/entities/{entity_id}"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        result = self._delete(path, timeout=timeout)
+        return result or {}
+
+    def entity_edges(self, entity_id: str, *, graph: str | None = None, timeout: float | None = None) -> list[dict[str, Any]]:
+        path = f"/entities/{entity_id}/edges"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return self._get(path, timeout=timeout)
+
+    def get_edge(self, edge_id: int, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/edges/{edge_id}"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return self._get(path, timeout=timeout)
+
+    def edge_provenance(self, edge_id: int, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/edges/{edge_id}/provenance"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return self._get(path, timeout=timeout)
+
+    # ── Destructive ops ─────────────────────────────────────────
+
+    def retract(
+        self,
+        edge_id: int,
+        *,
+        reason: str | None = None,
+        graph: str | None = None,
+        timeout: float | None = None,
+    ) -> RetractResponse:
+        body = RetractRequest(edge_id=edge_id, reason=reason, graph=graph).model_dump(exclude_none=True)
+        return RetractResponse.model_validate(self._post("/retract", body, timeout=timeout))
+
+    def correct(
+        self,
+        edge_id: int,
+        statement: str,
+        *,
+        reason: str | None = None,
+        source_agent: str | None = None,
+        graph: str | None = None,
+        timeout: float | None = None,
+    ) -> CorrectResponse:
+        body = CorrectRequest(
+            edge_id=edge_id,
+            statement=statement,
+            reason=reason,
+            source_agent=source_agent,
+            graph=graph,
+        ).model_dump(exclude_none=True)
+        return CorrectResponse.model_validate(self._post("/correct", body, timeout=timeout))
+
+    # ── Operations ──────────────────────────────────────────────
+
+    def maintain(self, *, timeout: float | None = None) -> dict[str, Any]:
+        return self._post("/maintain", {}, timeout=timeout)
+
+    def graph(
+        self,
+        *,
+        graph: str | None = None,
+        format: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        params = _qs({"graph": graph, "format": format})
+        path = "/graph" + (f"?{params}" if params else "")
+        if format in ("graphml", "csv"):
+            return self._get_text(path, timeout=timeout)
+        return self._get(path, timeout=timeout)
+
+    # ── Graphs ──────────────────────────────────────────────────
+
+    def list_graphs(self, *, timeout: float | None = None) -> GraphsListResponse:
+        return GraphsListResponse.model_validate(self._get("/graphs", timeout=timeout))
+
+    def drop_graph(self, name: str, *, timeout: float | None = None) -> dict[str, Any]:
+        result = self._delete(f"/graphs/drop/{name}", timeout=timeout)
+        return result or {}
+
+    def seed(self, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+        return self._post("/seed", payload, timeout=timeout)
+
+    def backup(self, *, graph: str | None = None, timeout: float | None = None) -> str:
+        body = _drop_none({"graph": graph})
+        resp = self._request("POST", "/admin/backup", json_body=body, timeout=timeout)
+        _raise_for_status(resp)
+        return resp.text
+
+    def restore(self, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+        return self._post("/admin/restore", payload, timeout=timeout)
+
+    def openapi(self, *, timeout: float | None = None) -> str:
+        return self._get_text("/openapi.yaml", timeout=timeout)
+
+    def metrics(self, *, timeout: float | None = None) -> str:
+        return self._get_text("/metrics", timeout=timeout)
 
     # ── Admin endpoints ─────────────────────────────────────────
 
@@ -314,6 +474,18 @@ class HippoClient:
     def delete_key(self, user_id: str, label: str, *, timeout: float | None = None) -> None:
         self._delete(f"/admin/users/{user_id}/keys/{label}", timeout=timeout)
 
+    def audit(
+        self,
+        *,
+        user_id: str | None = None,
+        action: str | None = None,
+        limit: int | None = None,
+        timeout: float | None = None,
+    ) -> AuditResponse:
+        params = _qs({"user_id": user_id, "action": action, "limit": limit})
+        path = "/admin/audit" + (f"?{params}" if params else "")
+        return AuditResponse.model_validate(self._get(path, timeout=timeout))
+
     # ── Observability ───────────────────────────────────────────
 
     def health(self, *, timeout: float | None = None) -> HealthResponse:
@@ -329,7 +501,7 @@ class HippoClient:
         effective_timeout = timeout if timeout is not None else self._timeout
         with self._client.stream(
             "GET",
-            "/events",
+            _api_path("/events"),
             params=params,
             timeout=effective_timeout,
         ) as resp:
@@ -401,20 +573,21 @@ class AsyncHippoClient:
         json_body: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
+        full_path = _api_path(path)
         effective_timeout = timeout if timeout is not None else self._timeout
         last_exc: Exception | None = None
         attempts = self._max_retries + 1
 
         for attempt in range(attempts):
             try:
-                logger.debug("%s %s (attempt %d)", method, path, attempt + 1)
+                logger.debug("%s %s (attempt %d)", method, full_path, attempt + 1)
                 resp = await self._client.request(
                     method,
-                    path,
+                    full_path,
                     json=json_body,
                     timeout=effective_timeout,
                 )
-                logger.debug("%s %s -> %d", method, path, resp.status_code)
+                logger.debug("%s %s -> %d", method, full_path, resp.status_code)
 
                 if resp.status_code in _RETRYABLE_STATUS_CODES and attempt < attempts - 1:
                     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
@@ -422,13 +595,13 @@ class AsyncHippoClient:
                         delay = retry_after
                         logger.warning(
                             "Rate limited on %s %s, retrying after %.1fs (Retry-After)",
-                            method, path, delay,
+                            method, full_path, delay,
                         )
                     else:
                         delay = _backoff_delay(attempt)
                         logger.warning(
                             "Retryable %d on %s %s, backing off %.1fs",
-                            resp.status_code, method, path, delay,
+                            resp.status_code, method, full_path, delay,
                         )
                     await asyncio.sleep(delay)
                     continue
@@ -440,7 +613,7 @@ class AsyncHippoClient:
                     delay = _backoff_delay(attempt)
                     logger.warning(
                         "Timeout on %s %s, backing off %.1fs",
-                        method, path, delay,
+                        method, full_path, delay,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -454,14 +627,25 @@ class AsyncHippoClient:
         _raise_for_status(resp)
         return resp.json()
 
-    async def _get(self, path: str, *, timeout: float | None = None) -> dict[str, Any]:
+    async def _get(self, path: str, *, timeout: float | None = None) -> Any:
         resp = await self._request("GET", path, timeout=timeout)
         _raise_for_status(resp)
         return resp.json()
 
-    async def _delete(self, path: str, *, timeout: float | None = None) -> None:
+    async def _get_text(self, path: str, *, timeout: float | None = None) -> str:
+        resp = await self._request("GET", path, timeout=timeout)
+        _raise_for_status(resp)
+        return resp.text
+
+    async def _delete(self, path: str, *, timeout: float | None = None) -> Any:
         resp = await self._request("DELETE", path, timeout=timeout)
         _raise_for_status(resp)
+        if not resp.content:
+            return None
+        try:
+            return resp.json()
+        except Exception:
+            return None
 
     # ── Core endpoints ──────────────────────────────────────────
 
@@ -470,17 +654,18 @@ class AsyncHippoClient:
         statement: str,
         *,
         source_agent: str | None = None,
+        source_credibility_hint: float | None = None,
         graph: str | None = None,
         ttl_secs: int | None = None,
         timeout: float | None = None,
     ) -> RememberResponse:
-        body: dict[str, Any] = {"statement": statement}
-        if source_agent is not None:
-            body["source_agent"] = source_agent
-        if graph is not None:
-            body["graph"] = graph
-        if ttl_secs is not None:
-            body["ttl_secs"] = ttl_secs
+        body = RememberRequest(
+            statement=statement,
+            source_agent=source_agent,
+            source_credibility_hint=source_credibility_hint,
+            graph=graph,
+            ttl_secs=ttl_secs,
+        ).model_dump(exclude_none=True)
         return RememberResponse.model_validate(await self._post("/remember", body, timeout=timeout))
 
     async def remember_batch(
@@ -510,16 +695,21 @@ class AsyncHippoClient:
         *,
         limit: int | None = None,
         max_hops: int | None = None,
+        memory_tier_filter: str | None = None,
         graph: str | None = None,
+        at: str | None = None,
+        scoring: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> ContextResponse:
-        body: dict[str, Any] = {"query": query}
-        if limit is not None:
-            body["limit"] = limit
-        if max_hops is not None:
-            body["max_hops"] = max_hops
-        if graph is not None:
-            body["graph"] = graph
+        body = _drop_none({
+            "query": query,
+            "limit": limit,
+            "max_hops": max_hops,
+            "memory_tier_filter": memory_tier_filter,
+            "graph": graph,
+            "at": at,
+            "scoring": scoring,
+        })
         return ContextResponse.model_validate(await self._post("/context", body, timeout=timeout))
 
     async def ask(
@@ -529,16 +719,127 @@ class AsyncHippoClient:
         limit: int | None = None,
         graph: str | None = None,
         verbose: bool | None = None,
+        max_iterations: int | None = None,
         timeout: float | None = None,
     ) -> AskResponse:
-        body: dict[str, Any] = {"question": question}
-        if limit is not None:
-            body["limit"] = limit
-        if graph is not None:
-            body["graph"] = graph
-        if verbose is not None:
-            body["verbose"] = verbose
+        body = _drop_none({
+            "question": question,
+            "limit": limit,
+            "graph": graph,
+            "verbose": verbose,
+            "max_iterations": max_iterations,
+        })
         return AskResponse.model_validate(await self._post("/ask", body, timeout=timeout))
+
+    # ── REST resources ──────────────────────────────────────────
+
+    async def get_entity(self, entity_id: str, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/entities/{entity_id}"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return await self._get(path, timeout=timeout)
+
+    async def delete_entity(self, entity_id: str, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/entities/{entity_id}"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        result = await self._delete(path, timeout=timeout)
+        return result or {}
+
+    async def entity_edges(self, entity_id: str, *, graph: str | None = None, timeout: float | None = None) -> list[dict[str, Any]]:
+        path = f"/entities/{entity_id}/edges"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return await self._get(path, timeout=timeout)
+
+    async def get_edge(self, edge_id: int, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/edges/{edge_id}"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return await self._get(path, timeout=timeout)
+
+    async def edge_provenance(self, edge_id: int, *, graph: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        path = f"/edges/{edge_id}/provenance"
+        if graph:
+            path += f"?{_qs({'graph': graph})}"
+        return await self._get(path, timeout=timeout)
+
+    # ── Destructive ops ─────────────────────────────────────────
+
+    async def retract(
+        self,
+        edge_id: int,
+        *,
+        reason: str | None = None,
+        graph: str | None = None,
+        timeout: float | None = None,
+    ) -> RetractResponse:
+        body = RetractRequest(edge_id=edge_id, reason=reason, graph=graph).model_dump(exclude_none=True)
+        return RetractResponse.model_validate(await self._post("/retract", body, timeout=timeout))
+
+    async def correct(
+        self,
+        edge_id: int,
+        statement: str,
+        *,
+        reason: str | None = None,
+        source_agent: str | None = None,
+        graph: str | None = None,
+        timeout: float | None = None,
+    ) -> CorrectResponse:
+        body = CorrectRequest(
+            edge_id=edge_id,
+            statement=statement,
+            reason=reason,
+            source_agent=source_agent,
+            graph=graph,
+        ).model_dump(exclude_none=True)
+        return CorrectResponse.model_validate(await self._post("/correct", body, timeout=timeout))
+
+    # ── Operations ──────────────────────────────────────────────
+
+    async def maintain(self, *, timeout: float | None = None) -> dict[str, Any]:
+        return await self._post("/maintain", {}, timeout=timeout)
+
+    async def graph(
+        self,
+        *,
+        graph: str | None = None,
+        format: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        params = _qs({"graph": graph, "format": format})
+        path = "/graph" + (f"?{params}" if params else "")
+        if format in ("graphml", "csv"):
+            return await self._get_text(path, timeout=timeout)
+        return await self._get(path, timeout=timeout)
+
+    # ── Graphs ──────────────────────────────────────────────────
+
+    async def list_graphs(self, *, timeout: float | None = None) -> GraphsListResponse:
+        return GraphsListResponse.model_validate(await self._get("/graphs", timeout=timeout))
+
+    async def drop_graph(self, name: str, *, timeout: float | None = None) -> dict[str, Any]:
+        result = await self._delete(f"/graphs/drop/{name}", timeout=timeout)
+        return result or {}
+
+    async def seed(self, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+        return await self._post("/seed", payload, timeout=timeout)
+
+    async def backup(self, *, graph: str | None = None, timeout: float | None = None) -> str:
+        body = _drop_none({"graph": graph})
+        resp = await self._request("POST", "/admin/backup", json_body=body, timeout=timeout)
+        _raise_for_status(resp)
+        return resp.text
+
+    async def restore(self, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+        return await self._post("/admin/restore", payload, timeout=timeout)
+
+    async def openapi(self, *, timeout: float | None = None) -> str:
+        return await self._get_text("/openapi.yaml", timeout=timeout)
+
+    async def metrics(self, *, timeout: float | None = None) -> str:
+        return await self._get_text("/metrics", timeout=timeout)
 
     # ── Admin endpoints ─────────────────────────────────────────
 
@@ -577,6 +878,18 @@ class AsyncHippoClient:
     async def delete_key(self, user_id: str, label: str, *, timeout: float | None = None) -> None:
         await self._delete(f"/admin/users/{user_id}/keys/{label}", timeout=timeout)
 
+    async def audit(
+        self,
+        *,
+        user_id: str | None = None,
+        action: str | None = None,
+        limit: int | None = None,
+        timeout: float | None = None,
+    ) -> AuditResponse:
+        params = _qs({"user_id": user_id, "action": action, "limit": limit})
+        path = "/admin/audit" + (f"?{params}" if params else "")
+        return AuditResponse.model_validate(await self._get(path, timeout=timeout))
+
     # ── Observability ───────────────────────────────────────────
 
     async def health(self, *, timeout: float | None = None) -> HealthResponse:
@@ -592,7 +905,7 @@ class AsyncHippoClient:
         effective_timeout = timeout if timeout is not None else self._timeout
         async with self._client.stream(
             "GET",
-            "/events",
+            _api_path("/events"),
             params=params,
             timeout=effective_timeout,
         ) as resp:

@@ -1,12 +1,13 @@
 pub use hippo_api::{
     // Request types
-    AskRequest, BatchRememberRequest, ContextRequest, RememberRequest,
+    AskRequest, BatchRememberRequest, ContextRequest, CorrectRequest, RememberRequest,
+    RetractRequest,
     // Response types
     AskResponse, BatchRememberResponse, BatchRememberResult, ContextFact, ContextResponse,
-    ErrorResponse, HealthResponse, LlmUsage, RememberResponse, RememberTrace,
-    OpExecutionTrace, GraphOp,
-    // Scoring
-    ScoringParams,
+    CorrectResponse, ErrorResponse, GraphOp, HealthResponse, LlmUsage, OpExecutionTrace,
+    OperationsResult, RememberResponse, RememberTrace, RetractResponse,
+    // Tuning
+    PipelineTuning, ScoringParams,
     // Enums
     MemoryTier,
     // Admin
@@ -59,4 +60,24 @@ pub struct ListKeysResponse {
 pub struct GraphEvent {
     pub event: String,
     pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GraphsListResponse {
+    pub default: String,
+    pub graphs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuditEntry {
+    pub id: String,
+    pub user_id: String,
+    pub action: String,
+    pub details: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuditResponse {
+    pub entries: Vec<AuditEntry>,
 }

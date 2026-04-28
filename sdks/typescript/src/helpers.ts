@@ -1,35 +1,33 @@
 import type {
-  BatchResult,
+  BatchRememberResult,
+  ContextFact,
   ContextResponse,
-  GraphEdge,
-  GraphNode,
   RememberBatchResponse,
   RememberResponse,
 } from "./models.js";
 
 /**
- * Find a node by name in a ContextResponse.
+ * Find the first fact whose subject matches `name` (case-insensitive).
  */
-export function findNode(
+export function findSubject(
   response: ContextResponse,
   name: string,
-): GraphNode | undefined {
-  return response.nodes.find(
-    (n) => (n as Record<string, unknown>).name === name,
-  );
+): ContextFact | undefined {
+  const lower = name.toLowerCase();
+  return response.facts.find((f) => f.subject.toLowerCase() === lower);
 }
 
 /**
- * Filter edges that involve a given entity name (as source or target).
+ * Filter facts where `entityName` is the subject or object (case-insensitive).
  */
 export function factsAbout(
   response: ContextResponse,
   entityName: string,
-): GraphEdge[] {
-  return response.edges.filter((e) => {
-    const edge = e as Record<string, unknown>;
-    return edge.source === entityName || edge.target === entityName;
-  });
+): ContextFact[] {
+  const lower = entityName.toLowerCase();
+  return response.facts.filter(
+    (f) => f.subject.toLowerCase() === lower || f.object.toLowerCase() === lower,
+  );
 }
 
 /**
@@ -42,9 +40,6 @@ export function isDuplicate(response: RememberResponse): boolean {
 /**
  * Filter failed results from a batch remember response.
  */
-export function failures(response: RememberBatchResponse): BatchResult[] {
-  return response.results.filter((r) => {
-    const result = r as Record<string, unknown>;
-    return result.error !== undefined;
-  });
+export function failures(response: RememberBatchResponse): BatchRememberResult[] {
+  return response.results.filter((r) => !r.ok);
 }

@@ -123,8 +123,17 @@ func (c *Client) logWarn(msg string, args ...any) {
 	}
 }
 
+// apiPath prepends "/api" to all paths except "/health", which is the only
+// route the server mounts at the root.
+func apiPath(path string) string {
+	if path == "/health" || strings.HasPrefix(path, "/api/") || path == "/api" {
+		return path
+	}
+	return "/api" + path
+}
+
 func (c *Client) newRequest(ctx context.Context, method, path string, body interface{}) (*http.Request, error) {
-	u := c.baseURL + path
+	u := c.baseURL + apiPath(path)
 
 	var bodyReader io.Reader
 	if body != nil {
@@ -374,6 +383,248 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// --- REST resources ---
+
+func entityPath(id string, graph *string) string {
+	p := "/entities/" + url.PathEscape(id)
+	if graph != nil {
+		p += "?graph=" + url.QueryEscape(*graph)
+	}
+	return p
+}
+
+func edgePath(id int64, suffix string, graph *string) string {
+	p := fmt.Sprintf("/edges/%d", id)
+	if suffix != "" {
+		p += "/" + suffix
+	}
+	if graph != nil {
+		p += "?graph=" + url.QueryEscape(*graph)
+	}
+	return p
+}
+
+// GetEntity fetches a single entity by ID.
+func (c *Client) GetEntity(ctx context.Context, id string, graph *string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodGet, entityPath(id, graph), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteEntity removes an entity by ID and invalidates all its edges.
+func (c *Client) DeleteEntity(ctx context.Context, id string, graph *string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodDelete, entityPath(id, graph), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EntityEdges returns all active edges originating from an entity.
+func (c *Client) EntityEdges(ctx context.Context, id string, graph *string) ([]map[string]any, error) {
+	var out []map[string]any
+	p := "/entities/" + url.PathEscape(id) + "/edges"
+	if graph != nil {
+		p += "?graph=" + url.QueryEscape(*graph)
+	}
+	if err := c.doRequest(ctx, http.MethodGet, p, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetEdge fetches a single edge by ID.
+func (c *Client) GetEdge(ctx context.Context, id int64, graph *string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodGet, edgePath(id, "", graph), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EdgeProvenance returns the supersession history for an edge.
+func (c *Client) EdgeProvenance(ctx context.Context, id int64, graph *string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodGet, edgePath(id, "provenance", graph), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// --- Destructive operations ---
+
+// Retract explicitly retracts a fact.
+func (c *Client) Retract(ctx context.Context, req *RetractRequest) (*RetractResponse, error) {
+	var out RetractResponse
+	if err := c.doRequest(ctx, http.MethodPost, "/retract", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Correct retracts an old fact and observes a new one in a single call.
+func (c *Client) Correct(ctx context.Context, req *CorrectRequest) (*CorrectResponse, error) {
+	var out CorrectResponse
+	if err := c.doRequest(ctx, http.MethodPost, "/correct", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// --- Operations ---
+
+// Maintain runs a single maintenance/Dreamer cycle.
+func (c *Client) Maintain(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodPost, "/maintain", struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Graph returns the full graph as JSON.
+func (c *Client) Graph(ctx context.Context, graph *string) (map[string]any, error) {
+	p := "/graph"
+	if graph != nil {
+		p += "?graph=" + url.QueryEscape(*graph)
+	}
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodGet, p, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GraphExport returns the graph in the requested format ("graphml" or "csv")
+// as a raw byte slice.
+func (c *Client) GraphExport(ctx context.Context, graph *string, format string) ([]byte, error) {
+	q := url.Values{}
+	q.Set("format", format)
+	if graph != nil {
+		q.Set("graph", *graph)
+	}
+	p := "/graph?" + q.Encode()
+	return c.getRaw(ctx, p)
+}
+
+// Metrics returns Prometheus metrics as raw text.
+func (c *Client) Metrics(ctx context.Context) ([]byte, error) {
+	return c.getRaw(ctx, "/metrics")
+}
+
+// OpenAPI returns the OpenAPI YAML document as raw text.
+func (c *Client) OpenAPI(ctx context.Context) ([]byte, error) {
+	return c.getRaw(ctx, "/openapi.yaml")
+}
+
+// --- Graphs ---
+
+// ListGraphs returns the registered graph names and the default graph.
+func (c *Client) ListGraphs(ctx context.Context) (*GraphsListResponse, error) {
+	var out GraphsListResponse
+	if err := c.doRequest(ctx, http.MethodGet, "/graphs", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DropGraph deletes a graph (admin only).
+func (c *Client) DropGraph(ctx context.Context, name string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodDelete, "/graphs/drop/"+url.PathEscape(name), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Seed inserts entities and edges directly. Body shape matches the server's
+// AdminSeedRequest.
+func (c *Client) Seed(ctx context.Context, body any) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodPost, "/seed", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Backup downloads the JSON backup payload for a graph as raw bytes.
+func (c *Client) Backup(ctx context.Context, graph *string) ([]byte, error) {
+	body := map[string]any{}
+	if graph != nil {
+		body["graph"] = *graph
+	}
+	ctx, cancel := c.contextWithTimeout(ctx)
+	defer cancel()
+	req, err := c.newRequest(ctx, http.MethodPost, "/admin/backup", body)
+	if err != nil {
+		return nil, err
+	}
+	return c.doRaw(req)
+}
+
+// Restore restores a backup payload into the target graph.
+func (c *Client) Restore(ctx context.Context, body any) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doRequest(ctx, http.MethodPost, "/admin/restore", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Audit returns recent audit log entries (admin only).
+func (c *Client) Audit(ctx context.Context, userID, action *string, limit *int) (*AuditResponse, error) {
+	q := url.Values{}
+	if userID != nil {
+		q.Set("user_id", *userID)
+	}
+	if action != nil {
+		q.Set("action", *action)
+	}
+	if limit != nil {
+		q.Set("limit", strconv.Itoa(*limit))
+	}
+	p := "/admin/audit"
+	if len(q) > 0 {
+		p += "?" + q.Encode()
+	}
+	var out AuditResponse
+	if err := c.doRequest(ctx, http.MethodGet, p, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// getRaw performs a GET and returns the raw response body. It applies the
+// client's timeout but does not retry — callers that need retries should fall
+// through doRequest with a typed body.
+func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
+	ctx, cancel := c.contextWithTimeout(ctx)
+	defer cancel()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.doRaw(req)
+}
+
+func (c *Client) doRaw(req *http.Request) ([]byte, error) {
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("hippo: read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &HippoError{StatusCode: resp.StatusCode, Message: string(data)}
+	}
+	return data, nil
 }
 
 // EventsOption configures the Events stream.

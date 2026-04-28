@@ -17,3 +17,5 @@ evals/longmemeval/results_*.json
 evals/longmemeval/hypotheses_*.jsonl
 hippo-api/Cargo.lock
 sdks/rust/Cargo.lock
+sdks/dotnet/**/bin/
+sdks/dotnet/**/obj/

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -85,6 +84,16 @@ public sealed class HippoClient : IDisposable
         }
     }
 
+    // `health` is the only endpoint mounted at the server root; everything
+    // else lives under `/api`. Prepend transparently so callers can pass
+    // bare paths like `remember`.
+    private static string ApiPath(string path)
+    {
+        if (path == "health" || path.StartsWith("api/", StringComparison.Ordinal) || path == "api")
+            return path;
+        return "api/" + path;
+    }
+
     // ── Core ──
 
     public Task<RememberResponse> RememberAsync(
@@ -102,6 +111,109 @@ public sealed class HippoClient : IDisposable
     public Task<AskResponse> AskAsync(
         AskRequest request, CancellationToken ct = default)
         => PostAsync<AskRequest, AskResponse>("ask", request, ct);
+
+    // ── Destructive ops ──
+
+    public Task<RetractResponse> RetractAsync(
+        RetractRequest request, CancellationToken ct = default)
+        => PostAsync<RetractRequest, RetractResponse>("retract", request, ct);
+
+    public Task<CorrectResponse> CorrectAsync(
+        CorrectRequest request, CancellationToken ct = default)
+        => PostAsync<CorrectRequest, CorrectResponse>("correct", request, ct);
+
+    // ── REST resources ──
+
+    public Task<JsonElement> GetEntityAsync(
+        string id, string? graph = null, CancellationToken ct = default)
+        => GetAsync<JsonElement>(WithGraph($"entities/{Uri.EscapeDataString(id)}", graph), ct);
+
+    public Task<JsonElement> DeleteEntityAsync(
+        string id, string? graph = null, CancellationToken ct = default)
+        => DeleteJsonAsync<JsonElement>(WithGraph($"entities/{Uri.EscapeDataString(id)}", graph), ct);
+
+    public Task<JsonElement> EntityEdgesAsync(
+        string id, string? graph = null, CancellationToken ct = default)
+        => GetAsync<JsonElement>(WithGraph($"entities/{Uri.EscapeDataString(id)}/edges", graph), ct);
+
+    public Task<JsonElement> GetEdgeAsync(
+        long id, string? graph = null, CancellationToken ct = default)
+        => GetAsync<JsonElement>(WithGraph($"edges/{id}", graph), ct);
+
+    public Task<JsonElement> EdgeProvenanceAsync(
+        long id, string? graph = null, CancellationToken ct = default)
+        => GetAsync<JsonElement>(WithGraph($"edges/{id}/provenance", graph), ct);
+
+    // ── Operations ──
+
+    public async Task<JsonElement> MaintainAsync(CancellationToken ct = default)
+    {
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, ApiPath("maintain"))
+            {
+                Content = JsonContent.Create(new { }, options: JsonOptions),
+            },
+            ct).ConfigureAwait(false);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct)
+            .ConfigureAwait(false))!;
+    }
+
+    public Task<JsonElement> GraphAsync(string? graph = null, CancellationToken ct = default)
+        => GetAsync<JsonElement>(WithGraph("graph", graph), ct);
+
+    public async Task<string> GraphExportAsync(
+        string format, string? graph = null, CancellationToken ct = default)
+    {
+        var path = $"graph?format={Uri.EscapeDataString(format)}";
+        if (graph is not null)
+            path += $"&graph={Uri.EscapeDataString(graph)}";
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, ApiPath(path)),
+            ct).ConfigureAwait(false);
+        return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<string> MetricsAsync(CancellationToken ct = default)
+    {
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, ApiPath("metrics")),
+            ct).ConfigureAwait(false);
+        return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<string> OpenApiAsync(CancellationToken ct = default)
+    {
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, ApiPath("openapi.yaml")),
+            ct).ConfigureAwait(false);
+        return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+    }
+
+    // ── Graphs ──
+
+    public Task<GraphsListResponse> ListGraphsAsync(CancellationToken ct = default)
+        => GetAsync<GraphsListResponse>("graphs", ct);
+
+    public Task<JsonElement> DropGraphAsync(string name, CancellationToken ct = default)
+        => DeleteJsonAsync<JsonElement>($"graphs/drop/{Uri.EscapeDataString(name)}", ct);
+
+    public Task<JsonElement> SeedAsync(object payload, CancellationToken ct = default)
+        => PostAsync<object, JsonElement>("seed", payload, ct);
+
+    public async Task<string> BackupAsync(string? graph = null, CancellationToken ct = default)
+    {
+        var body = graph is null ? (object)new { } : new { graph };
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, ApiPath("admin/backup"))
+            {
+                Content = JsonContent.Create(body, options: JsonOptions),
+            },
+            ct).ConfigureAwait(false);
+        return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+    }
+
+    public Task<JsonElement> RestoreAsync(object payload, CancellationToken ct = default)
+        => PostAsync<object, JsonElement>("admin/restore", payload, ct);
 
     // ── Admin ──
 
@@ -127,6 +239,17 @@ public sealed class HippoClient : IDisposable
         => DeleteAsync(
             $"admin/users/{Uri.EscapeDataString(userId)}/keys/{Uri.EscapeDataString(label)}", ct);
 
+    public Task<AuditResponse> AuditAsync(
+        string? userId = null, string? action = null, int? limit = null, CancellationToken ct = default)
+    {
+        var qs = new List<string>();
+        if (userId is not null) qs.Add($"user_id={Uri.EscapeDataString(userId)}");
+        if (action is not null) qs.Add($"action={Uri.EscapeDataString(action)}");
+        if (limit is not null) qs.Add($"limit={limit.Value}");
+        var path = qs.Count == 0 ? "admin/audit" : $"admin/audit?{string.Join("&", qs)}";
+        return GetAsync<AuditResponse>(path, ct);
+    }
+
     // ── Observability ──
 
     public Task<HealthResponse> HealthAsync(CancellationToken ct = default)
@@ -144,7 +267,7 @@ public sealed class HippoClient : IDisposable
     {
         var path = graph is null ? "events" : $"events?graph={Uri.EscapeDataString(graph)}";
 
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        var request = new HttpRequestMessage(HttpMethod.Get, ApiPath(path));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         _logger?.Debug($"SSE GET {path}");
@@ -178,7 +301,6 @@ public sealed class HippoClient : IDisposable
                 }
                 else if (line.Length == 0)
                 {
-                    // Empty line signals end of an SSE event.
                     if (eventType is not null || data is not null)
                     {
                         yield return new GraphEvent { Event = eventType, Data = data };
@@ -188,7 +310,6 @@ public sealed class HippoClient : IDisposable
                 }
             }
 
-            // Yield any trailing event without a final blank line.
             if (eventType is not null || data is not null)
             {
                 yield return new GraphEvent { Event = eventType, Data = data };
@@ -198,13 +319,16 @@ public sealed class HippoClient : IDisposable
 
     // ── HTTP helpers ──
 
+    private static string WithGraph(string path, string? graph) =>
+        graph is null ? path : $"{path}?graph={Uri.EscapeDataString(graph)}";
+
     private async Task<TResponse> PostAsync<TRequest, TResponse>(
         string path, TRequest body, CancellationToken ct)
     {
         using var response = await SendAsync(
             () =>
             {
-                var req = new HttpRequestMessage(HttpMethod.Post, path)
+                var req = new HttpRequestMessage(HttpMethod.Post, ApiPath(path))
                 {
                     Content = JsonContent.Create(body, options: JsonOptions),
                 };
@@ -219,7 +343,7 @@ public sealed class HippoClient : IDisposable
     private async Task<TResponse> GetAsync<TResponse>(string path, CancellationToken ct)
     {
         using var response = await SendAsync(
-            () => new HttpRequestMessage(HttpMethod.Get, path),
+            () => new HttpRequestMessage(HttpMethod.Get, ApiPath(path)),
             ct).ConfigureAwait(false);
 
         return (await response.Content.ReadFromJsonAsync<TResponse>(JsonOptions, ct)
@@ -229,8 +353,18 @@ public sealed class HippoClient : IDisposable
     private async Task DeleteAsync(string path, CancellationToken ct)
     {
         using var response = await SendAsync(
-            () => new HttpRequestMessage(HttpMethod.Delete, path),
+            () => new HttpRequestMessage(HttpMethod.Delete, ApiPath(path)),
             ct).ConfigureAwait(false);
+    }
+
+    private async Task<TResponse> DeleteJsonAsync<TResponse>(string path, CancellationToken ct)
+    {
+        using var response = await SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Delete, ApiPath(path)),
+            ct).ConfigureAwait(false);
+
+        return (await response.Content.ReadFromJsonAsync<TResponse>(JsonOptions, ct)
+            .ConfigureAwait(false))!;
     }
 
     /// <summary>
@@ -257,17 +391,14 @@ public sealed class HippoClient : IDisposable
             if (response.IsSuccessStatusCode)
                 return response;
 
-            // Check if retryable
             bool retryable = RetryableStatusCodes.Contains(response.StatusCode) && attempt < _maxRetries;
 
             if (!retryable)
             {
                 await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
-                // EnsureSuccessAsync always throws for non-success; this is unreachable.
                 return response;
             }
 
-            // Determine delay
             TimeSpan delay = GetRetryDelay(response, attempt, baseDelaySecs);
 
             _logger?.Warn($"Retry {attempt + 1}/{_maxRetries} after {delay.TotalMilliseconds:F0}ms " +
@@ -281,12 +412,10 @@ public sealed class HippoClient : IDisposable
 
     private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt, double baseDelaySecs)
     {
-        // Try Retry-After header first
         TimeSpan? retryAfter = ParseRetryAfter(response);
         if (retryAfter.HasValue)
             return retryAfter.Value;
 
-        // Exponential backoff with jitter
         double delaySecs = baseDelaySecs * Math.Pow(2, attempt);
         double jitter = Random.Shared.NextDouble() * delaySecs * 0.5;
         return TimeSpan.FromSeconds(delaySecs + jitter);
@@ -297,11 +426,9 @@ public sealed class HippoClient : IDisposable
         if (response.Headers.RetryAfter is null)
             return null;
 
-        // Seconds form
         if (response.Headers.RetryAfter.Delta.HasValue)
             return response.Headers.RetryAfter.Delta.Value;
 
-        // HTTP-date form
         if (response.Headers.RetryAfter.Date.HasValue)
         {
             var delay = response.Headers.RetryAfter.Date.Value - DateTimeOffset.UtcNow;

@@ -195,6 +195,16 @@ impl HippoClient {
         self.post("/remember", &body).await
     }
 
+    /// Send a fully-typed `RememberRequest`, including
+    /// `source_credibility_hint`. Prefer this when you need fields beyond
+    /// the convenience method [`Self::remember`].
+    pub async fn remember_with(
+        &self,
+        request: &RememberRequest,
+    ) -> Result<RememberResponse, Error> {
+        self.post("/remember", request).await
+    }
+
     pub async fn remember_batch(
         &self,
         statements: Vec<String>,
@@ -232,6 +242,15 @@ impl HippoClient {
         self.post("/context", &body).await
     }
 
+    /// Send a fully-typed `ContextRequest` with optional `memory_tier_filter`,
+    /// `at` (temporal slice), and custom `scoring`.
+    pub async fn context_with(
+        &self,
+        request: &ContextRequest,
+    ) -> Result<ContextResponse, Error> {
+        self.post("/context", request).await
+    }
+
     pub async fn ask(
         &self,
         question: &str,
@@ -247,6 +266,209 @@ impl HippoClient {
             max_iterations: 1,
         };
         self.post("/ask", &body).await
+    }
+
+    /// Send a fully-typed `AskRequest`, including `max_iterations`.
+    pub async fn ask_with(&self, request: &AskRequest) -> Result<AskResponse, Error> {
+        self.post("/ask", request).await
+    }
+
+    // -- REST resources -------------------------------------------------------
+
+    /// `GET /entities/{id}` — fetch a single entity. Response shape is the
+    /// server-side `Entity` record; returned as `serde_json::Value` because the
+    /// embedding vector and timestamps are not part of the public API crate.
+    pub async fn get_entity(
+        &self,
+        id: &str,
+        graph: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
+        self.get(&with_graph(&format!("/entities/{id}"), graph))
+            .await
+    }
+
+    /// `DELETE /entities/{id}`. Returns the server's confirmation payload
+    /// (`id`, `name`, `edges_invalidated`).
+    pub async fn delete_entity(
+        &self,
+        id: &str,
+        graph: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
+        let resp = self
+            .request(
+                reqwest::Method::DELETE,
+                &with_graph(&format!("/entities/{id}"), graph),
+                None::<&()>,
+            )
+            .await?;
+        resp.json::<serde_json::Value>()
+            .await
+            .map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    /// `GET /entities/{id}/edges`.
+    pub async fn entity_edges(
+        &self,
+        id: &str,
+        graph: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
+        self.get(&with_graph(&format!("/entities/{id}/edges"), graph))
+            .await
+    }
+
+    /// `GET /edges/{id}`.
+    pub async fn get_edge(
+        &self,
+        id: i64,
+        graph: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
+        self.get(&with_graph(&format!("/edges/{id}"), graph)).await
+    }
+
+    /// `GET /edges/{id}/provenance`.
+    pub async fn edge_provenance(
+        &self,
+        id: i64,
+        graph: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
+        self.get(&with_graph(&format!("/edges/{id}/provenance"), graph))
+            .await
+    }
+
+    // -- destructive operations ----------------------------------------------
+
+    /// `POST /retract` — explicit user/agent retraction of a fact.
+    pub async fn retract(&self, request: &RetractRequest) -> Result<RetractResponse, Error> {
+        self.post("/retract", request).await
+    }
+
+    /// `POST /correct` — retract an old fact and observe a new one in one call.
+    pub async fn correct(&self, request: &CorrectRequest) -> Result<CorrectResponse, Error> {
+        self.post("/correct", request).await
+    }
+
+    // -- operations / observability ------------------------------------------
+
+    /// `POST /maintain` — run a single maintenance cycle. Returns the server's
+    /// `DreamReport` as untyped JSON.
+    pub async fn maintain(&self) -> Result<serde_json::Value, Error> {
+        self.post("/maintain", &serde_json::json!({})).await
+    }
+
+    /// `GET /graph` — dump the full graph (defaults to JSON; pass `format` for
+    /// `graphml` or `csv` to get the raw export body as text).
+    pub async fn graph(
+        &self,
+        graph: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
+        self.get(&with_graph("/graph", graph)).await
+    }
+
+    /// `GET /graph?format=…` returning the raw export body.
+    pub async fn graph_export(
+        &self,
+        graph: Option<&str>,
+        format: &str,
+    ) -> Result<String, Error> {
+        let mut path = format!("/graph?format={format}");
+        if let Some(g) = graph {
+            path.push_str(&format!("&graph={g}"));
+        }
+        let resp = self
+            .request(reqwest::Method::GET, &path, None::<&()>)
+            .await?;
+        resp.text().await.map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    /// `GET /metrics` — Prometheus-format metrics as raw text.
+    pub async fn metrics(&self) -> Result<String, Error> {
+        let resp = self
+            .request(reqwest::Method::GET, "/metrics", None::<&()>)
+            .await?;
+        resp.text().await.map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    /// `GET /openapi.yaml` as raw text.
+    pub async fn openapi(&self) -> Result<String, Error> {
+        let resp = self
+            .request(reqwest::Method::GET, "/openapi.yaml", None::<&()>)
+            .await?;
+        resp.text().await.map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    // -- graphs ---------------------------------------------------------------
+
+    /// `GET /graphs` — list known graphs.
+    pub async fn list_graphs(&self) -> Result<GraphsListResponse, Error> {
+        self.get("/graphs").await
+    }
+
+    /// `DELETE /graphs/drop/{name}` — drop a graph (admin only).
+    pub async fn drop_graph(&self, name: &str) -> Result<serde_json::Value, Error> {
+        let resp = self
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/graphs/drop/{name}"),
+                None::<&()>,
+            )
+            .await?;
+        resp.json::<serde_json::Value>()
+            .await
+            .map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    /// `POST /seed` — admin direct seeding of entities/edges.
+    pub async fn seed(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, Error> {
+        self.post("/seed", body).await
+    }
+
+    /// `POST /admin/backup` — returns the backup payload as raw JSON text.
+    pub async fn backup(&self, graph: Option<&str>) -> Result<String, Error> {
+        let body = serde_json::json!({ "graph": graph });
+        let resp = self
+            .request(reqwest::Method::POST, "/admin/backup", Some(&body))
+            .await?;
+        resp.text().await.map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    /// `POST /admin/restore` — restore from a backup payload.
+    pub async fn restore(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, Error> {
+        self.post("/admin/restore", body).await
+    }
+
+    /// `GET /admin/audit` — admin audit log entries, newest first.
+    pub async fn audit(
+        &self,
+        user_id: Option<&str>,
+        action: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<AuditResponse, Error> {
+        let mut params: Vec<(&str, String)> = Vec::new();
+        if let Some(u) = user_id {
+            params.push(("user_id", u.to_string()));
+        }
+        if let Some(a) = action {
+            params.push(("action", a.to_string()));
+        }
+        if let Some(l) = limit {
+            params.push(("limit", l.to_string()));
+        }
+        let qs = if params.is_empty() {
+            String::new()
+        } else {
+            let pairs: Vec<String> = params
+                .into_iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
+            format!("?{}", pairs.join("&"))
+        };
+        self.get(&format!("/admin/audit{qs}")).await
     }
 
     // -- admin endpoints ------------------------------------------------------
@@ -300,6 +522,13 @@ impl HippoClient {
 
     pub async fn health(&self) -> Result<HealthResponse, Error> {
         self.get("/health").await
+    }
+}
+
+fn with_graph(path: &str, graph: Option<&str>) -> String {
+    match graph {
+        Some(g) => format!("{path}?graph={g}"),
+        None => path.to_string(),
     }
 }
 

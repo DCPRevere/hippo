@@ -21,7 +21,8 @@ print(result.facts_written)
 
 # Query context
 ctx = client.context("Tell me about Alice")
-print(ctx.nodes)
+for fact in ctx.facts:
+    print(f"{fact.subject} {fact.relation_type} {fact.object}")
 
 # Ask a question
 answer = client.ask("Where does Alice work?")

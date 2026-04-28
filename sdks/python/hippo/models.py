@@ -1,6 +1,38 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+# ── Shared / scoring ────────────────────────────────────────────
+
+
+class ScoringParams(BaseModel, extra="allow"):
+    w_relevance: float = 0.50
+    w_confidence: float = 0.10
+    w_recency: float = 0.25
+    w_salience: float = 0.15
+    mmr_lambda: float = 0.70
+
+
+class LlmUsage(BaseModel, extra="allow"):
+    llm_calls: int = 0
+    embed_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class OpExecutionTrace(BaseModel, extra="allow"):
+    op: str
+    outcome: str
+    details: str | None = None
+
+
+class RememberTrace(BaseModel, extra="allow"):
+    operations: list[dict[str, Any]] = Field(default_factory=list)
+    revised_operations: list[dict[str, Any]] | None = None
+    execution: list[OpExecutionTrace] = Field(default_factory=list)
 
 
 # ── Request models ──────────────────────────────────────────────
@@ -9,6 +41,7 @@ from pydantic import BaseModel
 class RememberRequest(BaseModel):
     statement: str
     source_agent: str | None = None
+    source_credibility_hint: float | None = None
     graph: str | None = None
     ttl_secs: int | None = None
 
@@ -25,7 +58,10 @@ class ContextRequest(BaseModel):
     query: str
     limit: int | None = None
     max_hops: int | None = None
+    memory_tier_filter: str | None = None
     graph: str | None = None
+    at: str | None = None
+    scoring: ScoringParams | None = None
 
 
 class AskRequest(BaseModel):
@@ -33,6 +69,21 @@ class AskRequest(BaseModel):
     limit: int | None = None
     graph: str | None = None
     verbose: bool | None = None
+    max_iterations: int | None = None
+
+
+class RetractRequest(BaseModel):
+    edge_id: int
+    reason: str | None = None
+    graph: str | None = None
+
+
+class CorrectRequest(BaseModel):
+    edge_id: int
+    statement: str
+    reason: str | None = None
+    source_agent: str | None = None
+    graph: str | None = None
 
 
 class CreateUserRequest(BaseModel):
@@ -54,6 +105,8 @@ class RememberResponse(BaseModel, extra="allow"):
     entities_resolved: int
     facts_written: int
     contradictions_invalidated: int
+    usage: LlmUsage | None = None
+    trace: RememberTrace | None = None
 
     @property
     def was_duplicate(self) -> bool:
@@ -62,7 +115,11 @@ class RememberResponse(BaseModel, extra="allow"):
 
 
 class BatchResultItem(BaseModel, extra="allow"):
-    pass
+    statement: str | None = None
+    ok: bool | None = None
+    facts_written: int | None = None
+    entities_created: int | None = None
+    error: str | None = None
 
 
 class RememberBatchResponse(BaseModel, extra="allow"):
@@ -74,40 +131,57 @@ class RememberBatchResponse(BaseModel, extra="allow"):
     @property
     def failures(self) -> list[BatchResultItem]:
         """Return the list of failed results."""
-        return [r for r in self.results if getattr(r, "error", None) is not None]
+        return [r for r in self.results if r.error is not None]
+
+
+class ContextFact(BaseModel, extra="allow"):
+    fact: str
+    subject: str
+    relation_type: str
+    object: str
+    confidence: float
+    salience: int
+    valid_at: str
+    edge_id: int
+    hops: int
+    source_agents: list[str]
+    memory_tier: str
 
 
 class ContextResponse(BaseModel, extra="allow"):
-    nodes: list[dict]
-    edges: list[dict]
+    facts: list[ContextFact]
 
-    def find_node(self, name: str) -> dict | None:
-        """Find a node by name/label (case-insensitive)."""
+    def find_subject(self, name: str) -> list[ContextFact]:
+        """Return facts whose subject matches `name` (case-insensitive)."""
         lower = name.lower()
-        for node in self.nodes:
-            if node.get("label", "").lower() == lower:
-                return node
-            if node.get("name", "").lower() == lower:
-                return node
-        return None
+        return [f for f in self.facts if f.subject.lower() == lower]
 
-    def facts_about(self, entity_name: str) -> list[dict]:
-        """Filter edges involving an entity by name (case-insensitive)."""
+    def facts_about(self, entity_name: str) -> list[ContextFact]:
+        """Return facts where `entity_name` is the subject or object
+        (case-insensitive)."""
         lower = entity_name.lower()
-        # Build a set of node IDs matching the entity name
-        node_ids: set[str] = set()
-        for node in self.nodes:
-            if node.get("label", "").lower() == lower or node.get("name", "").lower() == lower:
-                node_ids.add(str(node.get("id", "")))
         return [
-            edge for edge in self.edges
-            if str(edge.get("source", "")) in node_ids or str(edge.get("target", "")) in node_ids
+            f
+            for f in self.facts
+            if f.subject.lower() == lower or f.object.lower() == lower
         ]
 
 
 class AskResponse(BaseModel, extra="allow"):
     answer: str
-    facts: list[dict] | None = None
+    facts: list[ContextFact] | None = None
+    iterations: int = 1
+
+
+class RetractResponse(BaseModel, extra="allow"):
+    edge_id: int
+    reason: str | None = None
+
+
+class CorrectResponse(BaseModel, extra="allow"):
+    retracted_edge_id: int
+    reason: str | None = None
+    remember: RememberResponse
 
 
 class CreateUserResponse(BaseModel):
@@ -145,6 +219,23 @@ class ListKeysResponse(BaseModel):
 class HealthResponse(BaseModel, extra="allow"):
     status: str
     graph: str
+
+
+class GraphsListResponse(BaseModel, extra="allow"):
+    default: str
+    graphs: list[str]
+
+
+class AuditEntry(BaseModel, extra="allow"):
+    id: str
+    user_id: str
+    action: str
+    details: str
+    timestamp: str
+
+
+class AuditResponse(BaseModel, extra="allow"):
+    entries: list[AuditEntry]
 
 
 # ── SSE event model ─────────────────────────────────────────────

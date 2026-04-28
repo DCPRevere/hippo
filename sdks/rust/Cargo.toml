@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust client SDK for the Hippo knowledge graph API"
 
+# The SDK is published independently and is not part of the top-level
+# `hippo` workspace. Declare an empty workspace so cargo treats it as a
+# standalone package.
+[workspace]
+
 [dependencies]
 hippo-api = { path = "../../hippo-api" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -7,6 +7,7 @@ import {
 import type {
   AskRequest,
   AskResponse,
+  AuditResponse,
   ContextRequest,
   ContextResponse,
   CorrectRequest,
@@ -18,6 +19,7 @@ import type {
   DreamReport,
   EventsOptions,
   GraphEvent,
+  GraphsListResponse,
   HealthResponse,
   HippoClientOptions,
   ListKeysResponse,
@@ -43,6 +45,16 @@ function getEnv(name: string): string | undefined {
 
 const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 
+// `/health` is the only route the server mounts at the root; everything else
+// is under `/api`. We prepend it transparently so callers can pass plain
+// paths like `/remember`.
+function apiPath(path: string): string {
+  if (path === "/health" || path.startsWith("/api/") || path === "/api") {
+    return path;
+  }
+  return `/api${path}`;
+}
+
 /**
  * Parse a Retry-After header value into seconds.
  * Accepts either a number of seconds or an HTTP-date.
@@ -52,7 +64,6 @@ function parseRetryAfter(value: string): number | undefined {
   if (!Number.isNaN(asNumber) && asNumber >= 0) {
     return asNumber;
   }
-  // Try parsing as HTTP date
   const date = new Date(value);
   if (!Number.isNaN(date.getTime())) {
     const seconds = (date.getTime() - Date.now()) / 1000;
@@ -63,6 +74,18 @@ function parseRetryAfter(value: string): number | undefined {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function appendQuery(path: string, params: Record<string, string | number | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined) {
+      qs.set(k, String(v));
+    }
+  }
+  const s = qs.toString();
+  if (!s) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}${s}`;
 }
 
 export class HippoClient {
@@ -87,10 +110,11 @@ export class HippoClient {
   // HTTP helpers
   // ---------------------------------------------------------------------------
 
-  private buildHeaders(): Record<string, string> {
-    const h: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+  private buildHeaders(includeContentType = true): Record<string, string> {
+    const h: Record<string, string> = {};
+    if (includeContentType) {
+      h["Content-Type"] = "application/json";
+    }
     if (this.apiKey) {
       h["Authorization"] = `Bearer ${this.apiKey}`;
     }
@@ -101,15 +125,15 @@ export class HippoClient {
     method: string,
     path: string,
     body?: unknown,
-    options?: { timeout?: number },
+    options?: { timeout?: number; raw?: boolean },
   ): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const url = `${this.baseUrl}${apiPath(path)}`;
     const timeout = options?.timeout ?? this.defaultTimeout;
+    const raw = options?.raw ?? false;
     let lastError: unknown;
     let retryAfterOverride: number | undefined;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      // If this is a retry, wait before the attempt
       if (attempt > 0) {
         if (retryAfterOverride !== undefined && retryAfterOverride > 0) {
           await sleep(retryAfterOverride * 1000);
@@ -129,7 +153,7 @@ export class HippoClient {
 
       const init: RequestInit = {
         method,
-        headers: this.buildHeaders(),
+        headers: this.buildHeaders(body !== undefined),
         signal: controller.signal,
       };
       if (body !== undefined) {
@@ -141,7 +165,6 @@ export class HippoClient {
         res = await fetch(url, init);
       } catch (err) {
         clearTimeout(timer);
-        // AbortError from timeout — don't retry
         if (err instanceof DOMException || (err as Error)?.name === "AbortError") {
           throw new HippoError(`Request timed out after ${timeout}ms`, 0);
         }
@@ -157,24 +180,22 @@ export class HippoClient {
         if (res.status === 204) {
           return undefined as T;
         }
+        if (raw) {
+          return (await res.text()) as unknown as T;
+        }
         return (await res.json()) as T;
       }
 
-      // Check if we should retry
       if (RETRYABLE_STATUS_CODES.has(res.status) && attempt < this.maxRetries) {
-        // Respect Retry-After header if present
         const retryAfterHeader = res.headers.get("Retry-After");
         if (retryAfterHeader) {
           retryAfterOverride = parseRetryAfter(retryAfterHeader);
         }
-
-        // Consume the body to free resources
         await res.text().catch(() => "");
         lastError = res;
         continue;
       }
 
-      // Non-retryable error or retries exhausted — throw
       const text = await res.text().catch(() => "");
       let parsed: unknown;
       try {
@@ -206,7 +227,6 @@ export class HippoClient {
       }
     }
 
-    // Should not reach here, but just in case
     throw lastError ?? new HippoError("Request failed after retries", 0);
   }
 
@@ -264,19 +284,66 @@ export class HippoClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Dreamer operations
+  // REST resources
+  // ---------------------------------------------------------------------------
+
+  async getEntity(
+    id: string,
+    options?: { graph?: string; timeout?: number },
+  ): Promise<Record<string, unknown>> {
+    const path = appendQuery(`/entities/${encodeURIComponent(id)}`, { graph: options?.graph });
+    return this.request<Record<string, unknown>>("GET", path, undefined, options);
+  }
+
+  async deleteEntity(
+    id: string,
+    options?: { graph?: string; timeout?: number },
+  ): Promise<Record<string, unknown>> {
+    const path = appendQuery(`/entities/${encodeURIComponent(id)}`, { graph: options?.graph });
+    return this.request<Record<string, unknown>>("DELETE", path, undefined, options);
+  }
+
+  async entityEdges(
+    id: string,
+    options?: { graph?: string; timeout?: number },
+  ): Promise<Array<Record<string, unknown>>> {
+    const path = appendQuery(`/entities/${encodeURIComponent(id)}/edges`, { graph: options?.graph });
+    return this.request<Array<Record<string, unknown>>>("GET", path, undefined, options);
+  }
+
+  async getEdge(
+    id: number,
+    options?: { graph?: string; timeout?: number },
+  ): Promise<Record<string, unknown>> {
+    const path = appendQuery(`/edges/${id}`, { graph: options?.graph });
+    return this.request<Record<string, unknown>>("GET", path, undefined, options);
+  }
+
+  async edgeProvenance(
+    id: number,
+    options?: { graph?: string; timeout?: number },
+  ): Promise<Record<string, unknown>> {
+    const path = appendQuery(`/edges/${id}/provenance`, { graph: options?.graph });
+    return this.request<Record<string, unknown>>("GET", path, undefined, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Destructive ops
   // ---------------------------------------------------------------------------
 
   /** Trigger one dream pass synchronously and receive the aggregated report.
    * Useful for demos and evals; in production the Dreamer runs continuously
    * via the maintenance loop. */
   async dream(options?: { timeout?: number }): Promise<DreamReport> {
-    return this.request<DreamReport>("POST", "/maintain", undefined, options);
+    return this.request<DreamReport>("POST", "/maintain", {}, options);
   }
 
-  /** Explicit user/agent retraction. Marks an edge inactive with an audit
-   * reason. Distinct from supersession, which is what the Dreamer writes
-   * append-only. */
+  /** Alias for `dream()`. */
+  async maintain(options?: { timeout?: number }): Promise<DreamReport> {
+    return this.dream(options);
+  }
+
+  /** Explicit user/agent retraction. */
   async retract(
     params: RetractRequest,
     options?: { timeout?: number },
@@ -284,13 +351,69 @@ export class HippoClient {
     return this.request<RetractResponse>("POST", "/retract", params, options);
   }
 
-  /** Convenience: retract an old fact and observe a new one in one
-   * operation. */
+  /** Convenience: retract an old fact and observe a new one in one call. */
   async correct(
     params: CorrectRequest,
     options?: { timeout?: number },
   ): Promise<CorrectResponse> {
     return this.request<CorrectResponse>("POST", "/correct", params, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Graph operations
+  // ---------------------------------------------------------------------------
+
+  async graph(options?: { graph?: string; timeout?: number }): Promise<Record<string, unknown>> {
+    const path = appendQuery("/graph", { graph: options?.graph });
+    return this.request<Record<string, unknown>>("GET", path, undefined, options);
+  }
+
+  /** GET /graph?format=graphml|csv — returns the raw export text. */
+  async graphExport(
+    format: "graphml" | "csv",
+    options?: { graph?: string; timeout?: number },
+  ): Promise<string> {
+    const path = appendQuery("/graph", { graph: options?.graph, format });
+    return this.request<string>("GET", path, undefined, { ...options, raw: true });
+  }
+
+  async listGraphs(options?: { timeout?: number }): Promise<GraphsListResponse> {
+    return this.request<GraphsListResponse>("GET", "/graphs", undefined, options);
+  }
+
+  async dropGraph(
+    name: string,
+    options?: { timeout?: number },
+  ): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>(
+      "DELETE",
+      `/graphs/drop/${encodeURIComponent(name)}`,
+      undefined,
+      options,
+    );
+  }
+
+  async seed(payload: unknown, options?: { timeout?: number }): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("POST", "/seed", payload, options);
+  }
+
+  async backup(options?: { graph?: string; timeout?: number }): Promise<string> {
+    return this.request<string>("POST", "/admin/backup", { graph: options?.graph }, {
+      ...options,
+      raw: true,
+    });
+  }
+
+  async restore(payload: unknown, options?: { timeout?: number }): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("POST", "/admin/restore", payload, options);
+  }
+
+  async openapi(options?: { timeout?: number }): Promise<string> {
+    return this.request<string>("GET", "/openapi.yaml", undefined, { ...options, raw: true });
+  }
+
+  async metrics(options?: { timeout?: number }): Promise<string> {
+    return this.request<string>("GET", "/metrics", undefined, { ...options, raw: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -303,7 +426,7 @@ export class HippoClient {
       params.set("graph", options.graph);
     }
     const qs = params.toString();
-    const url = `${this.baseUrl}/events${qs ? `?${qs}` : ""}`;
+    const url = `${this.baseUrl}${apiPath("/events")}${qs ? `?${qs}` : ""}`;
 
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
@@ -340,7 +463,6 @@ export class HippoClient {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        // Keep the last incomplete line in the buffer
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
@@ -349,7 +471,6 @@ export class HippoClient {
           } else if (line.startsWith("data:")) {
             currentData += line.slice(5).trim();
           } else if (line === "") {
-            // Empty line = dispatch event
             if (currentData) {
               let parsed: unknown;
               try {
@@ -426,6 +547,17 @@ export class HippoClient {
       undefined,
       options,
     );
+  }
+
+  async audit(
+    options?: { user_id?: string; action?: string; limit?: number; timeout?: number },
+  ): Promise<AuditResponse> {
+    const path = appendQuery("/admin/audit", {
+      user_id: options?.user_id,
+      action: options?.action,
+      limit: options?.limit,
+    });
+    return this.request<AuditResponse>("GET", path, undefined, options);
   }
 
   // ---------------------------------------------------------------------------

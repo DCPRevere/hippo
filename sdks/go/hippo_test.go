@@ -43,6 +43,8 @@ func testServer(t *testing.T, statusCode int, response interface{}, rec *recorde
 	}))
 }
 
+func ptr[T any](v T) *T { return &v }
+
 func TestRemember(t *testing.T) {
 	want := RememberResponse{
 		EntitiesCreated:           2,
@@ -64,8 +66,8 @@ func TestRemember(t *testing.T) {
 	if rec.method != "POST" {
 		t.Errorf("method = %s, want POST", rec.method)
 	}
-	if rec.path != "/remember" {
-		t.Errorf("path = %s, want /remember", rec.path)
+	if rec.path != "/api/remember" {
+		t.Errorf("path = %s, want /api/remember", rec.path)
 	}
 	if rec.auth != "Bearer test-key" {
 		t.Errorf("auth = %q, want %q", rec.auth, "Bearer test-key")
@@ -75,6 +77,25 @@ func TestRemember(t *testing.T) {
 	}
 	if got.FactsWritten != want.FactsWritten {
 		t.Errorf("FactsWritten = %d, want %d", got.FactsWritten, want.FactsWritten)
+	}
+}
+
+func TestRememberWithCredibilityHint(t *testing.T) {
+	var rec recorded
+	srv := testServer(t, 200, RememberResponse{}, &rec)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	hint := float32(0.5)
+	_, err := c.Remember(context.Background(), &RememberRequest{
+		Statement:             "fact",
+		SourceCredibilityHint: &hint,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.body, "source_credibility_hint") {
+		t.Errorf("body should contain source_credibility_hint: %s", rec.body)
 	}
 }
 
@@ -91,8 +112,8 @@ func TestRememberBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.path != "/remember/batch" {
-		t.Errorf("path = %s, want /remember/batch", rec.path)
+	if rec.path != "/api/remember/batch" {
+		t.Errorf("path = %s, want /api/remember/batch", rec.path)
 	}
 	if got.Total != 2 || got.Succeeded != 2 {
 		t.Errorf("got %+v, want total=2 succeeded=2", got)
@@ -101,8 +122,19 @@ func TestRememberBatch(t *testing.T) {
 
 func TestContext(t *testing.T) {
 	want := ContextResponse{
-		Nodes: []Node{{ID: "1", Label: "Alice"}},
-		Edges: []Edge{{Source: "1", Target: "2", Label: "knows"}},
+		Facts: []ContextFact{{
+			Fact:         "Alice works at Acme",
+			Subject:      "Alice",
+			RelationType: "WORKS_AT",
+			Object:       "Acme",
+			Confidence:   0.95,
+			Salience:     1,
+			ValidAt:      "2025-01-01T00:00:00Z",
+			EdgeID:       42,
+			Hops:         0,
+			SourceAgents: []string{"test"},
+			MemoryTier:   "long_term",
+		}},
 	}
 	var rec recorded
 	srv := testServer(t, 200, want, &rec)
@@ -113,19 +145,42 @@ func TestContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.path != "/context" {
-		t.Errorf("path = %s, want /context", rec.path)
+	if rec.path != "/api/context" {
+		t.Errorf("path = %s, want /api/context", rec.path)
 	}
-	if len(got.Nodes) != 1 {
-		t.Errorf("nodes count = %d, want 1", len(got.Nodes))
+	if len(got.Facts) != 1 {
+		t.Fatalf("facts count = %d, want 1", len(got.Facts))
 	}
-	if len(got.Edges) != 1 {
-		t.Errorf("edges count = %d, want 1", len(got.Edges))
+	if got.Facts[0].Subject != "Alice" {
+		t.Errorf("Subject = %q, want Alice", got.Facts[0].Subject)
+	}
+}
+
+func TestContextWithAdvancedFields(t *testing.T) {
+	var rec recorded
+	srv := testServer(t, 200, ContextResponse{Facts: []ContextFact{}}, &rec)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	_, err := c.Context(context.Background(), &ContextRequest{
+		Query:            "q",
+		MemoryTierFilter: ptr("working"),
+		At:               ptr("2025-01-01T00:00:00Z"),
+		Scoring:          &ScoringParams{WRelevance: 0.5},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.body, "memory_tier_filter") {
+		t.Errorf("body missing memory_tier_filter: %s", rec.body)
+	}
+	if !strings.Contains(rec.body, "scoring") {
+		t.Errorf("body missing scoring: %s", rec.body)
 	}
 }
 
 func TestAsk(t *testing.T) {
-	want := AskResponse{Answer: "Yes, Alice knows Bob."}
+	want := AskResponse{Answer: "Yes, Alice knows Bob.", Iterations: 1}
 	var rec recorded
 	srv := testServer(t, 200, want, &rec)
 	defer srv.Close()
@@ -135,17 +190,173 @@ func TestAsk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.path != "/ask" {
-		t.Errorf("path = %s, want /ask", rec.path)
+	if rec.path != "/api/ask" {
+		t.Errorf("path = %s, want /api/ask", rec.path)
 	}
 	if got.Answer != want.Answer {
 		t.Errorf("answer = %q, want %q", got.Answer, want.Answer)
+	}
+	if got.Iterations != 1 {
+		t.Errorf("iterations = %d, want 1", got.Iterations)
+	}
+}
+
+func TestAskMaxIterations(t *testing.T) {
+	var rec recorded
+	srv := testServer(t, 200, AskResponse{Answer: "ok", Iterations: 3}, &rec)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	mi := 3
+	_, err := c.Ask(context.Background(), &AskRequest{Question: "q", MaxIterations: &mi})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.body, "max_iterations") {
+		t.Errorf("body missing max_iterations: %s", rec.body)
+	}
+}
+
+func TestRetract(t *testing.T) {
+	var rec recorded
+	srv := testServer(t, 200, RetractResponse{EdgeID: 7}, &rec)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	_, err := c.Retract(context.Background(), &RetractRequest{EdgeID: 7, Reason: ptr("wrong")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.path != "/api/retract" {
+		t.Errorf("path = %s, want /api/retract", rec.path)
+	}
+}
+
+func TestCorrect(t *testing.T) {
+	var rec recorded
+	want := CorrectResponse{
+		RetractedEdgeID: 7,
+		Remember:        RememberResponse{FactsWritten: 1},
+	}
+	srv := testServer(t, 200, want, &rec)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	got, err := c.Correct(context.Background(), &CorrectRequest{
+		EdgeID:    7,
+		Statement: "Alice is a dentist",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.path != "/api/correct" {
+		t.Errorf("path = %s, want /api/correct", rec.path)
+	}
+	if got.RetractedEdgeID != 7 {
+		t.Errorf("RetractedEdgeID = %d, want 7", got.RetractedEdgeID)
+	}
+}
+
+func TestRESTResources(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprint(w, `{"id":"alice"}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	if _, err := c.GetEntity(context.Background(), "alice", nil); err != nil {
+		t.Errorf("GetEntity: %v", err)
+	}
+	if _, err := c.DeleteEntity(context.Background(), "alice", nil); err != nil {
+		t.Errorf("DeleteEntity: %v", err)
+	}
+}
+
+func TestEntityEdges(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/entities/alice/edges" {
+			t.Errorf("path = %s, want /api/entities/alice/edges", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprint(w, `[]`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	if _, err := c.EntityEdges(context.Background(), "alice", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEdgeProvenance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/edges/42/provenance" {
+			t.Errorf("path = %s, want /api/edges/42/provenance", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprint(w, `{"edge_id":42,"supersedes":[]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	if _, err := c.EdgeProvenance(context.Background(), 42, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListGraphs(t *testing.T) {
+	srv := testServer(t, 200, GraphsListResponse{Default: "default", Graphs: []string{"default"}}, nil)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	got, err := c.ListGraphs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Default != "default" {
+		t.Errorf("Default = %q, want default", got.Default)
+	}
+}
+
+func TestMaintain(t *testing.T) {
+	srv := testServer(t, 200, map[string]any{"ok": true}, nil)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	if _, err := c.Maintain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAudit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "5" {
+			t.Errorf("limit = %q, want 5", r.URL.Query().Get("limit"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(AuditResponse{Entries: []AuditEntry{{ID: "1", UserID: "u", Action: "remember"}}})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, WithAPIKey("k"))
+	limit := 5
+	got, err := c.Audit(context.Background(), nil, nil, &limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 1 {
+		t.Errorf("entries = %d, want 1", len(got.Entries))
 	}
 }
 
 func TestHealth(t *testing.T) {
 	want := HealthResponse{Status: "ok", Graph: "default"}
-	srv := testServer(t, 200, want, nil)
+	var rec recorded
+	srv := testServer(t, 200, want, &rec)
 	defer srv.Close()
 
 	// Health should work without an API key.
@@ -156,6 +367,9 @@ func TestHealth(t *testing.T) {
 	}
 	if got.Status != "ok" {
 		t.Errorf("status = %q, want ok", got.Status)
+	}
+	if rec.path != "/health" {
+		t.Errorf("path = %q, want /health (no /api prefix)", rec.path)
 	}
 }
 
@@ -173,8 +387,8 @@ func TestCreateUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.path != "/admin/users" {
-		t.Errorf("path = %s, want /admin/users", rec.path)
+	if rec.path != "/api/admin/users" {
+		t.Errorf("path = %s, want /api/admin/users", rec.path)
 	}
 	if got.APIKey != "secret" {
 		t.Errorf("api_key = %q, want secret", got.APIKey)
@@ -213,8 +427,8 @@ func TestDeleteUser(t *testing.T) {
 	if rec.method != "DELETE" {
 		t.Errorf("method = %s, want DELETE", rec.method)
 	}
-	if rec.path != "/admin/users/alice" {
-		t.Errorf("path = %s, want /admin/users/alice", rec.path)
+	if rec.path != "/api/admin/users/alice" {
+		t.Errorf("path = %s, want /api/admin/users/alice", rec.path)
 	}
 }
 
@@ -228,8 +442,6 @@ func TestDeleteUserPathEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The raw request URI should contain the escaped form, not literal slashes
-	// in the user_id segment.
 	if strings.Contains(rec.requestURI, "user/with/slashes") {
 		t.Errorf("request URI was not escaped: %s", rec.requestURI)
 	}
@@ -249,8 +461,8 @@ func TestCreateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.path != "/admin/users/alice/keys" {
-		t.Errorf("path = %s, want /admin/users/alice/keys", rec.path)
+	if rec.path != "/api/admin/users/alice/keys" {
+		t.Errorf("path = %s, want /api/admin/users/alice/keys", rec.path)
 	}
 	if got.APIKey != "newkey" {
 		t.Errorf("api_key = %q, want newkey", got.APIKey)
@@ -286,8 +498,8 @@ func TestDeleteKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.path != "/admin/users/alice/keys/dev" {
-		t.Errorf("path = %s, want /admin/users/alice/keys/dev", rec.path)
+	if rec.path != "/api/admin/users/alice/keys/dev" {
+		t.Errorf("path = %s, want /api/admin/users/alice/keys/dev", rec.path)
 	}
 }
 
@@ -508,7 +720,6 @@ func TestRetryAfterHeaderSeconds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should have waited at least ~1 second for the Retry-After.
 	if elapsed < 900*time.Millisecond {
 		t.Errorf("expected at least ~1s delay for Retry-After, got %v", elapsed)
 	}
@@ -522,7 +733,6 @@ func TestRetryAfterHeaderHTTPDate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&calls, 1)
 		if n == 1 {
-			// Add 2 seconds to avoid sub-second rounding issues with RFC1123 (second granularity).
 			retryAt := time.Now().Add(2 * time.Second).UTC().Format(time.RFC1123)
 			w.Header().Set("Retry-After", retryAt)
 			w.WriteHeader(503)
@@ -542,7 +752,6 @@ func TestRetryAfterHeaderHTTPDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// RFC1123 has second granularity, so with 2s offset we expect at least 1s of actual delay.
 	if elapsed < 1*time.Second {
 		t.Errorf("expected at least ~1s delay for Retry-After HTTP date, got %v", elapsed)
 	}
@@ -613,7 +822,6 @@ func TestWithTimeoutNotAppliedWhenDeadlineSet(t *testing.T) {
 	srv := testServer(t, 200, HealthResponse{Status: "ok"}, nil)
 	defer srv.Close()
 
-	// Set a very short client timeout, but use a context with a generous deadline.
 	c := NewClient(srv.URL, WithTimeout(1*time.Millisecond))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -671,47 +879,28 @@ func TestExplicitAPIKeyOverridesEnv(t *testing.T) {
 
 // --- Response helper tests ---
 
-func TestFindNode(t *testing.T) {
-	resp := &ContextResponse{
-		Nodes: []Node{
-			{ID: "1", Label: "Alice"},
-			{ID: "2", Label: "Bob"},
-		},
-	}
-
-	if n := resp.FindNode("alice"); n == nil || n.ID != "1" {
-		t.Errorf("FindNode(alice) = %v, want node with ID 1", n)
-	}
-	if n := resp.FindNode("Bob"); n == nil || n.ID != "2" {
-		t.Errorf("FindNode(Bob) = %v, want node with ID 2", n)
-	}
-	if n := resp.FindNode("Charlie"); n != nil {
-		t.Errorf("FindNode(Charlie) = %v, want nil", n)
-	}
-}
-
 func TestFactsAbout(t *testing.T) {
 	resp := &ContextResponse{
-		Edges: []Edge{
-			{Source: "Alice", Target: "Bob", Label: "knows"},
-			{Source: "Bob", Target: "Charlie", Label: "likes"},
-			{Source: "Dave", Target: "Eve", Label: "married"},
+		Facts: []ContextFact{
+			{Subject: "Alice", Object: "Bob"},
+			{Subject: "Bob", Object: "Charlie"},
+			{Subject: "Dave", Object: "Eve"},
 		},
 	}
 
 	facts := resp.FactsAbout("bob")
 	if len(facts) != 2 {
-		t.Errorf("FactsAbout(bob) returned %d edges, want 2", len(facts))
+		t.Errorf("FactsAbout(bob) returned %d, want 2", len(facts))
 	}
 
 	facts = resp.FactsAbout("Dave")
 	if len(facts) != 1 {
-		t.Errorf("FactsAbout(Dave) returned %d edges, want 1", len(facts))
+		t.Errorf("FactsAbout(Dave) returned %d, want 1", len(facts))
 	}
 
 	facts = resp.FactsAbout("nobody")
 	if len(facts) != 0 {
-		t.Errorf("FactsAbout(nobody) returned %d edges, want 0", len(facts))
+		t.Errorf("FactsAbout(nobody) returned %d, want 0", len(facts))
 	}
 }
 
@@ -732,10 +921,10 @@ func TestBatchFailures(t *testing.T) {
 		Total:     3,
 		Succeeded: 2,
 		Failed:    1,
-		Results: []RememberResponse{
-			{FactsWritten: 2},
-			{FactsWritten: 0},
-			{FactsWritten: 1},
+		Results: []BatchRememberResult{
+			{Statement: "ok1", OK: true},
+			{Statement: "bad", OK: false, Error: ptr("oops")},
+			{Statement: "ok2", OK: true},
 		},
 	}
 
@@ -743,20 +932,8 @@ func TestBatchFailures(t *testing.T) {
 	if len(failures) != 1 {
 		t.Errorf("Failures() returned %d, want 1", len(failures))
 	}
-	if failures[0].FactsWritten != 0 {
-		t.Errorf("failure FactsWritten = %d, want 0", failures[0].FactsWritten)
-	}
-}
-
-func TestBatchNoFailures(t *testing.T) {
-	resp := &BatchRememberResponse{
-		Results: []RememberResponse{
-			{FactsWritten: 1},
-			{FactsWritten: 2},
-		},
-	}
-	if f := resp.Failures(); len(f) != 0 {
-		t.Errorf("Failures() returned %d, want 0", len(f))
+	if failures[0].Error == nil || *failures[0].Error != "oops" {
+		t.Errorf("failure error = %v, want oops", failures[0].Error)
 	}
 }
 
@@ -765,8 +942,8 @@ func TestBatchNoFailures(t *testing.T) {
 func TestEventsStream(t *testing.T) {
 	sseBody := "event: fact_created\ndata: {\"id\":1}\n\nevent: entity_resolved\ndata: {\"id\":2}\n\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/events" {
-			t.Errorf("path = %s, want /events", r.URL.Path)
+		if r.URL.Path != "/api/events" {
+			t.Errorf("path = %s, want /api/events", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
@@ -836,7 +1013,6 @@ func TestEventsContextCancel(t *testing.T) {
 		if ok {
 			flusher.Flush()
 		}
-		// Keep connection open until client disconnects.
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
@@ -851,7 +1027,6 @@ func TestEventsContextCancel(t *testing.T) {
 
 	cancel()
 
-	// Channel should close after context cancellation.
 	select {
 	case _, ok := <-ch:
 		if ok {
@@ -969,7 +1144,6 @@ func TestLoggerNilByDefault(t *testing.T) {
 	if c.logger != nil {
 		t.Error("expected nil logger by default")
 	}
-	// Should not panic with nil logger.
 	_, err := c.Health(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -4,9 +4,6 @@ using System.Text.Json;
 
 namespace Hippo.Sdk.Tests;
 
-/// <summary>
-/// A delegating handler that lets tests supply a lambda to handle requests.
-/// </summary>
 internal sealed class MockHttpHandler : HttpMessageHandler
 {
     private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _handler;
@@ -43,6 +40,31 @@ public class HippoClientTests
         return (client, handler);
     }
 
+    private static object SampleFact(string subject = "Alice", string @object = "Acme") => new
+    {
+        fact = $"{subject} works at {@object}",
+        subject,
+        relation_type = "WORKS_AT",
+        @object,
+        confidence = 0.95,
+        salience = 1,
+        valid_at = "2025-01-01T00:00:00Z",
+        edge_id = 42,
+        hops = 0,
+        source_agents = new[] { "test" },
+        memory_tier = "long_term",
+    };
+
+    private static object SampleRemember() => new
+    {
+        entities_created = 0,
+        entities_resolved = 0,
+        facts_written = 0,
+        contradictions_invalidated = 0,
+        usage = new { llm_calls = 0, embed_calls = 0, input_tokens = 0, output_tokens = 0 },
+        trace = new { operations = Array.Empty<object>(), execution = Array.Empty<object>() },
+    };
+
     // ── Auth header ──
 
     [Fact]
@@ -52,7 +74,7 @@ public class HippoClientTests
         var (client, _) = CreateClient((req, _) =>
         {
             captured = req.Headers.Authorization?.ToString();
-            return Task.FromResult(JsonResponse(new { status = "ok" }));
+            return Task.FromResult(JsonResponse(new { status = "ok", graph = "default" }));
         });
 
         await client.HealthAsync();
@@ -66,7 +88,7 @@ public class HippoClientTests
         var (client, _) = CreateClient((req, _) =>
         {
             hadAuth = req.Headers.Authorization is not null;
-            return Task.FromResult(JsonResponse(new { status = "ok" }));
+            return Task.FromResult(JsonResponse(new { status = "ok", graph = "default" }));
         }, apiKey: null);
 
         await client.HealthAsync();
@@ -78,18 +100,24 @@ public class HippoClientTests
     [Fact]
     public async Task HealthAsync_ReturnsStatus()
     {
-        var (client, _) = CreateClient((_, _) =>
-            Task.FromResult(JsonResponse(new { status = "healthy", graph = "default" })));
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { status = "healthy", graph = "default" }));
+        });
 
         var result = await client.HealthAsync();
         Assert.Equal("healthy", result.Status);
         Assert.Equal("default", result.Graph);
+        // /health is the only path served at the root, no /api prefix.
+        Assert.Equal("/health", path);
     }
 
     // ── Remember ──
 
     [Fact]
-    public async Task RememberAsync_PostsStatementAndReturnsResponse()
+    public async Task RememberAsync_PostsStatementToApiPrefix()
     {
         HttpMethod? method = null;
         string? path = null;
@@ -100,36 +128,27 @@ public class HippoClientTests
             method = req.Method;
             path = req.RequestUri?.AbsolutePath;
             body = await req.Content!.ReadAsStringAsync();
-            return JsonResponse(new
-            {
-                entities_created = 1,
-                entities_resolved = 2,
-                facts_written = 3,
-                contradictions_invalidated = 0,
-            });
+            return JsonResponse(SampleRemember());
         });
 
         var result = await client.RememberAsync(new RememberRequest
         {
             Statement = "Alice likes Bob",
             SourceAgent = "test",
+            SourceCredibilityHint = 0.7f,
             Graph = "g1",
             TtlSecs = 600,
         });
 
         Assert.Equal(HttpMethod.Post, method);
-        Assert.Equal("/remember", path);
+        Assert.Equal("/api/remember", path);
         Assert.Contains("\"statement\":\"Alice likes Bob\"", body);
         Assert.Contains("\"source_agent\":\"test\"", body);
+        Assert.Contains("\"source_credibility_hint\":0.7", body);
         Assert.Contains("\"graph\":\"g1\"", body);
         Assert.Contains("\"ttl_secs\":600", body);
-        Assert.Equal(1, result.EntitiesCreated);
-        Assert.Equal(2, result.EntitiesResolved);
-        Assert.Equal(3, result.FactsWritten);
-        Assert.Equal(0, result.ContradictionsInvalidated);
+        Assert.NotNull(result);
     }
-
-    // ── Remember Batch ──
 
     [Fact]
     public async Task RememberBatchAsync_PostsStatementsAndReturnsSummary()
@@ -147,8 +166,8 @@ public class HippoClientTests
                 failed = 0,
                 results = new[]
                 {
-                    new { entities_created = 1, entities_resolved = 0, facts_written = 1, contradictions_invalidated = 0 },
-                    new { entities_created = 0, entities_resolved = 1, facts_written = 1, contradictions_invalidated = 0 },
+                    new { statement = "A is B", ok = true, facts_written = 1, entities_created = 0 },
+                    new { statement = "C is D", ok = true, facts_written = 1, entities_created = 0 },
                 },
             });
         });
@@ -159,17 +178,18 @@ public class HippoClientTests
             Parallel = true,
         });
 
-        Assert.Equal("/remember/batch", path);
+        Assert.Equal("/api/remember/batch", path);
         Assert.Equal(2, result.Total);
         Assert.Equal(2, result.Succeeded);
         Assert.Equal(0, result.Failed);
         Assert.Equal(2, result.Results!.Length);
+        Assert.True(result.Results![0].Ok);
     }
 
     // ── Context ──
 
     [Fact]
-    public async Task ContextAsync_PostsQueryAndReturnsGraph()
+    public async Task ContextAsync_ReturnsListOfFacts()
     {
         string? path = null;
 
@@ -178,8 +198,7 @@ public class HippoClientTests
             path = req.RequestUri?.AbsolutePath;
             return Task.FromResult(JsonResponse(new
             {
-                nodes = new[] { new { name = "Alice", entity_type = "person" } },
-                edges = new[] { new { source = "Alice", target = "Bob", relation = "likes" } },
+                facts = new[] { SampleFact() },
             }));
         });
 
@@ -190,17 +209,42 @@ public class HippoClientTests
             MaxHops = 2,
         });
 
-        Assert.Equal("/context", path);
-        Assert.Single(result.Nodes!);
-        Assert.Equal("Alice", result.Nodes![0].Name);
-        Assert.Single(result.Edges!);
-        Assert.Equal("likes", result.Edges![0].Relation);
+        Assert.Equal("/api/context", path);
+        Assert.Single(result.Facts);
+        Assert.Equal("Alice", result.Facts[0].Subject);
+        Assert.Equal("WORKS_AT", result.Facts[0].RelationType);
+    }
+
+    [Fact]
+    public async Task ContextAsync_SendsAdvancedFields()
+    {
+        string? body = null;
+        var (client, _) = CreateClient(async (req, _) =>
+        {
+            body = await req.Content!.ReadAsStringAsync();
+            return JsonResponse(new { facts = Array.Empty<object>() });
+        });
+
+        await client.ContextAsync(new ContextRequest
+        {
+            Query = "q",
+            MemoryTierFilter = "working",
+            At = "2025-01-01T00:00:00Z",
+            Scoring = new ScoringParams
+            {
+                WRelevance = 0.6f, WConfidence = 0.1f, WRecency = 0.2f,
+                WSalience = 0.1f, MmrLambda = 0.5f,
+            },
+        });
+
+        Assert.Contains("memory_tier_filter", body);
+        Assert.Contains("scoring", body);
     }
 
     // ── Ask ──
 
     [Fact]
-    public async Task AskAsync_PostsQuestionAndReturnsAnswer()
+    public async Task AskAsync_ReturnsAnswerWithIterations()
     {
         string? path = null;
 
@@ -210,7 +254,8 @@ public class HippoClientTests
             return Task.FromResult(JsonResponse(new
             {
                 answer = "Bob",
-                facts = new[] { "Alice likes Bob" },
+                facts = new[] { SampleFact() },
+                iterations = 1,
             }));
         });
 
@@ -218,14 +263,172 @@ public class HippoClientTests
         {
             Question = "Who does Alice like?",
             Verbose = true,
+            MaxIterations = 1,
         });
 
-        Assert.Equal("/ask", path);
+        Assert.Equal("/api/ask", path);
         Assert.Equal("Bob", result.Answer);
         Assert.Single(result.Facts!);
+        Assert.Equal(1, result.Iterations);
     }
 
-    // ── Admin: Create User ──
+    // ── Retract / Correct ──
+
+    [Fact]
+    public async Task RetractAsync_PostsToApiRetract()
+    {
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { edge_id = 7, reason = "wrong" }));
+        });
+
+        var result = await client.RetractAsync(new RetractRequest { EdgeId = 7, Reason = "wrong" });
+        Assert.Equal("/api/retract", path);
+        Assert.Equal(7, result.EdgeId);
+    }
+
+    [Fact]
+    public async Task CorrectAsync_PostsToApiCorrect()
+    {
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new
+            {
+                retracted_edge_id = 7,
+                reason = (string?)null,
+                remember = SampleRemember(),
+            }));
+        });
+
+        var result = await client.CorrectAsync(new CorrectRequest
+        {
+            EdgeId = 7,
+            Statement = "Alice is a dentist",
+        });
+        Assert.Equal("/api/correct", path);
+        Assert.Equal(7, result.RetractedEdgeId);
+    }
+
+    // ── REST resources ──
+
+    [Fact]
+    public async Task GetEntityAsync_HitsApiPath()
+    {
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { id = "alice", name = "Alice" }));
+        });
+
+        var elem = await client.GetEntityAsync("alice");
+        Assert.Equal("/api/entities/alice", path);
+        Assert.Equal("alice", elem.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task DeleteEntityAsync_ReturnsConfirmation()
+    {
+        var (client, _) = CreateClient((_, _) =>
+            Task.FromResult(JsonResponse(new { id = "alice", name = "Alice", edges_invalidated = 3 })));
+
+        var elem = await client.DeleteEntityAsync("alice");
+        Assert.Equal(3, elem.GetProperty("edges_invalidated").GetInt32());
+    }
+
+    [Fact]
+    public async Task EntityEdgesAsync_HitsApiPath()
+    {
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(Array.Empty<object>()));
+        });
+        await client.EntityEdgesAsync("alice");
+        Assert.Equal("/api/entities/alice/edges", path);
+    }
+
+    [Fact]
+    public async Task EdgeProvenanceAsync_HitsApiPath()
+    {
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { edge_id = 42, supersedes = Array.Empty<object>() }));
+        });
+        await client.EdgeProvenanceAsync(42);
+        Assert.Equal("/api/edges/42/provenance", path);
+    }
+
+    // ── Maintain / graphs ──
+
+    [Fact]
+    public async Task MaintainAsync_PostsToApiMaintain()
+    {
+        string? path = null;
+        HttpMethod? method = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            method = req.Method;
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { ok = true }));
+        });
+        await client.MaintainAsync();
+        Assert.Equal(HttpMethod.Post, method);
+        Assert.Equal("/api/maintain", path);
+    }
+
+    [Fact]
+    public async Task ListGraphsAsync_HitsApiGraphs()
+    {
+        string? path = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { @default = "default", graphs = new[] { "default" } }));
+        });
+        var result = await client.ListGraphsAsync();
+        Assert.Equal("/api/graphs", path);
+        Assert.Equal("default", result.Default);
+    }
+
+    [Fact]
+    public async Task DropGraphAsync_HitsApiGraphsDrop()
+    {
+        string? path = null;
+        HttpMethod? method = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            method = req.Method;
+            path = req.RequestUri?.AbsolutePath;
+            return Task.FromResult(JsonResponse(new { ok = true }));
+        });
+        await client.DropGraphAsync("other");
+        Assert.Equal(HttpMethod.Delete, method);
+        Assert.Equal("/api/graphs/drop/other", path);
+    }
+
+    [Fact]
+    public async Task AuditAsync_BuildsQueryString()
+    {
+        string? query = null;
+        var (client, _) = CreateClient((req, _) =>
+        {
+            query = req.RequestUri?.Query;
+            return Task.FromResult(JsonResponse(new { entries = Array.Empty<object>() }));
+        });
+        await client.AuditAsync(userId: "alice", limit: 10);
+        Assert.Contains("user_id=alice", query);
+        Assert.Contains("limit=10", query);
+    }
+
+    // ── Admin ──
 
     [Fact]
     public async Task CreateUserAsync_PostsAndReturnsApiKey()
@@ -250,12 +453,10 @@ public class HippoClientTests
             Graphs = ["g1"],
         });
 
-        Assert.Equal("/admin/users", path);
+        Assert.Equal("/api/admin/users", path);
         Assert.Equal("u1", result.UserId);
         Assert.Equal("secret-key", result.ApiKey);
     }
-
-    // ── Admin: List Users ──
 
     [Fact]
     public async Task ListUsersAsync_ReturnsUserList()
@@ -275,8 +476,6 @@ public class HippoClientTests
         Assert.Equal(2, result.Users![0].KeyCount);
     }
 
-    // ── Admin: Delete User ──
-
     [Fact]
     public async Task DeleteUserAsync_SendsDeleteRequest()
     {
@@ -292,10 +491,8 @@ public class HippoClientTests
 
         await client.DeleteUserAsync("u1");
         Assert.Equal(HttpMethod.Delete, method);
-        Assert.Equal("/admin/users/u1", path);
+        Assert.Equal("/api/admin/users/u1", path);
     }
-
-    // ── Admin: Create Key ──
 
     [Fact]
     public async Task CreateKeyAsync_PostsLabelAndReturnsKey()
@@ -314,11 +511,9 @@ public class HippoClientTests
         });
 
         var result = await client.CreateKeyAsync("u1", new CreateKeyRequest { Label = "my-key" });
-        Assert.Equal("/admin/users/u1/keys", path);
+        Assert.Equal("/api/admin/users/u1/keys", path);
         Assert.Equal("new-secret", result.ApiKey);
     }
-
-    // ── Admin: List Keys ──
 
     [Fact]
     public async Task ListKeysAsync_ReturnsKeyList()
@@ -338,12 +533,10 @@ public class HippoClientTests
         });
 
         var result = await client.ListKeysAsync("u1");
-        Assert.Equal("/admin/users/u1/keys", path);
+        Assert.Equal("/api/admin/users/u1/keys", path);
         Assert.Single(result.Keys!);
         Assert.Equal("k1", result.Keys![0].Label);
     }
-
-    // ── Admin: Revoke Key ──
 
     [Fact]
     public async Task RevokeKeyAsync_SendsDeleteRequest()
@@ -360,7 +553,7 @@ public class HippoClientTests
 
         await client.RevokeKeyAsync("u1", "k1");
         Assert.Equal(HttpMethod.Delete, method);
-        Assert.Equal("/admin/users/u1/keys/k1", path);
+        Assert.Equal("/api/admin/users/u1/keys/k1", path);
     }
 
     // ── Error mapping ──
@@ -389,8 +582,6 @@ public class HippoClientTests
     [Fact]
     public void Dispose_WhenOwningHttpClient_DisposesIt()
     {
-        // When no HttpClient is provided, HippoClient creates and owns one.
-        // We just verify Dispose doesn't throw.
         var client = new HippoClient("http://localhost:21693", "key");
         client.Dispose();
     }
@@ -405,18 +596,13 @@ public class HippoClientTests
         var (client, _) = CreateClient(async (req, _) =>
         {
             body = await req.Content!.ReadAsStringAsync();
-            return JsonResponse(new
-            {
-                entities_created = 0,
-                entities_resolved = 0,
-                facts_written = 0,
-                contradictions_invalidated = 0,
-            });
+            return JsonResponse(SampleRemember());
         });
 
         await client.RememberAsync(new RememberRequest { Statement = "hello" });
 
         Assert.DoesNotContain("source_agent", body);
+        Assert.DoesNotContain("source_credibility_hint", body);
         Assert.DoesNotContain("graph", body);
         Assert.DoesNotContain("ttl_secs", body);
     }
@@ -436,7 +622,7 @@ public class HippoClientTests
                 {
                     Content = new StringContent("bad gateway"),
                 });
-            return Task.FromResult(JsonResponse(new { status = "ok" }));
+            return Task.FromResult(JsonResponse(new { status = "ok", graph = "default" }));
         }, maxRetries: 3);
 
         var result = await client.HealthAsync();
@@ -462,14 +648,13 @@ public class HippoClientTests
                 resp.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
                 return Task.FromResult(resp);
             }
-            return Task.FromResult(JsonResponse(new { status = "ok" }));
+            return Task.FromResult(JsonResponse(new { status = "ok", graph = "default" }));
         }, maxRetries: 3);
 
         await client.HealthAsync();
         sw.Stop();
 
         Assert.Equal(2, attempts);
-        // Should have waited at least ~1 second from Retry-After
         Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(900),
             $"Expected at least 900ms delay, got {sw.ElapsedMilliseconds}ms");
     }
@@ -509,7 +694,6 @@ public class HippoClientTests
 
         var ex = await Assert.ThrowsAsync<HippoException>(() => client.HealthAsync());
         Assert.Equal(503, ex.StatusCode);
-        // 1 initial + 2 retries = 3 attempts
         Assert.Equal(3, attempts);
     }
 
@@ -604,7 +788,7 @@ public class HippoClientTests
     }
 
     [Fact]
-    public async Task EventsAsync_PassesGraphQueryParam()
+    public async Task EventsAsync_HitsApiEventsAndPassesGraphParam()
     {
         string? capturedUri = null;
 
@@ -620,54 +804,54 @@ public class HippoClientTests
 
         await foreach (var _ in client.EventsAsync(graph: "myGraph")) { }
 
-        Assert.Contains("events?graph=myGraph", capturedUri!);
+        Assert.Contains("/api/events?graph=myGraph", capturedUri!);
     }
 
     // ── Response extension methods ──
 
     [Fact]
-    public void FindNode_ReturnsMatchingNode()
+    public void FindSubject_ReturnsMatchingFact()
     {
         var response = new ContextResponse
         {
-            Nodes = [
-                new ContextNode { Name = "Alice", EntityType = "person" },
-                new ContextNode { Name = "Bob", EntityType = "person" },
+            Facts = [
+                new ContextFact { Fact = "f", Subject = "Alice", RelationType = "x", Object = "y", ValidAt = "t", MemoryTier = "long_term" },
+                new ContextFact { Fact = "f", Subject = "Bob", RelationType = "x", Object = "y", ValidAt = "t", MemoryTier = "long_term" },
             ],
         };
 
-        var node = response.FindNode("alice"); // case-insensitive
-        Assert.NotNull(node);
-        Assert.Equal("Alice", node!.Name);
+        var fact = response.FindSubject("alice");
+        Assert.NotNull(fact);
+        Assert.Equal("Alice", fact!.Subject);
     }
 
     [Fact]
-    public void FindNode_ReturnsNullWhenNotFound()
+    public void FindSubject_ReturnsNullWhenNotFound()
     {
         var response = new ContextResponse
         {
-            Nodes = [new ContextNode { Name = "Alice" }],
+            Facts = [new ContextFact { Fact = "f", Subject = "Alice", RelationType = "x", Object = "y", ValidAt = "t", MemoryTier = "long_term" }],
         };
 
-        Assert.Null(response.FindNode("Charlie"));
+        Assert.Null(response.FindSubject("Charlie"));
     }
 
     [Fact]
-    public void FactsAbout_FiltersEdgesInvolvingEntity()
+    public void FactsAbout_FiltersFactsInvolvingEntity()
     {
         var response = new ContextResponse
         {
-            Edges = [
-                new ContextEdge { Source = "Alice", Target = "Bob", Relation = "likes" },
-                new ContextEdge { Source = "Charlie", Target = "Diana", Relation = "knows" },
-                new ContextEdge { Source = "Bob", Target = "Alice", Relation = "trusts" },
+            Facts = [
+                new ContextFact { Fact = "f1", Subject = "Alice", RelationType = "knows", Object = "Bob", ValidAt = "t", MemoryTier = "long_term" },
+                new ContextFact { Fact = "f2", Subject = "Charlie", RelationType = "knows", Object = "Diana", ValidAt = "t", MemoryTier = "long_term" },
+                new ContextFact { Fact = "f3", Subject = "Bob", RelationType = "trusts", Object = "Alice", ValidAt = "t", MemoryTier = "long_term" },
             ],
         };
 
         var facts = response.FactsAbout("Alice").ToList();
         Assert.Equal(2, facts.Count);
         Assert.All(facts, f =>
-            Assert.True(f.Source == "Alice" || f.Target == "Alice"));
+            Assert.True(f.Subject == "Alice" || f.Object == "Alice"));
     }
 
     [Fact]
@@ -693,8 +877,8 @@ public class HippoClientTests
             Succeeded = 2,
             Failed = 0,
             Results = [
-                new RememberResponse { EntitiesCreated = 1, FactsWritten = 1 },
-                new RememberResponse { EntitiesCreated = 1, FactsWritten = 1 },
+                new BatchRememberResult { Statement = "a", Ok = true },
+                new BatchRememberResult { Statement = "b", Ok = true },
             ],
         };
 
@@ -710,14 +894,14 @@ public class HippoClientTests
             Succeeded = 1,
             Failed = 1,
             Results = [
-                new RememberResponse { EntitiesCreated = 1, FactsWritten = 1 },
-                new RememberResponse { EntitiesCreated = 0, EntitiesResolved = 0, FactsWritten = 0 },
+                new BatchRememberResult { Statement = "a", Ok = true },
+                new BatchRememberResult { Statement = "b", Ok = false, Error = "oops" },
             ],
         };
 
         var failures = response.Failures().ToList();
         Assert.Single(failures);
-        Assert.Equal(0, failures[0].FactsWritten);
+        Assert.Equal("oops", failures[0].Error);
     }
 
     // ── Logger ──
@@ -738,14 +922,12 @@ public class HippoClientTests
                 {
                     Content = new StringContent("bad gateway"),
                 });
-            return Task.FromResult(JsonResponse(new { status = "ok" }));
+            return Task.FromResult(JsonResponse(new { status = "ok", graph = "default" }));
         }, maxRetries: 3, logger: logger);
 
         await client.HealthAsync();
 
-        // Should have debug messages for requests and responses
         Assert.True(debugMessages.Count >= 2, $"Expected at least 2 debug messages, got {debugMessages.Count}");
-        // Should have a warn message for the retry
         Assert.Single(warnMessages);
         Assert.Contains("Retry", warnMessages[0]);
     }
@@ -754,7 +936,7 @@ public class HippoClientTests
     public async Task Logger_NullLoggerDoesNotThrow()
     {
         var (client, _) = CreateClient((_, _) =>
-            Task.FromResult(JsonResponse(new { status = "ok" })),
+            Task.FromResult(JsonResponse(new { status = "ok", graph = "default" })),
             logger: null);
 
         var result = await client.HealthAsync();
