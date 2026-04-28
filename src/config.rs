@@ -635,10 +635,7 @@ mod tests {
     fn test_default_has_admin_allowed_and_mock_anthropic_auth() {
         let cfg = Config::test_default();
         assert!(cfg.auth.allow_admin);
-        assert!(matches!(
-            cfg.anthropic_auth,
-            Some(AnthropicAuth::ApiKey(_))
-        ));
+        assert!(matches!(cfg.anthropic_auth, Some(AnthropicAuth::ApiKey(_))));
         // Long maintenance interval so the bg loop is effectively disabled in unit tests.
         assert_eq!(cfg.pipeline.maintenance_interval_secs, 3600);
     }
@@ -654,11 +651,7 @@ mod tests {
 
     #[test]
     fn for_wasm_uses_supplied_models_when_present() {
-        let cfg = Config::for_wasm(
-            "sk-x".into(),
-            Some("gpt-x".into()),
-            Some("emb-x".into()),
-        );
+        let cfg = Config::for_wasm("sk-x".into(), Some("gpt-x".into()), Some("emb-x".into()));
         assert_eq!(cfg.llm.openai.model, "gpt-x");
         assert_eq!(cfg.llm.openai.embedding_model.as_deref(), Some("emb-x"));
     }
@@ -696,8 +689,7 @@ mod tests {
 
     #[test]
     fn toml_invalid_value_returns_error() {
-        let result: std::result::Result<Config, _> =
-            toml::from_str(r#"port = "not-a-number""#);
+        let result: std::result::Result<Config, _> = toml::from_str(r#"port = "not-a-number""#);
         assert!(result.is_err());
     }
 

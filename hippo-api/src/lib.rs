@@ -437,7 +437,9 @@ mod tests {
         let original = PipelineTuning::default();
         let s = serde_json::to_string(&original).unwrap();
         let parsed: PipelineTuning = serde_json::from_str(&s).unwrap();
-        assert!((parsed.duplicate_cosine_threshold - original.duplicate_cosine_threshold).abs() < 1e-6);
+        assert!(
+            (parsed.duplicate_cosine_threshold - original.duplicate_cosine_threshold).abs() < 1e-6
+        );
         assert_eq!(parsed.link_pair_cache_max, original.link_pair_cache_max);
     }
 
@@ -544,9 +546,7 @@ mod tests {
         }))
         .unwrap();
         match by_id {
-            GraphOp::InvalidateEdge {
-                edge_id, fact, ..
-            } => {
+            GraphOp::InvalidateEdge { edge_id, fact, .. } => {
                 assert_eq!(edge_id, Some(7));
                 assert_eq!(fact, None);
             }
@@ -560,9 +560,7 @@ mod tests {
         }))
         .unwrap();
         match by_fact {
-            GraphOp::InvalidateEdge {
-                edge_id, fact, ..
-            } => {
+            GraphOp::InvalidateEdge { edge_id, fact, .. } => {
                 assert_eq!(edge_id, None);
                 assert_eq!(fact.as_deref(), Some("A works at B"));
             }
@@ -574,8 +572,7 @@ mod tests {
 
     #[test]
     fn remember_request_optional_fields_default_to_none() {
-        let req: RememberRequest =
-            serde_json::from_str(r#"{"statement":"hello"}"#).unwrap();
+        let req: RememberRequest = serde_json::from_str(r#"{"statement":"hello"}"#).unwrap();
         assert_eq!(req.statement, "hello");
         assert!(req.source_agent.is_none());
         assert!(req.graph.is_none());

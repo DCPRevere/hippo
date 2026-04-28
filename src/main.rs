@@ -150,9 +150,15 @@ async fn main() -> anyhow::Result<()> {
     let (recent_nodes_tx, recent_nodes_rx) = tokio::sync::mpsc::channel::<String>(200);
     let (event_tx, _) = tokio::sync::broadcast::channel::<hippo::events::GraphEvent>(256);
 
+    // Wrap the LlmClient with the retry decorator so transient failures
+    // (rate limits, 5xx) are retried with jittered exponential backoff
+    // instead of immediately propagating to the caller.
+    let llm: Arc<dyn hippo::llm_service::LlmService> =
+        Arc::new(hippo::llm::RetryingLlm::new(Arc::new(llm)));
+
     let state = Arc::new(AppState {
         graphs: Some(graphs),
-        llm: Arc::new(llm),
+        llm,
         config,
         recent_nodes_tx,
         recent_nodes_rx: Arc::new(Mutex::new(recent_nodes_rx)),

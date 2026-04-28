@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 
+use hippo::backends::InMemoryGraph;
 use hippo::config::Config;
 use hippo::graph_backend::GraphBackend;
-use hippo::backends::InMemoryGraph;
 use hippo::llm;
 use hippo::models::{Entity, MemoryTier, Relation};
 use hippo::pipeline::maintain;

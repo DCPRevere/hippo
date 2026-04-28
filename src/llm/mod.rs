@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
+pub mod retry;
+pub use retry::RetryingLlm;
+
 use crate::config::LlmProvider;
 use crate::fixtures::{self, FixtureStore, LlmFixture};
 use crate::models::{EdgeClassification, EntityRow, ExtractedEntity, EMBEDDING_DIM};

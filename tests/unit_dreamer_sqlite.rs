@@ -209,7 +209,10 @@ async fn sqlite_higher_salience_ranks_higher_with_equal_similarity() {
         .unwrap();
 
     let q = llm::pseudo_embed("met at the cafe");
-    let results = graph.vector_search_edges_scored(&q, 10, None).await.unwrap();
+    let results = graph
+        .vector_search_edges_scored(&q, 10, None)
+        .await
+        .unwrap();
 
     let rank_high = results.iter().position(|(e, _)| e.edge_id == high);
     let rank_low = results.iter().position(|(e, _)| e.edge_id == low);
@@ -229,6 +232,7 @@ async fn sqlite_credibility_round_trip_through_save_load() {
         .await
         .unwrap();
     let all = graph.load_all_source_credibility().await.unwrap();
-    assert!(all.iter().any(|c| c.agent_id == "trusted"
-        && (c.credibility - 0.95).abs() < 1e-6));
+    assert!(all
+        .iter()
+        .any(|c| c.agent_id == "trusted" && (c.credibility - 0.95).abs() < 1e-6));
 }

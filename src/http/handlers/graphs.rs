@@ -12,8 +12,7 @@ use crate::auth::Auth;
 use crate::error::AppError;
 use crate::http::{internal, json_ok, JsonOk};
 use crate::models::{
-    AdminSeedRequest, AdminSeedResponse, BackupEntity, BackupPayload, BackupRequest,
-    RestoreRequest,
+    AdminSeedRequest, AdminSeedResponse, BackupEntity, BackupPayload, BackupRequest, RestoreRequest,
 };
 use crate::state::AppState;
 

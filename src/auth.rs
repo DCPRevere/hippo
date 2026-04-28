@@ -907,7 +907,12 @@ mod tests {
             *e == "a"
         });
         assert_eq!(m, Some(&"a"));
-        assert_eq!(calls.get(), 4, "expected all entries visited, got {}", calls.get());
+        assert_eq!(
+            calls.get(),
+            4,
+            "expected all entries visited, got {}",
+            calls.get()
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hippo::config::Config;
 use hippo::backends::InMemoryGraph;
+use hippo::config::Config;
 use hippo::models::{Entity, GraphOp, MemoryTier, OperationsResult, Relation, RememberRequest};
 use hippo::pipeline::remember::remember;
 use hippo::state::AppState;

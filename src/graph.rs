@@ -148,7 +148,8 @@ impl GraphRegistry {
             factory: Box::new(|name: &str| {
                 let name = name.to_string();
                 Box::pin(async move {
-                    Ok(Arc::new(crate::backends::InMemoryGraph::new(&name)) as Arc<dyn GraphBackend>)
+                    Ok(Arc::new(crate::backends::InMemoryGraph::new(&name))
+                        as Arc<dyn GraphBackend>)
                 })
             }),
             default_graph: default_graph.to_string(),

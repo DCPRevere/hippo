@@ -16,7 +16,7 @@ use hippo::backends::InMemoryGraph;
 use hippo::graph_backend::GraphBackend;
 use hippo::llm;
 use hippo::models::Entity;
-use hippo::pipeline::dreamer::{Dreamer, DreamReport, DreamerConfig, WorkUnit, WorkerPool};
+use hippo::pipeline::dreamer::{DreamReport, Dreamer, DreamerConfig, WorkUnit, WorkerPool};
 
 async fn seed(graph: &InMemoryGraph, id: &str, name: &str) {
     graph
@@ -173,10 +173,7 @@ async fn pool_aggregates_reports_across_units() {
         fn name(&self) -> &str {
             "reporting"
         }
-        async fn next_unit(
-            &self,
-            graph: &dyn GraphBackend,
-        ) -> anyhow::Result<Option<WorkUnit>> {
+        async fn next_unit(&self, graph: &dyn GraphBackend) -> anyhow::Result<Option<WorkUnit>> {
             let entities = graph.dump_all_entities().await?;
             for e in entities {
                 if graph.last_visited(&e.id).await?.is_none() {
@@ -236,10 +233,7 @@ async fn pool_respects_token_budget() {
         fn name(&self) -> &str {
             "expensive"
         }
-        async fn next_unit(
-            &self,
-            graph: &dyn GraphBackend,
-        ) -> anyhow::Result<Option<WorkUnit>> {
+        async fn next_unit(&self, graph: &dyn GraphBackend) -> anyhow::Result<Option<WorkUnit>> {
             let visited = self.visits.lock().await;
             let entities = graph.dump_all_entities().await?;
             for e in entities {

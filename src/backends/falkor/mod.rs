@@ -43,10 +43,7 @@ impl GraphClient {
     /// Build a `GraphClient` from a shared client and a graph name. Used by
     /// `GraphRegistry::connect` to materialise per-graph clients off a single
     /// pooled FalkorDB connection.
-    pub fn from_client(
-        client: &falkordb::FalkorAsyncClient,
-        graph_name: &str,
-    ) -> Self {
+    pub fn from_client(client: &falkordb::FalkorAsyncClient, graph_name: &str) -> Self {
         let pool: Vec<Mutex<AsyncGraph>> = (0..DEFAULT_POOL_SIZE)
             .map(|_| Mutex::new(client.select_graph(graph_name)))
             .collect();

@@ -183,7 +183,11 @@ mod tests {
         // Should not panic.
         reg.record_fact("big");
         reg.record_contradiction("big");
-        let entry = reg.list().into_iter().find(|s| s.agent_id == "big").unwrap();
+        let entry = reg
+            .list()
+            .into_iter()
+            .find(|s| s.agent_id == "big")
+            .unwrap();
         assert_eq!(entry.fact_count, usize::MAX);
     }
 

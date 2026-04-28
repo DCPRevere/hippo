@@ -88,11 +88,7 @@ pub trait Dreamer: Send + Sync {
     /// Process one unit of work. Append-only by convention: the Dreamer
     /// writes new facts, never deletes or modifies existing ones. Returns
     /// a per-unit report that the pool aggregates.
-    async fn process(
-        &self,
-        graph: &dyn GraphBackend,
-        unit: WorkUnit,
-    ) -> Result<DreamReport>;
+    async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport>;
 }
 
 /// Runtime configuration for a dream pass. Bounded by default so a manual
@@ -110,11 +106,7 @@ pub struct DreamerConfig {
 }
 
 impl DreamerConfig {
-    pub fn bounded(
-        worker_count: usize,
-        max_units: Option<usize>,
-        max_tokens: Option<u64>,
-    ) -> Self {
+    pub fn bounded(worker_count: usize, max_units: Option<usize>, max_tokens: Option<u64>) -> Self {
         Self {
             worker_count: worker_count.max(1),
             max_units,
@@ -197,16 +189,13 @@ impl WorkerPool {
                         let next = dreamer.next_unit(&*graph).await?;
                         match next {
                             Some(u) => {
-                                let claimed =
-                                    unit_count.fetch_add(1, Ordering::Relaxed) + 1;
+                                let claimed = unit_count.fetch_add(1, Ordering::Relaxed) + 1;
                                 if let Some(limit) = max_units {
                                     if claimed > limit {
                                         return Ok(());
                                     }
                                 }
-                                graph
-                                    .mark_visited(&u.entity_id, chrono::Utc::now())
-                                    .await?;
+                                graph.mark_visited(&u.entity_id, chrono::Utc::now()).await?;
                                 u
                             }
                             None => return Ok(()),

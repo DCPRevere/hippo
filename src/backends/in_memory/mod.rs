@@ -113,10 +113,7 @@ impl InMemoryGraph {
 
     /// Return entities whose last_visited is older than `cutoff` (or has never
     /// been visited). The Dreamer's work query.
-    pub async fn entities_unvisited_since(
-        &self,
-        cutoff: DateTime<Utc>,
-    ) -> Result<Vec<EntityRow>> {
+    pub async fn entities_unvisited_since(&self, cutoff: DateTime<Utc>) -> Result<Vec<EntityRow>> {
         let entities = self.entities.read().await;
         let visited = self.last_visited.read().await;
         let mut out = Vec::new();
@@ -833,8 +830,12 @@ mod tests {
 
     async fn populated_graph() -> InMemoryGraph {
         let g = InMemoryGraph::new("test");
-        g.upsert_entity(&entity("a", "Alice", "person")).await.unwrap();
-        g.upsert_entity(&entity("b", "Bob", "person")).await.unwrap();
+        g.upsert_entity(&entity("a", "Alice", "person"))
+            .await
+            .unwrap();
+        g.upsert_entity(&entity("b", "Bob", "person"))
+            .await
+            .unwrap();
         g.upsert_entity(&entity("c", "Acme", "org")).await.unwrap();
         g
     }
@@ -857,13 +858,9 @@ mod tests {
     async fn drop_and_reinitialise_clears_all_state() {
         let g = populated_graph().await;
         let now = Utc::now();
-        g.create_edge(
-            "a",
-            "b",
-            &relation("Alice knows Bob", "KNOWS", now),
-        )
-        .await
-        .unwrap();
+        g.create_edge("a", "b", &relation("Alice knows Bob", "KNOWS", now))
+            .await
+            .unwrap();
         g.drop_and_reinitialise().await.unwrap();
         assert!(g.dump_all_entities().await.unwrap().is_empty());
         assert!(g.dump_all_edges().await.unwrap().is_empty());
@@ -956,11 +953,19 @@ mod tests {
     async fn fulltext_search_excludes_invalidated_edges() {
         let g = populated_graph().await;
         let id = g
-            .create_edge("a", "c", &relation("Alice works at Acme", "WORKS_AT", Utc::now()))
+            .create_edge(
+                "a",
+                "c",
+                &relation("Alice works at Acme", "WORKS_AT", Utc::now()),
+            )
             .await
             .unwrap();
         g.invalidate_edge(id, Utc::now()).await.unwrap();
-        assert!(g.fulltext_search_edges("acme", None).await.unwrap().is_empty());
+        assert!(g
+            .fulltext_search_edges("acme", None)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -988,8 +993,12 @@ mod tests {
     async fn walk_n_hops_respects_max_hops_limit() {
         let g = populated_graph().await;
         let now = Utc::now();
-        g.create_edge("a", "b", &relation("ab", "KNOWS", now)).await.unwrap();
-        g.create_edge("b", "c", &relation("bc", "KNOWS", now)).await.unwrap();
+        g.create_edge("a", "b", &relation("ab", "KNOWS", now))
+            .await
+            .unwrap();
+        g.create_edge("b", "c", &relation("bc", "KNOWS", now))
+            .await
+            .unwrap();
         let hops = g
             .walk_n_hops(&["a".to_string()], 1, 100, None)
             .await
@@ -1033,7 +1042,11 @@ mod tests {
             .unwrap()
             .is_empty());
         // Querying without `at` falls back to "currently active" — also empty.
-        assert!(g.fulltext_search_edges("alice", None).await.unwrap().is_empty());
+        assert!(g
+            .fulltext_search_edges("alice", None)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     // ---- Vector search ----
@@ -1051,10 +1064,7 @@ mod tests {
         g.upsert_entity(&e2).await.unwrap();
         g.upsert_entity(&e3).await.unwrap();
 
-        let hits = g
-            .vector_search_entities(&[1.0, 0.0, 0.0], 2)
-            .await
-            .unwrap();
+        let hits = g.vector_search_entities(&[1.0, 0.0, 0.0], 2).await.unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].0.id, "e1");
         assert_eq!(hits[1].0.id, "e2");
@@ -1113,7 +1123,9 @@ mod tests {
             .create_edge("a", "b", &relation("ab1", "KNOWS", now))
             .await
             .unwrap();
-        g.create_edge("a", "c", &relation("ab2", "KNOWS", now)).await.unwrap();
+        g.create_edge("a", "c", &relation("ab2", "KNOWS", now))
+            .await
+            .unwrap();
         g.invalidate_edge(id, now).await.unwrap();
         let stats = g.memory_tier_stats().await.unwrap();
         assert_eq!(stats.working_count, 1);
@@ -1125,7 +1137,9 @@ mod tests {
     #[tokio::test]
     async fn set_and_find_entity_by_property() {
         let g = populated_graph().await;
-        g.set_entity_property("a", "email", "alice@example.com").await.unwrap();
+        g.set_entity_property("a", "email", "alice@example.com")
+            .await
+            .unwrap();
         let found = g
             .find_entity_by_property("email", "alice@example.com")
             .await
@@ -1173,14 +1187,20 @@ mod tests {
         let mut rel = relation("Alice knows Bob", "KNOWS", now);
         rel.confidence = 0.95;
         let id = g.create_edge("a", "b", &rel).await.unwrap();
-        let r = g.compound_edge_confidence(id, "agentX", 0.95).await.unwrap();
+        let r = g
+            .compound_edge_confidence(id, "agentX", 0.95)
+            .await
+            .unwrap();
         assert!(r <= 0.99 + 1e-6, "compounded confidence {} exceeded cap", r);
     }
 
     #[tokio::test]
     async fn compound_unknown_edge_returns_new_confidence() {
         let g = InMemoryGraph::new("x");
-        let r = g.compound_edge_confidence(9999, "agent", 0.4).await.unwrap();
+        let r = g
+            .compound_edge_confidence(9999, "agent", 0.4)
+            .await
+            .unwrap();
         assert!((r - 0.4).abs() < 1e-6);
     }
 
@@ -1188,7 +1208,9 @@ mod tests {
     async fn supersession_chain_round_trip() {
         let g = InMemoryGraph::new("x");
         let now = Utc::now();
-        g.create_supersession(1, 2, now, "old", "new").await.unwrap();
+        g.create_supersession(1, 2, now, "old", "new")
+            .await
+            .unwrap();
         let chain = g.get_supersession_chain(1).await.unwrap();
         assert_eq!(chain.len(), 1);
         assert_eq!(chain[0].old_edge_id, 1);
@@ -1201,7 +1223,9 @@ mod tests {
     async fn graph_stats_counts_entities_and_active_edges() {
         let g = populated_graph().await;
         let now = Utc::now();
-        g.create_edge("a", "b", &relation("ab", "KNOWS", now)).await.unwrap();
+        g.create_edge("a", "b", &relation("ab", "KNOWS", now))
+            .await
+            .unwrap();
         let stats = g.graph_stats().await.unwrap();
         assert_eq!(stats.entity_count, 3);
         assert_eq!(stats.edge_count, 1);

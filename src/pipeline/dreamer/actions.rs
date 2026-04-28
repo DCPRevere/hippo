@@ -57,11 +57,7 @@ impl Dreamer for Linker {
         Ok(None)
     }
 
-    async fn process(
-        &self,
-        graph: &dyn GraphBackend,
-        unit: WorkUnit,
-    ) -> Result<DreamReport> {
+    async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
         let mut report = DreamReport::default();
         report.facts_visited = 1;
 
@@ -130,8 +126,7 @@ impl Dreamer for Linker {
             let mut checked = self.state.checked_pairs.write().await;
             checked.insert(pair);
             if checked.len() > cache_max {
-                let to_remove: Vec<_> =
-                    checked.iter().take(cache_evict).cloned().collect();
+                let to_remove: Vec<_> = checked.iter().take(cache_evict).cloned().collect();
                 for pair in to_remove {
                     checked.remove(&pair);
                 }
@@ -175,11 +170,7 @@ impl Dreamer for Reconciler {
         Ok(None)
     }
 
-    async fn process(
-        &self,
-        graph: &dyn GraphBackend,
-        unit: WorkUnit,
-    ) -> Result<DreamReport> {
+    async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
         let mut report = DreamReport::default();
         report.facts_visited = 1;
 
@@ -290,11 +281,7 @@ impl Dreamer for Inferrer {
         Ok(None)
     }
 
-    async fn process(
-        &self,
-        graph: &dyn GraphBackend,
-        unit: WorkUnit,
-    ) -> Result<DreamReport> {
+    async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
         let mut report = DreamReport::default();
         report.facts_visited = 1;
 
@@ -322,8 +309,7 @@ impl Dreamer for Inferrer {
                 .or_default()
                 .push(edge.fact.clone());
         }
-        let neighbor_facts: Vec<(String, Vec<String>)> =
-            neighbour_map.into_iter().collect();
+        let neighbor_facts: Vec<(String, Vec<String>)> = neighbour_map.into_iter().collect();
 
         let inferences = self
             .state
@@ -346,15 +332,8 @@ impl Dreamer for Inferrer {
             // Embedding-based dedup: don't write if a near-identical fact
             // already exists.
             let embedding = self.state.llm.embed(&fact_text).await?;
-            let existing = graph
-                .find_all_active_edges_from(&unit.entity_id)
-                .await?;
-            let dup_threshold = self
-                .state
-                .config
-                .pipeline
-                .tuning
-                .duplicate_cosine_threshold;
+            let existing = graph.find_all_active_edges_from(&unit.entity_id).await?;
+            let dup_threshold = self.state.config.pipeline.tuning.duplicate_cosine_threshold;
             let is_duplicate = existing.iter().any(|e| {
                 if e.embedding.is_empty() {
                     return false;
@@ -373,8 +352,7 @@ impl Dreamer for Inferrer {
                 source_agents: vec!["dreamer/inferrer".to_string()],
                 valid_at: now,
                 invalid_at: None,
-                confidence: confidence
-                    * self.state.config.pipeline.tuning.inferred_fact_discount,
+                confidence: confidence * self.state.config.pipeline.tuning.inferred_fact_discount,
                 salience: 0,
                 created_at: now,
                 memory_tier: MemoryTier::Working,
@@ -432,11 +410,7 @@ impl Dreamer for Consolidator {
         Ok(None)
     }
 
-    async fn process(
-        &self,
-        graph: &dyn GraphBackend,
-        unit: WorkUnit,
-    ) -> Result<DreamReport> {
+    async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
         let mut report = DreamReport::default();
         report.facts_visited = 1;
 
@@ -446,12 +420,7 @@ impl Dreamer for Consolidator {
         };
 
         let edges = graph.find_all_active_edges_from(&unit.entity_id).await?;
-        let min_facts = self
-            .state
-            .config
-            .pipeline
-            .tuning
-            .consolidation_min_facts;
+        let min_facts = self.state.config.pipeline.tuning.consolidation_min_facts;
 
         if edges.len() < min_facts {
             return Ok(report);
@@ -484,17 +453,12 @@ impl Dreamer for Consolidator {
         let inferences = self
             .state
             .llm
-            .find_missing_inferences(
-                &entity.name,
-                &entity_facts,
-                &neighbour_context,
-            )
+            .find_missing_inferences(&entity.name, &entity_facts, &neighbour_context)
             .await?;
 
         // Take the first inference as the consolidated fact. Future versions
         // can do real clustering rather than relying on the inference API.
-        if let Some((rel_type, _object_name, fact_text, confidence)) =
-            inferences.into_iter().next()
+        if let Some((rel_type, _object_name, fact_text, confidence)) = inferences.into_iter().next()
         {
             let embedding = self.state.llm.embed(&fact_text).await?;
             let now = Utc::now();
@@ -505,8 +469,7 @@ impl Dreamer for Consolidator {
                 source_agents: vec!["dreamer/consolidator".to_string()],
                 valid_at: now,
                 invalid_at: None,
-                confidence: confidence
-                    * self.state.config.pipeline.tuning.inferred_fact_discount,
+                confidence: confidence * self.state.config.pipeline.tuning.inferred_fact_discount,
                 salience: 0,
                 created_at: now,
                 memory_tier: MemoryTier::LongTerm,

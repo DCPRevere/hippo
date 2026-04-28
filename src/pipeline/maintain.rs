@@ -230,7 +230,11 @@ async fn legacy_entity_dedup(state: &AppState, graph: &dyn GraphBackend) -> Resu
 
     if !duplicate_pairs.is_empty() {
         let results = state.llm.resolve_entities_batch(&duplicate_pairs).await?;
-        let cls_threshold = state.config.pipeline.tuning.classification_confidence_threshold;
+        let cls_threshold = state
+            .config
+            .pipeline
+            .tuning
+            .classification_confidence_threshold;
         for (index, same, confidence) in &results {
             if *same && *confidence > cls_threshold {
                 if let Some((from_id, to_id)) = pair_ids.get(*index) {
@@ -255,7 +259,6 @@ async fn drain_recent_nodes(state: &AppState) -> Vec<String> {
     *state.recent_node_ids.write().await = ids.clone();
     ids
 }
-
 
 async fn placeholder_resolution(state: &AppState, graph: &dyn GraphBackend) -> Result<()> {
     let cutoff = Utc::now() - chrono::Duration::hours(24);
@@ -291,7 +294,12 @@ async fn placeholder_resolution(state: &AppState, graph: &dyn GraphBackend) -> R
                 .resolve_entities(&extracted, &candidate, &candidate_facts)
                 .await?;
             if same
-                && confidence > state.config.pipeline.tuning.classification_confidence_threshold
+                && confidence
+                    > state
+                        .config
+                        .pipeline
+                        .tuning
+                        .classification_confidence_threshold
             {
                 tracing::info!(
                     "Resolving placeholder '{}' -> '{}' (confidence: {:.2})",

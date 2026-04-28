@@ -1,7 +1,7 @@
 use chrono::Utc;
+use hippo::backends::SqliteGraph;
 use hippo::graph_backend::GraphBackend;
 use hippo::models::{Entity, MemoryTier, Relation};
-use hippo::backends::SqliteGraph;
 
 async fn setup() -> SqliteGraph {
     let graph = SqliteGraph::in_memory("test").expect("open in-memory sqlite");

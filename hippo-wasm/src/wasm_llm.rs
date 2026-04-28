@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use hippo::llm_service::LlmService;
 use hippo::math::{clean_json, normalize};
 use hippo::models::{
-    ContextFact, EdgeClassification, EntityRow,
-    ExtractedEntity, GraphContext, OperationsResult, EMBEDDING_DIM,
+    ContextFact, EdgeClassification, EntityRow, ExtractedEntity, GraphContext, OperationsResult,
+    EMBEDDING_DIM,
 };
 
 pub struct WasmLlmClient {
@@ -63,12 +63,7 @@ struct EmbeddingData {
 }
 
 impl WasmLlmClient {
-    pub fn new(
-        api_key: String,
-        base_url: String,
-        model: String,
-        embedding_model: String,
-    ) -> Self {
+    pub fn new(api_key: String, base_url: String, model: String, embedding_model: String) -> Self {
         Self {
             http: reqwest::Client::new(),
             api_key,
@@ -109,7 +104,10 @@ impl WasmLlmClient {
             anyhow::bail!("OpenAI API error ({}): {}", status, body);
         }
 
-        let r: ChatResponse = resp.json().await.context("failed to parse OpenAI response")?;
+        let r: ChatResponse = resp
+            .json()
+            .await
+            .context("failed to parse OpenAI response")?;
         r.choices
             .into_iter()
             .next()
@@ -138,7 +136,10 @@ impl WasmLlmClient {
             anyhow::bail!("OpenAI embedding error ({}): {}", status, body);
         }
 
-        let r: EmbeddingResponse = resp.json().await.context("failed to parse embedding response")?;
+        let r: EmbeddingResponse = resp
+            .json()
+            .await
+            .context("failed to parse embedding response")?;
         let emb = r
             .data
             .into_iter()
@@ -204,7 +205,8 @@ Respond with ONLY valid JSON: {"operations": [...]}"#;
     ) -> Result<OperationsResult> {
         let subgraph_json = additional_context.to_json();
         let ops_json = serde_json::to_string_pretty(original_ops)?;
-        let system = "You are a knowledge graph mutation planner. You previously planned operations \
+        let system =
+            "You are a knowledge graph mutation planner. You previously planned operations \
             but now have additional graph context. Revise the operations if needed — for example, \
             convert create_node to update_node if you now see the entity already exists, or add \
             new edges based on the additional context. \
@@ -245,7 +247,9 @@ Respond with ONLY valid JSON: {"operations": [...]}"#;
         pairs: &[(String, String, String, String, Vec<String>)],
     ) -> Result<Vec<(usize, bool, f32)>> {
         let mut results = Vec::new();
-        for (i, (new_name, new_type, existing_name, existing_type, facts)) in pairs.iter().enumerate() {
+        for (i, (new_name, new_type, existing_name, existing_type, facts)) in
+            pairs.iter().enumerate()
+        {
             let facts_str = facts.join("; ");
             let system = "You are an entity resolution engine. Respond with JSON: {\"same_entity\": true/false, \"confidence\": 0.0-1.0}";
             let user = format!(
@@ -297,8 +301,12 @@ Respond with ONLY valid JSON: {"operations": [...]}"#;
             relationship between them. Respond with JSON: {\"has_link\": true/false, \"relation\": \"...\", \"fact\": \"...\", \"confidence\": 0.0-1.0}";
         let user = format!(
             "Entity A: \"{}\" ({})\nFacts: {}\n\nEntity B: \"{}\" ({})\nFacts: {}",
-            a.name, a.entity_type, a_facts.join("; "),
-            b.name, b.entity_type, b_facts.join("; ")
+            a.name,
+            a.entity_type,
+            a_facts.join("; "),
+            b.name,
+            b.entity_type,
+            b_facts.join("; ")
         );
         let text = self.call(system, &user, 512).await?;
         let text = clean_json(&text);
@@ -351,7 +359,8 @@ Respond with ONLY valid JSON: {"operations": [...]}"#;
             that appear in the facts but whose relationships to each other are unclear. \
             Return ONLY valid JSON with no markdown.";
 
-        let facts_block = facts.iter()
+        let facts_block = facts
+            .iter()
             .map(|f| format!("- {} ({}→{})", f.fact, f.subject, f.object))
             .collect::<Vec<_>>()
             .join("\n");
@@ -367,7 +376,11 @@ Respond with ONLY valid JSON: {"operations": [...]}"#;
         let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
         let entities = v["entities"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         Ok(entities)
     }

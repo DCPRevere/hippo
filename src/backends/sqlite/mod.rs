@@ -225,7 +225,7 @@ impl GraphBackend for SqliteGraph {
         self.with_conn_blocking(|conn| -> Result<()> {
             conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
             conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS entities (
+                "CREATE TABLE IF NOT EXISTS entities (
                         id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
                         entity_type TEXT NOT NULL,

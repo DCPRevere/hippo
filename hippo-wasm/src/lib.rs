@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 
+use hippo::backends::InMemoryGraph;
 use hippo::config::Config;
 use hippo::graph_backend::GraphBackend;
-use hippo::backends::InMemoryGraph;
 use hippo::models::{AskRequest, RememberRequest};
 use hippo::state::AppState;
 
@@ -52,8 +52,7 @@ impl Hippo {
         ));
 
         let graph_name = config.graph.name.clone();
-        let graph =
-            Arc::new(InMemoryGraph::new(&graph_name)) as Arc<dyn GraphBackend>;
+        let graph = Arc::new(InMemoryGraph::new(&graph_name)) as Arc<dyn GraphBackend>;
 
         let state = AppState::for_test(llm, config);
 
@@ -76,18 +75,12 @@ impl Hippo {
             ttl_secs: None,
         };
 
-        let result = hippo::pipeline::remember::remember(
-            &self.state,
-            &*self.graph,
-            req,
-            None,
-            None,
-        )
-        .await
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let result =
+            hippo::pipeline::remember::remember(&self.state, &*self.graph, req, None, None)
+                .await
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        serde_wasm_bindgen::to_value(&result)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     pub async fn ask(&self, question: &str) -> Result<JsValue, JsValue> {
@@ -99,27 +92,24 @@ impl Hippo {
             max_iterations: 1,
         };
 
-        let result =
-            hippo::pipeline::ask::ask(&self.state, &*self.graph, req, None, None)
-                .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let result = hippo::pipeline::ask::ask(&self.state, &*self.graph, req, None, None)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        serde_wasm_bindgen::to_value(&result)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    pub async fn context(
-        &self,
-        query: &str,
-    ) -> Result<JsValue, JsValue> {
+    pub async fn context(&self, query: &str) -> Result<JsValue, JsValue> {
         let ctx = hippo::pipeline::remember::gather_pre_extraction_context(
-            &self.state, &*self.graph, query, None,
+            &self.state,
+            &*self.graph,
+            query,
+            None,
         )
         .await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        serde_wasm_bindgen::to_value(&ctx)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&ctx).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     pub async fn stats(&self) -> Result<JsValue, JsValue> {
@@ -128,8 +118,7 @@ impl Hippo {
             .graph_stats()
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_wasm_bindgen::to_value(&stats)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&stats).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     pub async fn export_graph(&self) -> Result<JsValue, JsValue> {
@@ -149,8 +138,7 @@ impl Hippo {
             "edges": edges,
         });
 
-        serde_wasm_bindgen::to_value(&export)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&export).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     // -- Dreamer primitives ---------------------------------------------------
@@ -164,11 +152,7 @@ impl Hippo {
     /// Mark a fact as wrong and remove it from active retrieval. The edge
     /// stays in the graph for audit. Distinct from supersession (which the
     /// Dreamer writes append-only).
-    pub async fn retract(
-        &self,
-        edge_id: i64,
-        reason: Option<String>,
-    ) -> Result<(), JsValue> {
+    pub async fn retract(&self, edge_id: i64, reason: Option<String>) -> Result<(), JsValue> {
         self.graph
             .retract_edge(edge_id, reason.as_deref())
             .await
@@ -187,11 +171,7 @@ impl Hippo {
     /// `old_edge_id`. Both edges remain active. The Dreamer writes these
     /// autonomously; exposing the primitive here lets agents do it
     /// explicitly too.
-    pub async fn supersede(
-        &self,
-        old_edge_id: i64,
-        new_edge_id: i64,
-    ) -> Result<(), JsValue> {
+    pub async fn supersede(&self, old_edge_id: i64, new_edge_id: i64) -> Result<(), JsValue> {
         self.graph
             .supersede_edge(old_edge_id, new_edge_id)
             .await
