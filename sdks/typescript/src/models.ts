@@ -38,6 +38,51 @@ export interface CreateUserRequest {
   graphs?: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Dreamer types — see docs/DREAMS.md
+// ---------------------------------------------------------------------------
+
+/** Explicit user/agent retraction. Distinct from supersession (which the
+ * Dreamer writes append-only). */
+export interface RetractRequest {
+  edge_id: number;
+  reason?: string;
+  graph?: string;
+}
+
+export interface RetractResponse {
+  edge_id: number;
+  reason?: string;
+}
+
+/** Convenience: retract an old fact and observe a new one in one call. */
+export interface CorrectRequest {
+  edge_id: number;
+  statement: string;
+  reason?: string;
+  source_agent?: string;
+  graph?: string;
+}
+
+export interface CorrectResponse {
+  retracted_edge_id: number;
+  reason?: string;
+  remember: RememberResponse;
+}
+
+/** Aggregated dream-pass summary. The Dreamer records counts per visit
+ * and the pool sums them. See docs/DREAMS.md. */
+export interface DreamReport {
+  facts_visited: number;
+  links_written: number;
+  inferences_written: number;
+  supersessions_written: number;
+  contradictions_seen: number;
+  consolidations_written: number;
+  tokens_used: number;
+  duration_ms: number;
+}
+
 export interface CreateKeyRequest {
   label: string;
 }

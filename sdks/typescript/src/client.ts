@@ -9,10 +9,13 @@ import type {
   AskResponse,
   ContextRequest,
   ContextResponse,
+  CorrectRequest,
+  CorrectResponse,
   CreateKeyRequest,
   CreateKeyResponse,
   CreateUserRequest,
   CreateUserResponse,
+  DreamReport,
   EventsOptions,
   GraphEvent,
   HealthResponse,
@@ -25,6 +28,8 @@ import type {
   RememberBatchResponse,
   RememberRequest,
   RememberResponse,
+  RetractRequest,
+  RetractResponse,
 } from "./models.js";
 
 declare const process: { env: Record<string, string | undefined> } | undefined;
@@ -235,6 +240,57 @@ export class HippoClient {
     options?: { timeout?: number },
   ): Promise<AskResponse> {
     return this.request<AskResponse>("POST", "/ask", params, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verb aliases — match the brand vocabulary from docs/DREAMS.md.
+  // observe = remember, recall = ask. Aliases are wire-identical and exist
+  // so callers can write `client.observe(...)` and `client.recall(...)` to
+  // match the Dreamer narrative.
+  // ---------------------------------------------------------------------------
+
+  async observe(
+    params: RememberRequest,
+    options?: { timeout?: number },
+  ): Promise<RememberResponse> {
+    return this.remember(params, options);
+  }
+
+  async recall(
+    params: AskRequest,
+    options?: { timeout?: number },
+  ): Promise<AskResponse> {
+    return this.ask(params, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dreamer operations
+  // ---------------------------------------------------------------------------
+
+  /** Trigger one dream pass synchronously and receive the aggregated report.
+   * Useful for demos and evals; in production the Dreamer runs continuously
+   * via the maintenance loop. */
+  async dream(options?: { timeout?: number }): Promise<DreamReport> {
+    return this.request<DreamReport>("POST", "/maintain", undefined, options);
+  }
+
+  /** Explicit user/agent retraction. Marks an edge inactive with an audit
+   * reason. Distinct from supersession, which is what the Dreamer writes
+   * append-only. */
+  async retract(
+    params: RetractRequest,
+    options?: { timeout?: number },
+  ): Promise<RetractResponse> {
+    return this.request<RetractResponse>("POST", "/retract", params, options);
+  }
+
+  /** Convenience: retract an old fact and observe a new one in one
+   * operation. */
+  async correct(
+    params: CorrectRequest,
+    options?: { timeout?: number },
+  ): Promise<CorrectResponse> {
+    return this.request<CorrectResponse>("POST", "/correct", params, options);
   }
 
   // ---------------------------------------------------------------------------
