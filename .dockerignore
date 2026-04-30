@@ -21,6 +21,10 @@ data/
 
 # Docs and dev assets
 docs/
+# openapi.yaml is `include_str!`'d into the binary at build time, so it
+# must be visible to the docker context even though the rest of `docs/`
+# is excluded.
+!docs/openapi.yaml
 *.md
 README*
 LICENSE*
