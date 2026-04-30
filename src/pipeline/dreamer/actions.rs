@@ -42,19 +42,7 @@ impl Dreamer for Linker {
     }
 
     async fn next_unit(&self, graph: &dyn GraphBackend) -> Result<Option<WorkUnit>> {
-        // First entity that hasn't been visited yet (last_visited is None).
-        // The pool's claim handshake sets last_visited atomically so the next
-        // call will see this entity as visited.
-        let entities = graph.list_entities_by_recency(0, 100).await?;
-        for e in entities {
-            if graph.last_visited(&e.id).await?.is_none() {
-                return Ok(Some(WorkUnit {
-                    entity_id: e.id,
-                    score: 0.0,
-                }));
-            }
-        }
-        Ok(None)
+        super::next_unvisited_entity(graph, 100).await
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
@@ -160,16 +148,7 @@ impl Dreamer for Reconciler {
     }
 
     async fn next_unit(&self, graph: &dyn GraphBackend) -> Result<Option<WorkUnit>> {
-        let entities = graph.list_entities_by_recency(0, 100).await?;
-        for e in entities {
-            if graph.last_visited(&e.id).await?.is_none() {
-                return Ok(Some(WorkUnit {
-                    entity_id: e.id,
-                    score: 0.0,
-                }));
-            }
-        }
-        Ok(None)
+        super::next_unvisited_entity(graph, 100).await
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
@@ -296,16 +275,7 @@ impl Dreamer for Inferrer {
     }
 
     async fn next_unit(&self, graph: &dyn GraphBackend) -> Result<Option<WorkUnit>> {
-        let entities = graph.list_entities_by_recency(0, 100).await?;
-        for e in entities {
-            if graph.last_visited(&e.id).await?.is_none() {
-                return Ok(Some(WorkUnit {
-                    entity_id: e.id,
-                    score: 0.0,
-                }));
-            }
-        }
-        Ok(None)
+        super::next_unvisited_entity(graph, 100).await
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {
@@ -424,19 +394,7 @@ impl Dreamer for Consolidator {
     }
 
     async fn next_unit(&self, graph: &dyn GraphBackend) -> Result<Option<WorkUnit>> {
-        // Consolidator targets entities with many recent facts. We use
-        // last_visited to avoid re-consolidating; richer scoring (e.g. fact
-        // count) can come later.
-        let entities = graph.list_entities_by_recency(0, 100).await?;
-        for e in entities {
-            if graph.last_visited(&e.id).await?.is_none() {
-                return Ok(Some(WorkUnit {
-                    entity_id: e.id,
-                    score: 0.0,
-                }));
-            }
-        }
-        Ok(None)
+        super::next_unvisited_entity(graph, 100).await
     }
 
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport> {

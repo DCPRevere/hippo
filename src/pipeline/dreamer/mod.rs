@@ -91,6 +91,27 @@ pub trait Dreamer: Send + Sync {
     async fn process(&self, graph: &dyn GraphBackend, unit: WorkUnit) -> Result<DreamReport>;
 }
 
+/// Default `next_unit` strategy: scan the most recent entities and return
+/// the first one without a `last_visited` marker. The pool's claim
+/// handshake sets `last_visited` atomically so the next caller sees it as
+/// visited. Three of the four built-in Dreamers (Linker, Reconciler,
+/// Consolidator) use this as-is; Inferrer also uses it.
+pub async fn next_unvisited_entity(
+    graph: &dyn GraphBackend,
+    scan_window: usize,
+) -> Result<Option<WorkUnit>> {
+    let entities = graph.list_entities_by_recency(0, scan_window).await?;
+    for e in entities {
+        if graph.last_visited(&e.id).await?.is_none() {
+            return Ok(Some(WorkUnit {
+                entity_id: e.id,
+                score: 0.0,
+            }));
+        }
+    }
+    Ok(None)
+}
+
 /// Runtime configuration for a dream pass. Bounded by default so a manual
 /// `dream()` invocation can't burn an unbounded LLM bill.
 #[derive(Debug, Clone)]
