@@ -16,7 +16,6 @@ use axum::{
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-use crate::auth::Auth as _Auth;
 use crate::error::AppError;
 use crate::models::{AskRequest, BatchRememberRequest, ContextRequest, RememberRequest};
 use crate::state::AppState;
@@ -271,10 +270,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .fallback_service(ui_service)
         .with_state(state)
 }
-
-// Keep `Auth` reachable via the old path while callers migrate.
-#[allow(unused_imports)]
-use _Auth as Auth;
 
 #[cfg(test)]
 mod tests {
