@@ -19,19 +19,19 @@ jobs:
     name: Rust check & clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-targets
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo check --workspace --exclude hippo-wasm --all-targets
+      - run: cargo clippy --workspace --exclude hippo-wasm --all-targets -- -D warnings
 
   rust-fmt:
     name: Rust format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -41,7 +41,7 @@ jobs:
     name: WASM check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -52,9 +52,12 @@ jobs:
     name: Rust unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # In-source unit tests (cfg(test) modules under src/).
+      - run: cargo test --lib --workspace --exclude hippo-wasm
+      # Integration-test files under tests/.
       - run: >
           cargo test
           --test unit_remember
@@ -71,7 +74,7 @@ jobs:
     name: Rust fixture evals
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --test evals -- --test-threads=1
@@ -86,7 +89,7 @@ jobs:
       run:
         working-directory: sdks/go
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version-file: sdks/go/go.mod
@@ -100,7 +103,7 @@ jobs:
       run:
         working-directory: sdks/typescript
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -117,7 +120,7 @@ jobs:
       run:
         working-directory: sdks/python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -131,7 +134,7 @@ jobs:
       run:
         working-directory: sdks/dotnet
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
@@ -142,7 +145,7 @@ jobs:
     name: Docker build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
