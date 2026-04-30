@@ -135,7 +135,7 @@ jobs:
         working-directory: sdks/dotnet
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
       - run: dotnet build
