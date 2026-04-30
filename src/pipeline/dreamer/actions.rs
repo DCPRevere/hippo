@@ -191,61 +191,84 @@ impl Dreamer for Reconciler {
                 .push(edge);
         }
 
-        let cred = self.state.credibility.read().await;
+        // Collect the sources whose claims got superseded so we can penalise
+        // their credibility after we drop the read lock.
+        let mut superseded_sources: Vec<String> = Vec::new();
 
-        for ((_, rel_type), group) in groups {
-            if group.len() < 2 {
-                continue;
-            }
-            for i in 0..group.len() {
-                for j in (i + 1)..group.len() {
-                    let (classification, _) = self
-                        .state
-                        .llm
-                        .classify_edge(&group[i].fact, &group[j].fact, &rel_type)
-                        .await?;
+        {
+            let cred = self.state.credibility.read().await;
 
-                    if classification != crate::models::EdgeClassification::Contradiction {
-                        continue;
-                    }
-
-                    report.contradictions_seen += 1;
-
-                    // Pick the older edge as the one being superseded, but
-                    // weighted by source credibility: if the *newer* edge
-                    // came from a less-credible source than the older one,
-                    // skip — don't supersede with weak evidence.
-                    let (older_idx, newer_idx) = if group[i].valid_at < group[j].valid_at {
-                        (i, j)
-                    } else {
-                        (j, i)
-                    };
-                    let older = &group[older_idx];
-                    let newer = &group[newer_idx];
-
-                    let older_cred = older
-                        .source_agents
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(|s| cred.get(s))
-                        .fold(0.8f32, f32::max);
-                    let newer_cred = newer
-                        .source_agents
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(|s| cred.get(s))
-                        .fold(0.8f32, f32::max);
-
-                    if newer_cred + 0.05 < older_cred {
-                        // Skip: the new claim's source is meaningfully
-                        // less credible than the old one's. Keep both
-                        // active and let future evidence decide.
-                        continue;
-                    }
-
-                    graph.supersede_edge(older.edge_id, newer.edge_id).await?;
-                    report.supersessions_written += 1;
+            for ((_, rel_type), group) in groups {
+                if group.len() < 2 {
+                    continue;
                 }
+                for i in 0..group.len() {
+                    for j in (i + 1)..group.len() {
+                        let (classification, _) = self
+                            .state
+                            .llm
+                            .classify_edge(&group[i].fact, &group[j].fact, &rel_type)
+                            .await?;
+
+                        if classification != crate::models::EdgeClassification::Contradiction {
+                            continue;
+                        }
+
+                        report.contradictions_seen += 1;
+
+                        // Pick the older edge as the one being superseded, but
+                        // weighted by source credibility: if the *newer* edge
+                        // came from a less-credible source than the older one,
+                        // skip — don't supersede with weak evidence.
+                        let (older_idx, newer_idx) = if group[i].valid_at < group[j].valid_at {
+                            (i, j)
+                        } else {
+                            (j, i)
+                        };
+                        let older = &group[older_idx];
+                        let newer = &group[newer_idx];
+
+                        let older_cred = older
+                            .source_agents
+                            .split(',')
+                            .filter(|s| !s.is_empty())
+                            .map(|s| cred.get(s))
+                            .fold(0.8f32, f32::max);
+                        let newer_cred = newer
+                            .source_agents
+                            .split(',')
+                            .filter(|s| !s.is_empty())
+                            .map(|s| cred.get(s))
+                            .fold(0.8f32, f32::max);
+
+                        if newer_cred + 0.05 < older_cred {
+                            // Skip: the new claim's source is meaningfully
+                            // less credible than the old one's. Keep both
+                            // active and let future evidence decide.
+                            continue;
+                        }
+
+                        graph.supersede_edge(older.edge_id, newer.edge_id).await?;
+                        report.supersessions_written += 1;
+
+                        // The older edge's sources just had a claim
+                        // overruled. Record one contradiction per
+                        // distinct source so credibility compounds.
+                        for source in older.source_agents.split(',') {
+                            let s = source.trim();
+                            if !s.is_empty() {
+                                superseded_sources.push(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !superseded_sources.is_empty() {
+            let mut cred = self.state.credibility.write().await;
+            for source in &superseded_sources {
+                cred.record_contradiction(source);
             }
         }
 
@@ -491,5 +514,121 @@ impl Dreamer for Consolidator {
         }
 
         Ok(report)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::InMemoryGraph;
+    use crate::config::Config;
+    use crate::math::pseudo_embed;
+    use crate::models::{EdgeClassification, Entity, MemoryTier};
+    use crate::state::AppState;
+    use crate::testing::FakeLlm;
+    use chrono::Duration;
+
+    async fn seed(graph: &InMemoryGraph, id: &str, name: &str) {
+        graph
+            .upsert_entity(&Entity {
+                id: id.into(),
+                name: name.into(),
+                entity_type: "person".into(),
+                resolved: true,
+                hint: None,
+                content: None,
+                created_at: Utc::now(),
+                embedding: pseudo_embed(name),
+            })
+            .await
+            .unwrap();
+    }
+
+    fn rel(fact: &str, rel: &str, source: &str, age: Duration) -> Relation {
+        Relation {
+            fact: fact.into(),
+            relation_type: rel.into(),
+            embedding: pseudo_embed(fact),
+            source_agents: vec![source.into()],
+            valid_at: Utc::now() - age,
+            invalid_at: None,
+            confidence: 0.9,
+            salience: 0,
+            created_at: Utc::now() - age,
+            memory_tier: MemoryTier::LongTerm,
+            expires_at: None,
+        }
+    }
+
+    /// Regression: when the Reconciler supersedes an edge because of a
+    /// contradiction, it must also penalise the credibility of the source
+    /// whose claim was overruled. Before this fix the dreamer wrote the
+    /// supersession edge but never called `record_contradiction`, so
+    /// repeat-offender sources kept full credibility.
+    #[tokio::test]
+    async fn reconciler_records_contradiction_against_superseded_source() {
+        let fake = FakeLlm::new().with_classification(EdgeClassification::Contradiction, 0.95);
+        let state = Arc::new(AppState::for_test(Arc::new(fake), Config::test_default()));
+        let graph = InMemoryGraph::new("test");
+
+        seed(&graph, "alice", "Alice").await;
+        seed(&graph, "acme", "Acme").await;
+
+        // Two edges between the same pair (alice → acme, WORKS_AT) with
+        // contradicting fact text. The Reconciler groups by
+        // (object_id, relation_type), so both end up in the same group and
+        // get classified.
+        graph
+            .create_edge(
+                "alice",
+                "acme",
+                &rel(
+                    "Alice works at Acme as a lawyer",
+                    "WORKS_AT",
+                    "untrusted-bot",
+                    Duration::days(2),
+                ),
+            )
+            .await
+            .unwrap();
+        graph
+            .create_edge(
+                "alice",
+                "acme",
+                &rel(
+                    "Alice works at Acme as a doctor",
+                    "WORKS_AT",
+                    "test-agent",
+                    Duration::hours(1),
+                ),
+            )
+            .await
+            .unwrap();
+
+        // Default credibility is 0.8 for an unknown source.
+        let before = state.credibility.read().await.get("untrusted-bot");
+        assert!((before - 0.8).abs() < 1e-6);
+
+        let recon = Reconciler::new(state.clone());
+        let report = recon
+            .process(
+                &graph,
+                WorkUnit {
+                    entity_id: "alice".into(),
+                    score: 0.0,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(report.contradictions_seen, 1);
+        assert_eq!(report.supersessions_written, 1);
+
+        // The superseded source must lose credibility.
+        let after = state.credibility.read().await.get("untrusted-bot");
+        assert!(
+            after < before,
+            "untrusted-bot credibility should fall after a contradiction; before={before}, after={after}"
+        );
     }
 }
