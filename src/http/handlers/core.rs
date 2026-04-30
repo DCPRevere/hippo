@@ -17,6 +17,36 @@ use crate::models::{
 use crate::pipeline::{ask, maintain, remember};
 use crate::state::AppState;
 
+/// Convert a single per-statement `remember` result into a
+/// `BatchRememberResult`, scrubbing the error string. Internal errors
+/// (entity names, backend driver text) are logged server-side; the
+/// client gets a stable category so it can retry or report without
+/// learning anything about hippo's internals.
+fn batch_result(
+    statement: String,
+    result: anyhow::Result<crate::models::RememberResponse>,
+) -> BatchRememberResult {
+    match result {
+        Ok(resp) => BatchRememberResult {
+            statement,
+            ok: true,
+            facts_written: Some(resp.facts_written),
+            entities_created: Some(resp.entities_created),
+            error: None,
+        },
+        Err(e) => {
+            tracing::warn!(error = ?e, statement = %statement, "remember failed in batch");
+            BatchRememberResult {
+                statement,
+                ok: false,
+                facts_written: None,
+                entities_created: None,
+                error: Some("remember failed".to_string()),
+            }
+        }
+    }
+}
+
 pub(crate) async fn remember_handler(
     State(state): State<Arc<AppState>>,
     Auth(user): Auth,
@@ -66,23 +96,9 @@ pub(crate) async fn remember_batch_handler(
                         graph: None,
                         ttl_secs: req.ttl_secs,
                     };
-                    match remember::remember(&state, &*graph, remember_req, None, Some(&uid)).await
-                    {
-                        Ok(resp) => BatchRememberResult {
-                            statement,
-                            ok: true,
-                            facts_written: Some(resp.facts_written),
-                            entities_created: Some(resp.entities_created),
-                            error: None,
-                        },
-                        Err(e) => BatchRememberResult {
-                            statement,
-                            ok: false,
-                            facts_written: None,
-                            entities_created: None,
-                            error: Some(e.to_string()),
-                        },
-                    }
+                    let result =
+                        remember::remember(&state, &*graph, remember_req, None, Some(&uid)).await;
+                    batch_result(statement, result)
                 }
             })
             .collect();
@@ -97,25 +113,8 @@ pub(crate) async fn remember_batch_handler(
                 graph: None,
                 ttl_secs: req.ttl_secs,
             };
-            let result =
-                match remember::remember(&state, &*graph, remember_req, None, Some(&user_id)).await
-                {
-                    Ok(resp) => BatchRememberResult {
-                        statement,
-                        ok: true,
-                        facts_written: Some(resp.facts_written),
-                        entities_created: Some(resp.entities_created),
-                        error: None,
-                    },
-                    Err(e) => BatchRememberResult {
-                        statement,
-                        ok: false,
-                        facts_written: None,
-                        entities_created: None,
-                        error: Some(e.to_string()),
-                    },
-                };
-            results.push(result);
+            let r = remember::remember(&state, &*graph, remember_req, None, Some(&user_id)).await;
+            results.push(batch_result(statement, r));
         }
         results
     };
@@ -438,4 +437,48 @@ pub(crate) async fn graph_handler(
     }
 }
 
-// -- Observability ------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{LlmUsage, RememberResponse, RememberTrace};
+
+    fn ok_resp() -> RememberResponse {
+        RememberResponse {
+            entities_created: 2,
+            entities_resolved: 0,
+            facts_written: 1,
+            contradictions_invalidated: 0,
+            usage: LlmUsage::default(),
+            trace: RememberTrace {
+                operations: vec![],
+                revised_operations: None,
+                execution: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn batch_result_ok_includes_counts_and_no_error() {
+        let r = batch_result("hello".into(), Ok(ok_resp()));
+        assert!(r.ok);
+        assert_eq!(r.facts_written, Some(1));
+        assert_eq!(r.entities_created, Some(2));
+        assert!(r.error.is_none());
+    }
+
+    /// Regression: the per-statement error message must not leak the
+    /// underlying anyhow chain (entity names, backend strings, etc).
+    /// Internal detail is logged server-side; the client sees a stable
+    /// category.
+    #[test]
+    fn batch_result_err_does_not_leak_internal_message() {
+        let internal = anyhow::anyhow!("postgres row 12345 violates unique constraint xyz_idx");
+        let r = batch_result("Alice works at Acme".into(), Err(internal));
+        assert!(!r.ok);
+        assert!(r.facts_written.is_none());
+        let msg = r.error.expect("error should be set");
+        assert!(!msg.contains("postgres row 12345"));
+        assert!(!msg.contains("unique constraint"));
+        assert_eq!(msg, "remember failed");
+    }
+}
