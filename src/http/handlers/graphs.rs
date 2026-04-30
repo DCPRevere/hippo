@@ -158,6 +158,18 @@ pub(crate) async fn backup_handler(
         tracing::error!("backup serialisation failed: {e}");
         AppError::internal("backup serialisation failed")
     })?;
+
+    state.emit_audit(
+        &user.user_id,
+        "graph.backup",
+        format!(
+            "graph: {}, entities: {}, edges: {}",
+            payload.graph,
+            payload.entities.len(),
+            payload.edges.len(),
+        ),
+    );
+
     Ok((
         StatusCode::OK,
         [
@@ -248,6 +260,17 @@ pub(crate) async fn restore_handler(
             .map_err(internal("seed edge"))?;
         edges_created += 1;
     }
+
+    state.emit_audit(
+        &user.user_id,
+        "graph.restore",
+        format!(
+            "graph: {}, entities: {}, edges: {}",
+            graph.graph_name(),
+            entities_created,
+            edges_created,
+        ),
+    );
 
     json_ok(crate::models::AdminSeedResponse {
         entities_created,
