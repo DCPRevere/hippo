@@ -38,11 +38,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Access the graph registry. Panics in test configurations where no registry is set.
+    /// Access the graph registry.
+    ///
+    /// In production the registry is always set during startup (`main.rs`
+    /// constructs it before the HTTP server starts), so handlers can call
+    /// this directly. The `for_test` constructor leaves it as `None`,
+    /// which is fine for unit tests that hit a graph backend directly
+    /// without going through `AppState::graph_registry()`. If a test does
+    /// route through it, prefer the lower-level path (pass an
+    /// `&dyn GraphBackend` to the helper instead of looking it up via the
+    /// registry).
+    ///
+    /// # Panics
+    ///
+    /// Panics if called against a `for_test` state that didn't install a
+    /// registry. The panic is intentional — it surfaces a test-setup bug
+    /// instead of silently 500-ing later.
     pub fn graph_registry(&self) -> &GraphRegistry {
-        self.graphs
-            .as_ref()
-            .expect("GraphRegistry not available (test mode)")
+        self.graphs.as_ref().expect(
+            "AppState::graph_registry() called without a registry installed. \
+             Production startup always sets it; in tests, either use \
+             AppState::for_test() with handlers that bypass the registry, \
+             or wire one in.",
+        )
     }
 
     /// Construct an `AppState` for unit tests (no FalkorDB connection needed).
