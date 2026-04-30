@@ -25,24 +25,75 @@ pub struct AuditEntryResponse {
 }
 
 pub struct AuditLog {
-    tx: mpsc::Sender<AuditEntry>,
+    /// Sender wrapped in `Mutex<Option<...>>` so `shutdown()` can drop it
+    /// to close the channel without moving out of `&self`.
+    tx: tokio::sync::Mutex<Option<mpsc::Sender<AuditEntry>>>,
+    /// Worker task handle. Same `Mutex<Option<...>>` pattern so shutdown
+    /// can `.await` it.
+    worker: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl AuditLog {
     /// Spawn a background worker that writes audit entries to the graph.
     ///
-    /// When all `AuditLog` clones are dropped the sender closes, causing the
-    /// worker to drain remaining entries and exit.
+    /// When all senders close, the worker drains remaining entries and
+    /// exits. Call [`AuditLog::shutdown`] on graceful shutdown to wait
+    /// for the drain to complete (otherwise tokio aborts the task when
+    /// the runtime exits and tail entries are lost).
     pub fn spawn(graph: Arc<dyn GraphBackend>) -> Self {
         let (tx, rx) = mpsc::channel::<AuditEntry>(256);
-        tokio::spawn(audit_worker(graph, rx));
-        Self { tx }
+        let worker = tokio::spawn(audit_worker(graph, rx));
+        Self {
+            tx: tokio::sync::Mutex::new(Some(tx)),
+            worker: tokio::sync::Mutex::new(Some(worker)),
+        }
     }
 
-    /// Queue an audit entry for writing. Non-async, never blocks callers.
+    /// Queue an audit entry for writing. Non-blocking on the hot path:
+    /// uses `try_send`, so a full channel logs and drops rather than
+    /// blocking the caller.
     pub fn log(&self, entry: AuditEntry) {
-        if let Err(e) = self.tx.try_send(entry) {
+        // Try to grab the lock without blocking; if it's held by
+        // shutdown, just log a warning and drop the entry.
+        let guard = match self.tx.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                tracing::warn!("audit log: tx mutex held (likely during shutdown); dropping entry");
+                return;
+            }
+        };
+        let Some(tx) = guard.as_ref() else {
+            tracing::warn!("audit log: already shut down; dropping entry");
+            return;
+        };
+        if let Err(e) = tx.try_send(entry) {
             tracing::warn!("audit log channel full or closed: {e}");
+        }
+    }
+
+    /// Close the channel and wait up to `timeout` for the worker to drain
+    /// remaining entries. Idempotent: subsequent calls return immediately.
+    ///
+    /// Production callers should invoke this from main after the HTTP
+    /// server returns and before the tokio runtime tears down.
+    pub async fn shutdown(&self, timeout: std::time::Duration) {
+        // Drop the sender to close the channel.
+        {
+            let mut tx_guard = self.tx.lock().await;
+            tx_guard.take();
+        }
+        // Take the worker handle out and await it.
+        let handle = {
+            let mut guard = self.worker.lock().await;
+            guard.take()
+        };
+        let Some(handle) = handle else {
+            return; // already shut down
+        };
+        match tokio::time::timeout(timeout, handle).await {
+            Ok(Ok(())) => tracing::info!("audit log drained cleanly"),
+            Ok(Err(e)) => tracing::warn!("audit log worker panicked: {e}"),
+            Err(_) => tracing::warn!("audit log drain timed out after {timeout:?}"),
         }
     }
 }
@@ -250,5 +301,57 @@ mod tests {
         // Limit
         let limited = query_audit_log(&*graph, None, None, 2).await.unwrap();
         assert_eq!(limited.len(), 2);
+    }
+
+    /// shutdown() must drain queued entries before returning, without
+    /// requiring a sleep on the test side.
+    #[tokio::test]
+    async fn shutdown_drains_pending_entries_deterministically() {
+        let graph = Arc::new(InMemoryGraph::new(AUDIT_GRAPH));
+        let audit = AuditLog::spawn(graph.clone());
+
+        for i in 0..10 {
+            audit.log(AuditEntry {
+                user_id: format!("u{i}"),
+                action: "test".into(),
+                details: format!("detail {i}"),
+            });
+        }
+
+        // shutdown should block until the worker has processed all 10
+        // entries — no sleep needed.
+        audit.shutdown(std::time::Duration::from_secs(2)).await;
+
+        let entries = graph.dump_all_entities().await.unwrap();
+        assert_eq!(
+            entries.len(),
+            10,
+            "shutdown should have drained all 10 entries before returning"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_idempotent() {
+        let graph = Arc::new(InMemoryGraph::new(AUDIT_GRAPH));
+        let audit = AuditLog::spawn(graph);
+        audit.shutdown(std::time::Duration::from_secs(1)).await;
+        // Second call returns immediately, no panic.
+        audit.shutdown(std::time::Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn log_after_shutdown_drops_entry_without_panic() {
+        let graph = Arc::new(InMemoryGraph::new(AUDIT_GRAPH));
+        let audit = AuditLog::spawn(graph.clone());
+        audit.shutdown(std::time::Duration::from_secs(1)).await;
+        // Calling log() after shutdown must not panic.
+        audit.log(AuditEntry {
+            user_id: "ghost".into(),
+            action: "post-shutdown".into(),
+            details: "should be dropped".into(),
+        });
+        // And nothing extra should have been written.
+        let entries = graph.dump_all_entities().await.unwrap();
+        assert_eq!(entries.len(), 0);
     }
 }

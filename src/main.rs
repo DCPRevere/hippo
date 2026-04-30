@@ -214,6 +214,12 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
 
+    // Drain the audit log so tail entries written during graceful HTTP
+    // shutdown actually land on disk before tokio tears the runtime down.
+    if let Some(audit) = state.audit.as_ref() {
+        audit.shutdown(std::time::Duration::from_secs(5)).await;
+    }
+
     tracing::info!("Shutdown complete");
     Ok(())
 }
