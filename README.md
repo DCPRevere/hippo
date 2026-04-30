@@ -276,7 +276,7 @@ hippo/
 ├── docs/
 │   ├── DREAMS.md           # the Dreamer architecture
 │   └── CONFIG.md           # full config reference + backend matrix
-└── tests/                  # 267 unit + contract + idempotency tests
+└── tests/                  # 450+ unit + contract + idempotency tests
 ```
 
 ## Building & testing
@@ -284,7 +284,7 @@ hippo/
 ```sh
 # Native build + unit tests
 cargo build --release
-cargo test --tests              # 267 tests, ~3s, no network needed
+cargo test --tests              # ~450 tests, no network needed
 
 # WASM build
 cargo check --target wasm32-unknown-unknown --manifest-path hippo-wasm/Cargo.toml
