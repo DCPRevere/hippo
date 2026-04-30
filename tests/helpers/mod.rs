@@ -16,6 +16,16 @@ fn falkor_container() -> String {
     std::env::var("HIPPO_FALKORDB_CONTAINER").unwrap_or_else(|_| "hippo-falkordb-1".to_string())
 }
 
+/// Build a URL for a hippo route. `/health` is at the root; everything else
+/// is under `/api`. Mirrors the prefixing the SDKs apply.
+pub fn api_url(base_url: &str, path: &str) -> String {
+    if path == "/health" || path.starts_with("/api/") || path == "/api" {
+        format!("{base_url}{path}")
+    } else {
+        format!("{base_url}/api{path}")
+    }
+}
+
 /// A running hippo process. Killed on drop.
 pub struct TestAgent {
     child: Child,
@@ -148,7 +158,7 @@ async fn start_agent_inner_opts(allow_admin: bool, force_mock: bool) -> TestAgen
     // Wait for health
     for _ in 0..30 {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if let Ok(r) = agent.client.get(format!("{base_url}/health")).send().await {
+        if let Ok(r) = agent.client.get(api_url(&base_url, "/health")).send().await {
             if r.status().is_success() {
                 return agent;
             }
@@ -161,7 +171,7 @@ async fn start_agent_inner_opts(allow_admin: bool, force_mock: bool) -> TestAgen
 pub async fn seed_fixture(client: &Client, base_url: &str, fixture: &fixtures::GraphFixture) {
     let body = fixture.to_seed_json();
     let resp = client
-        .post(format!("{base_url}/seed"))
+        .post(api_url(base_url, "/seed"))
         .json(&body)
         .send()
         .await
@@ -176,7 +186,7 @@ pub async fn seed_fixture(client: &Client, base_url: &str, fixture: &fixtures::G
 /// Seed a partial graph (custom JSON) via POST /seed.
 pub async fn seed_raw(client: &Client, base_url: &str, body: &serde_json::Value) {
     let resp = client
-        .post(format!("{base_url}/seed"))
+        .post(api_url(base_url, "/seed"))
         .json(body)
         .send()
         .await
@@ -192,7 +202,7 @@ pub async fn seed_raw(client: &Client, base_url: &str, body: &serde_json::Value)
 
 pub async fn remember(client: &Client, base_url: &str, statement: &str) {
     let resp = client
-        .post(format!("{base_url}/remember"))
+        .post(api_url(base_url, "/remember"))
         .json(&serde_json::json!({ "statement": statement, "source_agent": "eval" }))
         .send()
         .await
@@ -206,7 +216,7 @@ pub async fn remember(client: &Client, base_url: &str, statement: &str) {
 
 pub async fn remember_as(client: &Client, base_url: &str, statement: &str, source: &str) {
     let resp = client
-        .post(format!("{base_url}/remember"))
+        .post(api_url(base_url, "/remember"))
         .json(&serde_json::json!({ "statement": statement, "source_agent": source }))
         .send()
         .await
@@ -217,7 +227,7 @@ pub async fn remember_as(client: &Client, base_url: &str, statement: &str, sourc
 
 pub async fn query_facts(client: &Client, base_url: &str, q: &str, _limit: usize) -> Vec<Value> {
     let resp: Value = client
-        .post(format!("{base_url}/context"))
+        .post(api_url(base_url, "/context"))
         .json(&serde_json::json!({ "query": q }))
         .send()
         .await
@@ -239,7 +249,7 @@ pub fn fact_strings(facts: &[Value]) -> Vec<String> {
 
 pub async fn query_graph(client: &Client, base_url: &str) -> Value {
     client
-        .get(format!("{base_url}/graph"))
+        .get(api_url(base_url, "/graph"))
         .send()
         .await
         .expect("graph request failed")
@@ -248,16 +258,21 @@ pub async fn query_graph(client: &Client, base_url: &str) -> Value {
         .expect("graph response not JSON")
 }
 
+/// Hit the diagnose endpoint if it exists. The endpoint was removed in an
+/// older API trim, but eval tests still call this for human-readable
+/// debug output. If it's not available we return `null` so the caller can
+/// silently skip the diagnostic block.
 pub async fn diagnose(client: &Client, base_url: &str, q: &str) -> Value {
-    client
-        .post(format!("{base_url}/diagnose"))
+    let resp = match client
+        .post(api_url(base_url, "/diagnose"))
         .json(&serde_json::json!({ "query": q, "limit": 10 }))
         .send()
         .await
-        .expect("diagnose request failed")
-        .json()
-        .await
-        .expect("diagnose response not JSON")
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Value::Null,
+    };
+    resp.json().await.unwrap_or(Value::Null)
 }
 
 // ---- Fact loading ----

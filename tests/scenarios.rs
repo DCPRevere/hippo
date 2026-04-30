@@ -69,7 +69,7 @@ async fn scenario_career_journey() {
 
     // ASSERTION 2: Temporal query at t_after_first_job should show 60000
     let temporal_resp: serde_json::Value = client
-        .post(format!("{base}/context/temporal"))
+        .post(helpers::api_url(base, "/context/temporal"))
         .json(&serde_json::json!({
             "query": "Sarah salary",
             "at": t_after_first_job.to_rfc3339(),
@@ -99,7 +99,7 @@ async fn scenario_career_journey() {
 
     // ASSERTION 3: Timeline shows career progression
     let timeline: serde_json::Value = client
-        .get(format!("{base}/timeline/Sarah"))
+        .get(helpers::api_url(base, "/timeline/Sarah"))
         .send()
         .await
         .expect("timeline failed")
@@ -116,7 +116,7 @@ async fn scenario_career_journey() {
 
     // ASSERTION 4: Reflect shows education + career known, gaps elsewhere
     let reflect: serde_json::Value = client
-        .post(format!("{base}/reflect"))
+        .post(helpers::api_url(base, "/reflect"))
         .json(&serde_json::json!({"about": "Sarah", "suggest_questions": false}))
         .send()
         .await
@@ -195,7 +195,7 @@ async fn scenario_medical_knowledge() {
 
     // ASSERTION 2: Multi-hop: James → City Medical → Dr. Chen (2 hops)
     let context_resp: serde_json::Value = client
-        .post(format!("{base}/context"))
+        .post(helpers::api_url(base, "/context"))
         .json(
             &serde_json::json!({"query": "James doctor cardiologist", "limit": 15, "max_hops": 2}),
         )
@@ -257,7 +257,7 @@ async fn scenario_multi_agent_knowledge() {
 
     // Agent 1: Financial agent
     let _resp1: serde_json::Value = client
-        .post(format!("{base}/remember"))
+        .post(helpers::api_url(base, "/remember"))
         .json(&serde_json::json!({"statement": "Emma is the CFO of Acme Corp", "source_agent": "finance-agent"}))
         .send()
         .await
@@ -268,7 +268,7 @@ async fn scenario_multi_agent_knowledge() {
 
     // Agent 2: HR agent (corroborates same fact)
     let _resp2: serde_json::Value = client
-        .post(format!("{base}/remember"))
+        .post(helpers::api_url(base, "/remember"))
         .json(&serde_json::json!({"statement": "Emma is the Chief Financial Officer of Acme Corp", "source_agent": "hr-agent"}))
         .send()
         .await
@@ -279,7 +279,7 @@ async fn scenario_multi_agent_knowledge() {
 
     // Agent 3: News agent (high credibility hint)
     let _resp3: serde_json::Value = client
-        .post(format!("{base}/remember"))
+        .post(helpers::api_url(base, "/remember"))
         .json(&serde_json::json!({
             "statement": "Emma joined Acme Corp as CFO in 2022",
             "source_agent": "news-agent",
@@ -322,7 +322,7 @@ async fn scenario_multi_agent_knowledge() {
 
     // ASSERTION 2: Sources endpoint shows all 3 agents
     let sources: serde_json::Value = client
-        .get(format!("{base}/sources"))
+        .get(helpers::api_url(base, "/sources"))
         .send()
         .await
         .expect("sources fail")

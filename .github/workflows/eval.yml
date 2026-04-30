@@ -1,8 +1,15 @@
 name: Evals (scheduled)
 
 # Eval tests are gated with #[ignore] in the regular CI job because they
-# spawn the hippo binary and (some of them) call a real LLM. They run
-# nightly here, and on demand via workflow_dispatch.
+# spawn the hippo binary and call a real LLM. They run nightly here, and
+# on demand via workflow_dispatch.
+#
+# The suite assesses the *intelligence* of the system: contradiction
+# detection, entity resolution, multi-hop retrieval. The heuristic mock
+# can't satisfy those assertions, so this workflow expects either
+# ANTHROPIC_OAUTH_TOKEN or OPENAI_API_KEY as a repo secret. The
+# `check-secrets` job below short-circuits the run with a friendly
+# warning if neither is set, instead of failing every night.
 
 on:
   schedule:
@@ -14,21 +21,40 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-secrets:
+    name: Check LLM secrets
+    runs-on: ubuntu-latest
+    outputs:
+      have-secret: ${{ steps.check.outputs.have-secret }}
+    steps:
+      - id: check
+        env:
+          HAVE_ANTHROPIC: ${{ secrets.ANTHROPIC_OAUTH_TOKEN != '' }}
+          HAVE_OPENAI: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: |
+          if [ "$HAVE_ANTHROPIC" = "true" ] || [ "$HAVE_OPENAI" = "true" ]; then
+            echo "have-secret=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have-secret=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No LLM secret configured. Set ANTHROPIC_OAUTH_TOKEN or"
+            echo "::warning::OPENAI_API_KEY as a repository secret to enable nightly evals."
+          fi
+
   ignored-tests:
     name: Ignored / eval suite
+    needs: check-secrets
+    if: needs.check-secrets.outputs.have-secret == 'true'
     runs-on: ubuntu-latest
     # Be generous: spawning the binary + LLM calls per test is slow.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build hippo (needed by tests that spawn it)
         run: cargo build --bin hippo
       - name: Run ignored tests
         env:
-          # Use a deterministic mock LLM unless an API key is provided as
-          # a repository secret.
           ANTHROPIC_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |

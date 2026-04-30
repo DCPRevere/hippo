@@ -91,7 +91,7 @@ async fn eval_temporal_query() {
     // Step 2: Temporal query AT t_after_first — should return 50k NOT 75k
     let at_str = t_after_first.to_rfc3339();
     let resp: Value = client
-        .post(format!("{base}/context/temporal"))
+        .post(helpers::api_url(base, "/context/temporal"))
         .json(&serde_json::json!({
             "query": "Bob's salary",
             "at": at_str,
@@ -145,7 +145,7 @@ async fn eval_multi_hop_retrieval() {
 
     // Query: ask about Carol's company location (requires 2 hops: Carol→Synodal→London)
     let resp: Value = client
-        .post(format!("{base}/context"))
+        .post(helpers::api_url(base, "/context"))
         .json(&serde_json::json!({
             "query": "Carol company location",
             "limit": 15,
@@ -284,7 +284,7 @@ async fn eval_reflect_gap_analysis() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     let resp: Value = client
-        .post(format!("{base}/reflect"))
+        .post(helpers::api_url(base, "/reflect"))
         .json(&serde_json::json!({
             "about": "Eve",
             "suggest_questions": true
@@ -349,7 +349,7 @@ async fn eval_timeline_history() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let resp: Value = client
-        .get(format!("{base}/timeline/Frank"))
+        .get(helpers::api_url(base, "/timeline/Frank"))
         .send()
         .await
         .expect("timeline failed")
@@ -418,7 +418,7 @@ async fn eval_confidence_compounding() {
 
     // Agent 1 asserts a fact
     let _resp1: Value = client
-        .post(format!("{base}/remember"))
+        .post(helpers::api_url(base, "/remember"))
         .json(&serde_json::json!({
             "statement": "Grace Lee is a lawyer",
             "source_agent": "agent-1"
@@ -441,7 +441,7 @@ async fn eval_confidence_compounding() {
 
     // Agent 2 corroborates the same fact
     let _resp2: Value = client
-        .post(format!("{base}/remember"))
+        .post(helpers::api_url(base, "/remember"))
         .json(&serde_json::json!({
             "statement": "Grace Lee is a lawyer",
             "source_agent": "agent-2"
