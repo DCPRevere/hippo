@@ -8,19 +8,9 @@ use crate::error::GraphConnectError;
 use crate::graph_backend::GraphBackend;
 use crate::math::{compound_confidence, cosine_similarity};
 use crate::models::{
-    EdgeRow, Entity, EntityRow, MemoryTier, ProvenanceResponse, Relation, SupersessionRecord,
+    deserialize_embedding, serialize_embedding, EdgeRow, Entity, EntityRow, MemoryTier,
+    ProvenanceResponse, Relation, SupersessionRecord,
 };
-
-fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
-    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
-fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
 
 pub struct PostgresGraph {
     pool: PgPool,

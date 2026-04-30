@@ -13,6 +13,59 @@ pub use hippo_api::{
 
 pub const EMBEDDING_DIM: usize = 768;
 
+/// Pack an `&[f32]` embedding into little-endian bytes for storage in
+/// blob columns (used by the SQLite and Postgres backends). The size
+/// is always `4 * embedding.len()`.
+pub fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
+    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+/// Inverse of [`serialize_embedding`]. Trailing bytes that don't form a
+/// full f32 are silently dropped.
+pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+#[cfg(test)]
+mod embedding_tests {
+    use super::*;
+
+    #[test]
+    fn round_trip_preserves_bits() {
+        let v: Vec<f32> = vec![0.0, 1.0, -1.5, 1e-9, f32::MAX, f32::MIN_POSITIVE];
+        let bytes = serialize_embedding(&v);
+        assert_eq!(bytes.len(), v.len() * 4);
+        let back = deserialize_embedding(&bytes);
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn empty_embedding_round_trips() {
+        let v: Vec<f32> = vec![];
+        let back = deserialize_embedding(&serialize_embedding(&v));
+        assert!(back.is_empty());
+    }
+
+    #[test]
+    fn nan_survives_round_trip_via_bit_pattern() {
+        let nan = f32::NAN;
+        let v = vec![nan];
+        let back = deserialize_embedding(&serialize_embedding(&v));
+        assert!(back[0].is_nan());
+    }
+
+    #[test]
+    fn truncated_blob_drops_trailing_bytes() {
+        // 9 bytes — two f32s plus a stray byte.
+        let bytes = vec![0u8; 9];
+        let back = deserialize_embedding(&bytes);
+        assert_eq!(back.len(), 2);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub id: String,
