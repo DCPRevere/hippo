@@ -13,7 +13,7 @@
 </div>
 
 <p align="center">
-  <strong>A memory graph for AI agents.</strong><br>
+  <strong>🦛 The memory graph for AI agents which improves whilst it sleeps.</strong><br>
   Background passes infer links, resolve contradictions, and weight sources. Server, embedded, or browser via WASM.
 </p>
 
