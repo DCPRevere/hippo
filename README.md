@@ -13,8 +13,8 @@
 </div>
 
 <p align="center">
-  <strong>🧠 The memory layer that dreams.</strong><br>
-  A self-improving memory graph for AI agents. Runs on your server, in your browser, or anywhere in between.
+  <strong>A memory graph for AI agents.</strong><br>
+  Background passes infer links, resolve contradictions, and weight sources. Server, embedded, or browser via WASM.
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@
 
 ## What it is
 
-Hippo is a memory database for AI agents. It extracts entities and relationships from natural language, stores them in a typed graph, and **continuously processes itself between conversations** — finding new connections, resolving contradictions, learning which sources to trust.
+Hippo extracts entities and relationships from natural language, stores them in a typed graph, and runs background passes that infer new edges, write supersession relationships when sources disagree, and update per-source accuracy.
 
-Most memory layers are passive: write once, read forever. Hippo is active. In the morning, the graph is genuinely better than you left it the night before — without you doing anything.
+Reads use an iterative loop: `/ask` requests additional context from the graph until it has enough to answer.
 
 ```
         write something                         ┌──────────────┐
@@ -50,19 +50,17 @@ Most memory layers are passive: write once, read forever. Hippo is active. In th
        └─────────────┘
 ```
 
-## Why hippo
+## Design
 
-**It dreams.** Between conversations, the Dreamer walks the graph and takes append-only actions: discovers links between unconnected entities, infers implied facts from existing structure, writes `supersedes` relationships when sources disagree, consolidates episodic facts into semantic patterns. See [`docs/DREAMS.md`](docs/DREAMS.md).
+The Dreamer is the background pass. It walks the graph and emits append-only actions: links between previously unconnected entities, edges inferred from existing structure, `supersedes` edges when two sources disagree, and consolidation of episodic facts into semantic patterns. See [`docs/DREAMS.md`](docs/DREAMS.md).
 
-**Append-only by design.** The Dreamer never deletes. Contradictions become `supersedes` edges with full provenance; the original fact stays queryable for audit. Users and agents can still explicitly `retract` or `correct` when something is genuinely wrong.
+Writes are append-only. Contradictions produce a `supersedes` edge; the original is retained and filtered out at read time by default. `retract` and `correct` are available for explicit removal.
 
-**Sources are weighted.** Hippo tracks each source's accuracy across contradictions and weights future facts accordingly. Trusted CRMs outrank casual chat.
+Sources carry an accuracy score updated as contradictions resolve. Edges carry a salience score incremented on each retrieval.
 
-**Salience compounds.** Every retrieval bumps the salience of the edges it surfaces. The facts you actually use rank higher next time.
+Backends: SQLite, Postgres, in-memory, FalkorDB, Qdrant. The same Rust core compiles to `wasm32-unknown-unknown`.
 
-**Runs anywhere.** Native server, embedded SQLite, Postgres, FalkorDB, or compiled to WebAssembly for in-browser memory that never leaves the device.
-
-## Architecture in one diagram
+## Architecture
 
 ```
                   ┌───────────────────────────────────────────┐
@@ -192,32 +190,22 @@ Full schemas: see [`docs/openapi.yaml`](docs/openapi.yaml).
 
 See [`docs/CONFIG.md#backend-readiness-matrix`](docs/CONFIG.md) for details.
 
-## Distinctive features
-
-These are the things hippo does that competing memory layers (Mem0, Zep, Supermemory, Letta) don't, or don't do as well:
-
-- **Continuous background processing.** The Dreamer runs between conversations, not just on writes. It finds links you didn't ask for, infers facts implied by structure, and resolves contradictions with delayed evidence.
-- **Append-only contradiction handling.** When two facts disagree, hippo writes a `supersedes` edge. Both originals stay in the graph; retrieval filters by supersession at read time. Full audit trail by construction.
-- **Salience-on-use ranking.** Every retrieval bumps the salience of the edges it surfaces. The facts you actually use rank higher next time — without you doing anything.
-- **Iterative read path.** `/ask` doesn't retrieve once and synthesise. It asks the LLM what's missing, fetches more, and loops — closer to how thinking actually works.
-- **WASM-native.** The same Rust core that runs the server compiles to `wasm32-unknown-unknown` and runs in the browser. Your memory never has to leave the device.
-
 ## Comparison
 
-|                                       | **Hippo**       | Mem0 v3       | Zep / Graphiti  | Supermemory      | Letta           |
-|---------------------------------------|-----------------|---------------|-----------------|------------------|-----------------|
-| **Contradiction handling**            | Background, append-only `supersedes` | None (ADD-only) | Write-time, sets `invalid_at` | Write-time, flips `isLatest` | App-defined |
-| **Background graph processing**       | ✅ Linker / Inferrer / Reconciler / Consolidator | ❌ | ⚠️ ingest-time community detection only | ⚠️ claimed `Derives`, unverifiable | ❌ |
-| **Inference of new edges**            | ✅ from existing structure | ❌ | ❌ | ⚠️ documented but opaque | ❌ |
-| **Salience-on-use ranking**           | ✅ retrievals bump salience | ❌ | ❌ | ❌ | ❌ |
-| **Append-only by default**            | ✅ `retract` is the only escape valve | n/a (no contradictions) | ❌ mutates `invalid_at` | ❌ flips `isLatest` flag | ❌ |
-| **Runs in the browser (WASM)**        | ✅ first-class | ❌ | ❌ | ❌ | ❌ |
-| **Iterative read with LLM-requested context** | ✅ | ❌ retrieve-then-answer | ❌ | ❌ | ⚠️ via agent loop |
+|                                       | Hippo                                | Mem0 v3                | Zep / Graphiti               | Supermemory               | Letta         |
+|---------------------------------------|--------------------------------------|------------------------|------------------------------|---------------------------|---------------|
+| Contradiction handling                | Background `supersedes`              | None (ADD-only)        | Write-time `invalid_at`      | Write-time `isLatest`     | App-defined   |
+| Background graph processing           | ✅                                   | ❌                     | Ingest-time community detection | Documented, not in OSS | ❌            |
+| Inference of new edges                | ✅                                   | ❌                     | ❌                           | Documented, not in OSS    | ❌            |
+| Salience-on-use ranking               | ✅                                   | ❌                     | ❌                           | ❌                        | ❌            |
+| Append-only writes                    | ✅                                   | n/a                    | ❌                           | ❌                        | ❌            |
+| Browser (WASM)                        | ✅                                   | ❌                     | ❌                           | ❌                        | ❌            |
+| Iterative reads                       | ✅                                   | ❌                     | ❌                           | ❌                        | Via agent loop |
 
-Notes on this table:
+Notes:
 
-- "Mem0 v3" reflects the April 2026 release, which deliberately removed the v2 graph backend in favour of a pure vector + entity-sidecar model. Earlier versions had different shape.
-- Supermemory's `Derives` (claimed background inference) and `Automatic Forgetting` are documented but not in any open source we could verify — the ⚠️ reflects that uncertainty, not malice.
+- Mem0 v3 (April 2026) removed the v2 graph backend in favour of a pure vector + entity-sidecar model.
+- Supermemory's `Derives` and `Automatic Forgetting` are documented but not present in any source available for inspection.
 
 ## Configuration
 
