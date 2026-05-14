@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "vitest": "^3.1.0"
+    "vitest": "^4.1.6"
   },
   "engines": {
     "node": ">=18.0.0"
